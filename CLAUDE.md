@@ -44,9 +44,10 @@ The author is a staff-level identity engineer (16+ years, OAuth2/OIDC/FAPI, ran 
 - When something confuses the author mid-build, add a question to gaps.md and keep building. Close gaps.md questions in that phase's gap-close hour. Do not fall into doc rabbit holes mid-task.
 - At the end of each phase, append 2-3 sentences to NOTES.md: what was built, what it proves.
 - When a requirement ships, update its row in the README "Delivery status" table in the same commit: status + an evidence link (DEMO.md section, screenshot, test file, or log capture). A requirement is `done` only with evidence linked. Use `documented-only` when licensing or the timebox prevented a live demo, and make the evidence explain why.
-- Small, frequent commits with clear conventional messages. Commit every working step.
+- Small, frequent commits with clear conventional messages. Propose a commit at every working step (see the commit rule below).
 
 ## Git / repo hygiene
 
+- **Never commit or push without the author's signal.** Show the changes and the proposed commit message, then wait. The author reviews first and says when to commit and when to push. Approval for one commit does not cover the next one.
 - `NOTES.md`, `gaps.md`, `ROADMAP.md` and `MENTOR.md` are personal working files: they stay in `.gitignore`, never pushed.
 - The repo is public from day one. Everything pushed must look professional: README accurate, no half-finished claims. If a feature is not done, the Status section says so plainly.
