@@ -1,0 +1,27 @@
+# personal working files - never push
+NOTES.md
+gaps.md
+ROADMAP.md
+MENTOR.md
+
+# secrets / local env
+.env
+*.env
+*.pfx
+*.pem
+secrets/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# build output
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+.vscode/
