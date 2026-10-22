@@ -37,6 +37,7 @@ The project is also a learning vehicle. In every session, follow **MENTOR.md**. 
 - Write offline tests for policy logic (allow-list, approval gate, claim checks) in the same session the logic is written, not later (NFR8).
 - When a requirement ships, update its row in the README "Delivery status" table in the same commit: status + an evidence link (DEMO.md section, screenshot, test file, or log capture). A requirement is `done` only with evidence linked. Use `documented-only` when licensing or the timebox prevented a live demo, and make the evidence explain why.
 - Small, frequent commits with clear conventional messages. Propose a commit at every working step (see the commit rule below).
+- Ideas outside the README spec and ROADMAP.md go to the "Future work" section of DESIGN-NOTES.md: one line each, plus why it was left out. Never build them inside the 14 days.
 
 ## Git / repo hygiene
 
