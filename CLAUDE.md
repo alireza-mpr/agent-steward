@@ -4,14 +4,9 @@
 
 A portfolio project built in a strict 14-day timebox (~5 hrs/day): an "Agent Registry Guardian" demonstrating Microsoft Entra Agent ID end to end. The spec is in README.md. The day-by-day plan is in ROADMAP.md. Both are the source of truth; do not expand scope beyond them.
 
-The author is a staff-level identity engineer (16+ years, OAuth2/OIDC/FAPI, ran a bank IdP under CDR) who is **new to the Microsoft Entra ecosystem, Agent ID, and MCP**. The project is also a learning vehicle.
+## Mentoring (important)
 
-## Teaching mode (important)
-
-- Follow the mentor protocol in **MENTOR.md** in every session: study brief at phase start, teach-on-first-encounter during the build, tick-and-test at phase end. MENTOR.md is the authority on how to teach; this section only sets the style.
-- Write all explanations in clear, simple English: short sentences, one idea per sentence, no idioms, no filler. Use ' instead of ' and - instead of an em dash.
-- Connect new concepts to what the author already knows when natural: OAuth2, OIDC, FAPI, CDR, DCR, PingFederate, delegation chains - and record every such mapping in GLOSSARY.md with a "where the analogy breaks" note. Analogies are scaffolds, not equivalences.
-- Do not over-explain things the author already knows (OAuth2 flows, token validation basics, distributed systems).
+The project is also a learning vehicle. In every session, follow **MENTOR.md**. It holds everything about teaching: who the learner is, the mentor protocol (study brief, teach on first encounter, tick and test), the teaching style, and the gaps.md and NOTES.md phase rituals.
 
 ## Locked scope decisions (do not reopen)
 
@@ -41,8 +36,6 @@ The author is a staff-level identity engineer (16+ years, OAuth2/OIDC/FAPI, ran 
 
 - Follow ROADMAP.md **one phase at a time**. Do not start the next phase until the current phase's "Ships" list is done.
 - Write offline tests for policy logic (allow-list, approval gate, claim checks) in the same session the logic is written, not later (NFR8).
-- When something confuses the author mid-build, add a question to gaps.md and keep building. Close gaps.md questions in that phase's gap-close hour. Do not fall into doc rabbit holes mid-task.
-- At the end of each phase, append 2-3 sentences to NOTES.md: what was built, what it proves.
 - When a requirement ships, update its row in the README "Delivery status" table in the same commit: status + an evidence link (DEMO.md section, screenshot, test file, or log capture). A requirement is `done` only with evidence linked. Use `documented-only` when licensing or the timebox prevented a live demo, and make the evidence explain why.
 - Small, frequent commits with clear conventional messages. Propose a commit at every working step (see the commit rule below).
 
