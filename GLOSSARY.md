@@ -12,8 +12,9 @@ Two rules keep this table honest:
 | Known world (OAuth2/OIDC/CDR) | New world (Entra / Agent ID) | Where the analogy breaks |
 |---|---|---|
 | Authorization server / IdP | Microsoft Entra ID (the tenant's token issuer) | Entra is also the directory and policy engine, not only the token issuer. |
+| One IdentityServer deployment: one issuer, its configuration store and its user store | Tenant: one organization's instance of Entra ID (directory and token issuer), with a permanent `<name>.onmicrosoft.com` domain and a tenant ID in every token (`tid`, `iss`) | Microsoft runs the server; the organization only configures it. Licenses belong to the tenant and decide which features it has. Microsoft 365 and Azure also use the tenant as their identity base. |
 | OAuth client (the definition of an app) | App registration | Close. One registration can serve many tenants. |
-| Client instance operating in an ecosystem | Service principal / enterprise application | CDR had no split between "definition" and "per-tenant instance"; Entra does, and it matters. |
+| Client instance operating in an ecosystem | Service principal / enterprise application | CDR had the same split: one software product, with a separate DCR registration at each data holder. IdentityServer has no split: one `Client` entry is both the definition and the thing that gets access. In Entra, the service principal is a real directory account: it can hold roles, be blocked by Conditional Access and appear in sign-in logs. |
 | One CDR software product, registered at many data holders | Multi-tenant application. Microsoft registered each of its apps once, in its own tenant. A tenant only holds the service principals: the local accounts that let those apps work there. A new tenant here had 0 applications and 187 service principals. In Graph, `servicePrincipalType` "Application" means "a service principal created from an application", even when that application lives in another tenant; `appOwnerOrganizationId` names that tenant. | In CDR, each data holder issued its own `client_id`. In Entra, the `appId` is the same in every tenant. |
 | Non-human identity (my 450 B2B client identities) | Workload identity (umbrella: service principal, managed identity, agent identity) | Entra's umbrella is wider and has first-class sub-types with different lifecycles. |
 | - (no equivalent) | Managed identity | No CDR analogue: the platform owns the credential, the app never sees one. |
@@ -41,6 +42,13 @@ Two rules keep this table honest:
 | FAPI hardening (PAR, PKCE, JARM, mTLS-bound tokens) | Conditional Access on the blueprint; token protection features | Different layer: FAPI hardens the protocol messages; CA is policy at sign-in time. Not interchangeable. |
 | Client allow-listing at the gateway | MCP tool allow-list | Same instinct, different object: CDR allow-listed *who may call*; MCP allow-lists *what may be called*. |
 | Audit under CDR rules | Entra sign-in logs + audit logs + my app audit trail | Entra splits sign-in events from directory changes; correlation across the two plus app logs is on me (NFR4). |
+
+## Tooling
+
+| Known world | New world | Where the analogy breaks |
+|---|---|---|
+| An IdP's admin API (with IdentityServer: direct access to the configuration and user stores) | Microsoft Graph: one REST API (`https://graph.microsoft.com`) to read and change everything in a tenant - users, groups, applications, service principals, agents - plus Microsoft 365 data | Entra has no store the organization can touch: every change goes through the portal or through Graph. Graph covers all of Microsoft 365, not only identity. Graph is itself protected by Entra: each call needs a Graph token with delegated or application permissions. Graph PowerShell and the Graph Bicep extension are both built on it. |
+| IdentityServer clients and API resources defined in code (`Config.cs`) or seeded into the configuration store | Bicep with the Microsoft Graph extension: Entra objects (applications, service principals, groups) declared in `.bicep` files and deployed to the tenant. Why: tenant setup as code, so the tenant can be rebuilt from the repo (NFR5). **Bicep files are deployed by Azure Resource Manager (ARM), Microsoft's deployment engine.** ARM normally deploys into an Azure subscription; a file with only Graph resources can also deploy at tenant scope, with no subscription. This is the only reason the project touches Azure: nothing in it runs in Azure. | Bicep is declarative: a file describes the end state, and each deployment makes the tenant match it, so running it again is safe. IdentityServer config is code that runs inside a server the team owns. Bicep covers only some Entra object types; types it lacks (possibly the new Agent ID types) need Graph PowerShell. Unverified for Agent ID types until Phase 1. |
 
 ## MCP corner
 
