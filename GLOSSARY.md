@@ -49,28 +49,32 @@ Two rules keep this table honest:
 
 So Graph still has only two base types: application and service principal. A blueprint is a special kind of application. A blueprint principal and an agent identity are special kinds of service principal, and each of the three has its own Graph type (see the detail table below). Their jobs differ: the blueprint principal represents the blueprint itself in the tenant, and each agent identity represents one agent.
 
-```
-                         CLASSIC APP                        AGENT ID
-                         -----------                        --------
- LEVEL 1                 Application                        Blueprint
- the definition          example: Microsoft Graph           example: agent-steward-guardian
- (an application)        Command Line Tools                 holds the credential, shared by
-                                                            all its agents
-                              |                                  |
-                              | one per tenant                   | one per tenant
-                              v                                  v
- LEVEL 2                 Service principal                  Blueprint principal
- local representation    Graph CLI Tools                    agent-steward-guardian
- (a service principal)   in this tenant                     (same appId as the blueprint)
-                                                                 |
-                                                                 | creates MANY
-                                                                 v
- LEVEL 3                 - does not exist -                 Agent identity  agent-steward-guardian-01
- identities for agents                                      Agent identity  (later: -02, -03, ...)
- (service principals)                                       each with its own appId;
-                                                            no credential of its own:
-                                                            signs in through the
-                                                            blueprint's credential
+```mermaid
+flowchart TB
+    hc["<b>CLASSIC APP</b>"]
+    ha["<b>AGENT ID</b>"]
+
+    app["<b>Level 1 - Application</b><br/>the definition<br/><i>Microsoft Graph<br/>Command Line Tools</i>"]
+    sp["<b>Level 2 - Service principal</b><br/>its local representation<br/>in this tenant"]
+    none["<b>Level 3</b><br/>does not exist"]
+
+    bp["<b>Level 1 - Blueprint</b><br/>a special application<br/><i>agent-steward-guardian</i><br/>holds the credential,<br/>shared by all its agents"]
+    bpp["<b>Level 2 - Blueprint principal</b><br/>a special service principal<br/>its local representation<br/>same appId<br/>as the blueprint"]
+    ai1["<b>Level 3 - Agent identity</b><br/>a special service principal<br/><i>agent-steward-guardian-01</i><br/>own appId, no credential"]
+    ai2["<b>Level 3 - Agent identity</b><br/>a special service principal<br/><i>later: -02, -03, ...</i><br/>own appId, no credential"]
+
+    hc ~~~ app
+    app -->|one per tenant| sp
+    sp ~~~ none
+
+    ha ~~~ bp
+    bp -->|one per tenant| bpp
+    bpp -->|creates| ai1
+    bpp -->|creates| ai2
+
+    classDef header fill:none,stroke:none
+    class hc,ha header
+    style none stroke-dasharray: 5 5
 ```
 
 **OOP view:** the blueprint is a class with a factory method. The blueprint principal is its one static instance in this tenant, and it runs the factory. The agent identities are the instances that the factory creates.
