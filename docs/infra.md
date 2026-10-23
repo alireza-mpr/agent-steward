@@ -2,8 +2,6 @@
 
 How this project creates tenant objects as code: Bicep, Azure Resource Manager (ARM) and Microsoft Graph.
 
-Checked on 23 October 2026.
-
 ## Why
 
 Tenant setup must be reproducible (NFR5): the tenant can be rebuilt from the repo. Bicep is used for every Entra object type it supports. Graph PowerShell covers the types Bicep does not support.
