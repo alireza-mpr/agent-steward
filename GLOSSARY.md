@@ -100,6 +100,23 @@ Because the agent identity holds no credential, it cannot sign in alone. So its 
 
 #### How it works
 
+The same agent code makes both requests. Only the `client_id` it sends tells Entra which client is asking. The diagram shows the autonomous flow. The on-behalf-of flow changes only request 2 (see [The two requests](#the-two-requests)).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Code as Agent code<br/>(has the blueprint's credential)
+    participant Entra as Entra ID<br/>(token endpoint)
+
+    Note over Code,Entra: Request 1 - the client is the blueprint
+    Code->>Entra: client_id = the blueprint's appId<br/>proof = the blueprint's credential (secret, certificate or FIC)<br/>grant_type = client_credentials<br/>scope = api://AzureADTokenExchange/.default<br/>fmi_path = the agent identity's appId
+    Entra-->>Code: The credential is valid, so Entra returns T1<br/>T1 is for the agent identity in fmi_path<br/>Its only use is request 2
+
+    Note over Code,Entra: Request 2 - the client is the agent identity
+    Code->>Entra: client_id = the agent identity's appId<br/>proof = client_assertion = T1 (no secret of its own)<br/>grant_type = client_credentials<br/>scope = the API's scope<br/>(for example https://graph.microsoft.com/.default)
+    Entra-->>Code: T1 is valid, so Entra returns an access token<br/>The token names the agent identity as the client
+```
+
 1. **Blueprint signs in:** The blueprint asks Entra for a token, using its own `appId` and its credential. In the same request, it names the agent identity it acts for.
 2. **Entra issues T1:** Entra checks the blueprint's credential and returns a first token, T1, for that one agent identity. T1 is not for calling an API. Its only use is the next step.
 3. **Agent identity signs in:** The agent identity asks Entra for its own token, using its own `appId`. Unlike a normal client, it sends no secret or key. Instead, it sends T1 as its proof.
