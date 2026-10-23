@@ -113,7 +113,7 @@ sequenceDiagram
     Entra-->>Code: The credential is valid, so Entra returns T1<br/>T1 is for the agent identity in fmi_path<br/>Its only use is request 2
 
     Note over Code,Entra: Request 2 - the client is the agent identity
-    Code->>Entra: client_id = the agent identity's appId<br/>proof = client_assertion = T1 (no secret of its own)<br/>grant_type = client_credentials<br/>scope = the API's scope<br/>(for example https://graph.microsoft.com/.default)
+    Code->>Entra: client_id = the agent identity's appId<br/>proof = client_assertion = T1 (no secret of its own)<br/>grant_type = client_credentials | jwt-bearer in the OBO flow<br/>scope = the API's scope<br/>(for example https://graph.microsoft.com/.default)
     Entra-->>Code: T1 is valid, so Entra returns an access token<br/>The token names the agent identity as the client
 ```
 
