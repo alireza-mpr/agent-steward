@@ -15,6 +15,9 @@ How this project creates tenant objects as code: Bicep, Azure Resource Manager (
 - [Files](#files)
 - [Run it](#run-it)
 - [Where to check a deploy](#where-to-check-a-deploy)
+- [Agent ID objects](#agent-id-objects)
+  - [Steps to create a blueprint and its agents](#steps-to-create-a-blueprint-and-its-agents)
+  - [Run the Agent ID scripts](#run-the-agent-id-scripts)
 - [Cost](#cost)
 - [Known issue: Bicep on Apple Silicon](#known-issue-bicep-on-apple-silicon)
 - [Not in scope](#not-in-scope)
@@ -84,6 +87,9 @@ The first deploy also made Entra create a service principal for Microsoft's "Mic
 |---|---|
 | [`setup/bicep/bicepconfig.json`](../setup/bicep/bicepconfig.json) | Loads the Graph extension (`v1.0` types, version `1.0.0`, pinned) under the alias `microsoftGraphV1` |
 | [`setup/bicep/phase0-smoke.bicep`](../setup/bicep/phase0-smoke.bicep) | Phase 0 smoke test: one security group. Proves the toolchain works end to end. Safe to delete. |
+| [`setup/agent-id/AgentIdHelpers.ps1`](../setup/agent-id/AgentIdHelpers.ps1) | Shared helpers: Graph calls, permission scopes, and one safe-to-rerun `Set-*` function per object type |
+| [`setup/agent-id/Deploy-AgentIdentities.ps1`](../setup/agent-id/Deploy-AgentIdentities.ps1) | Creates the project's blueprints, blueprint principals and agent identities, plus a stand-in sponsor user |
+| [`setup/agent-id/Deploy-Fixtures.ps1`](../setup/agent-id/Deploy-Fixtures.ps1) | Creates the fixture agents with deliberate governance flaws (FR3) |
 
 ## Run it
 
@@ -112,6 +118,46 @@ az rest --method delete --url "https://graph.microsoft.com/v1.0/groups(uniqueNam
 | The Entra object | Entra admin center > Entra ID > Groups |
 | The directory change and its actor | Entra admin center > Entra ID > Monitoring & health > Audit logs |
 | The deployment | Azure portal > Resource groups > `rg-agent-steward` > Deployments |
+
+## Agent ID objects
+
+Bicep cannot create Agent ID objects (see [Why](#why)), so the scripts in `setup/agent-id/` create them with Graph PowerShell. Every script is safe to run again: it looks each object up by name and creates it only if it is missing.
+
+An agent needs three kinds of object, created in this order:
+
+```
+1. Blueprint             ->  2. Blueprint principal          ->  3. Agent identities
+   (an application)          (its service principal here)        (service principals, many)
+```
+
+Creating the blueprint does not create its principal. That is a second call, the same as for a normal application. The portal wizard is the only exception: it creates both.
+
+### Steps to create a blueprint and its agents
+
+| # | Step | Graph call | Delegated permission | When needed | In this project |
+|---|---|---|---|---|---|
+| 1 | Create the blueprint. A sponsor is required; an owner is optional. | `POST /v1.0/applications` with `@odata.type` = `Microsoft.Graph.AgentIdentityBlueprint` and the header `OData-Version: 4.0` | `AgentIdentityBlueprint.Create` | Always | `Set-Blueprint` |
+| 2 | Add a credential. Production: a managed identity as a federated identity credential. Local development: a certificate or a secret. | `POST /v1.0/applications/{id}/federatedIdentityCredentials`, or `.../addPassword` | `AgentIdentityBlueprint.AddRemoveCreds.All` | Before the blueprint can get tokens | `Set-ExpiringSecret`, for the expiring fixture |
+| 3 | Set an identifier URI and a scope | `PATCH /v1.0/applications/{id}` with `identifierUris` and `api.oauth2PermissionScopes` | `AgentIdentityBlueprint.UpdateAuthProperties.All` | Only when users or other agents call the agent (on-behalf-of flow) | Not used |
+| 4 | Create the blueprint principal | `POST /v1.0/servicePrincipals/microsoft.graph.agentIdentityBlueprintPrincipal` with the blueprint's `appId` | `AgentIdentityBlueprintPrincipal.Create` | Always | `Set-BlueprintPrincipal` |
+| 5 | Create an agent identity | `POST /beta/servicePrincipals/microsoft.graph.agentIdentity` with `agentIdentityBlueprintId` = the blueprint's `appId` | `AgentIdentity.Create.All` | Once per agent | `Set-AgentIdentity` |
+
+**Who may run them.** Agent ID Developer or Agent ID Administrator, or any user when the tenant setting "Users can create agent blueprints" is Yes. Only Agent ID Administrator may add a secret or a certificate. The owner of a blueprint can create its agent identities without an Agent ID role. This lab runs the scripts as Global Administrator, for tenant setup only.
+
+**Portal alternative.** Entra ID > Agents > Agent blueprints > New agent blueprint (Preview). The wizard does steps 1 and 4 only. To see the result in the portal, see [Agent ID objects in the portal](entra.md#agent-id-objects).
+
+**Not in scope.** The Learn how-to ends with one more step: register the blueprint in the Agent 365 registry. Agent 365 governance is a written design only in this project ([DESIGN-NOTES.md](../DESIGN-NOTES.md#3-agent-365-governance)).
+
+Source: [Create an agent identity blueprint](https://learn.microsoft.com/en-us/entra/agent-id/create-blueprint) (Microsoft Learn, checked 23 October 2026).
+
+### Run the Agent ID scripts
+
+The scripts need PowerShell 7 and the `Microsoft.Graph.Authentication` module. Each one signs in with `Connect-MgGraph` and asks only for the delegated permissions it needs.
+
+```sh
+pwsh ./setup/agent-id/Deploy-AgentIdentities.ps1 -TenantId <your-domain>.onmicrosoft.com
+pwsh ./setup/agent-id/Deploy-Fixtures.ps1 -TenantId <your-domain>.onmicrosoft.com
+```
 
 ## Cost
 

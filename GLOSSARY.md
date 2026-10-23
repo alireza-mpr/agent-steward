@@ -60,11 +60,11 @@ Application                                 Agent identity blueprint
 |---|---|---|---|---|---|
 | Application | `applications` | - | One, in its home tenant | Usually here | App registrations |
 | Service principal | `servicePrincipals` | `Application` | At most one | Rarely | Enterprise apps |
-| Agent identity blueprint | `applications`, type `agentIdentityBlueprint` | - | One, in its home tenant | **Always here** | Agents > Agent blueprints |
-| Blueprint principal | `servicePrincipals`, type `agentIdentityBlueprintPrincipal` | `Application` | At most one | No | - |
+| Agent identity blueprint | `applications`, type `agentIdentityBlueprint` | - | One, in its home tenant | **Always here** | Agents > Agent blueprints > open a row > Developer settings |
+| Blueprint principal | `servicePrincipals`, type `agentIdentityBlueprintPrincipal` | `Application` | At most one | No | Agents > Agent blueprints (each row is a principal) |
 | Agent identity | `servicePrincipals`, type `agentIdentity` | `ServiceIdentity` | **Many** | **Never** (not allowed) | Agents > Agent identities |
 
-Seen in this tenant: the blueprint `agent-steward-guardian` shows "Agent identities: 1" on the Agent blueprints page, and that child is `agent-steward-guardian-01`.
+Seen in this tenant: the blueprint `agent-steward-guardian` shows "Agent identities: 1" on the Agent blueprints page, and that child is `agent-steward-guardian-01`. Enterprise apps lists neither the blueprint principal nor the agent identity, although both are service principals.
 
 ## Flows and delegation
 
