@@ -21,7 +21,7 @@ How this project creates tenant objects as code: Bicep, Azure Resource Manager (
 
 ## Why
 
-Tenant setup must be reproducible (NFR5): the tenant can be rebuilt from the repo. Bicep is used for every Entra object type it supports. Graph PowerShell covers the types Bicep does not support.
+Tenant setup must be reproducible (NFR5): the tenant can be rebuilt from the repo. Bicep is used for every Entra object type it supports. Graph PowerShell covers the types Bicep does not support. The Agent ID object types (blueprint, blueprint principal, agent identity) are not in the Graph Bicep extension (`v1.0` and `beta`, version 1.0.0, checked 23 October 2026), so they are created with Graph PowerShell.
 
 ## The layers
 
