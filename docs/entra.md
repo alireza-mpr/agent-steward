@@ -1,6 +1,6 @@
 # Microsoft Entra reference
 
-Links, the licensing model, and what this project's tenant has.
+Links, the licensing model, and what this project's tenant has. For Bicep, ARM and how tenant objects are deployed as code, see [infra.md](infra.md).
 
 Checked against Microsoft Learn on 22 October 2026. Licensing changes often, so check the sources before relying on it.
 

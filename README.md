@@ -84,7 +84,7 @@ src/guardian/   Guardian agent (Python)
 src/mcp/        MCP server (official Python SDK): tools, allow-list, approval gate
 src/worker/     Live worker timer loop (PowerShell)
 tests/          Offline policy tests + live auth-flow tests
-docs/           Screenshots, diagrams
+docs/           Reference (entra.md, infra.md), screenshots, diagrams
 GLOSSARY.md     Ubiquitous language: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP
 THREATMODEL.md  OWASP Agentic Top 10 x MAESTRO
 DEMO.md         Screenshot walkthrough
