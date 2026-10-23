@@ -61,7 +61,7 @@ Checked against Microsoft Learn on 22 October 2026. Licensing changes often, so 
 | You want | Entra admin center page | Notes |
 |---|---|---|
 | Applications (the global definition of an app) | Entra ID > App registrations | Lists only apps registered in this tenant. Microsoft's own apps never appear here; they are registered in Microsoft's tenant. |
-| Service principals (the app's local account in this tenant) | Entra ID > Enterprise apps | **"Enterprise application" is the portal's name for a service principal.** The default filter (Application type = Enterprise Applications) hides Microsoft's apps. Change it to Microsoft Applications or All Applications to see them. |
+| Service principals (the app's local representation in this tenant) | Entra ID > Enterprise apps | **"Enterprise application" is the portal's name for a service principal.** The default filter (Application type = Enterprise Applications) hides Microsoft's apps. Change it to Microsoft Applications or All Applications to see them. |
 
 **What each one holds.** The application declares; the service principal holds this tenant's decisions. Neither contains code: they are identity records, like a badge and the list of doors it opens, not the person who carries it.
 
