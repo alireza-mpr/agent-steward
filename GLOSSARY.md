@@ -89,39 +89,45 @@ Seen in this tenant: the blueprint `agent-steward-guardian` shows "Agent identit
 
 ### Who it is vs how it proves it
 
-OAuth already separates two questions: the `client_id` says who the client is, and client authentication proves it. Agent ID answers them on different objects.
+**In one line:** an agent identity says who it is with its own `appId`, but it proves it with its blueprint's credential.
 
-| Question | Answered by | Lives on |
-|---|---|---|
-| Who is this? | `appId` | Each agent identity, on its own |
-| How does it prove it? | Credential | The blueprint, shared by all its agent identities |
+In OAuth, a client answers two questions. Its `client_id` says who it is. Its client authentication, such as a secret or a key, proves it. Agent ID puts these two answers on two different objects:
 
-- Each agent identity has its own `appId` because tokens, logs, permissions and disable all work per agent. With a shared `appId`, Entra could not tell the agents apart.
-- The credential is shared, so there is one secret to protect and rotate, not one per agent.
+- **Who it is - the agent identity:** Each agent identity has its own `appId`. So tokens, logs, permissions and disable all work per agent. With a shared `appId`, Entra could not tell the agents apart.
+- **How it proves it - the blueprint:** Only the blueprint holds a credential, and all its agent identities share it. So there is one secret to protect and rotate, not one per agent.
 
-The blueprint still needs its own `appId`, because it signs in by itself, and in OAuth only a client with a `client_id` can sign in.
+Because the agent identity holds no credential, it cannot sign in alone. So its blueprint signs in for it. That is why the blueprint needs its own `appId` too: in OAuth, only a client with a `client_id` can sign in.
 
-| Blueprint job | Why it needs an `appId` |
-|---|---|
-| Start the token exchange | It signs in with its credential to get the first token (T1) for an agent. A credential must belong to a client. |
-| Create agent identities | It calls Graph with its own app-only token. (This project's setup script uses the admin's delegated token instead.) |
-| Be the shared template | App roles, optional claims, publisher and multitenant publishing live on an application object, and every application object has an `appId`. |
+#### How it works
 
-So both are clients. The blueprint proves identity. The agent identity acts, and the token names it.
+1. **Blueprint signs in:** The blueprint asks Entra for a token, using its own `appId` and its credential. In the same request, it names the agent identity it acts for.
+2. **Entra issues T1:** Entra checks the blueprint's credential and returns a first token, T1, for that one agent identity. T1 is not for calling an API. Its only use is the next step.
+3. **Agent identity signs in:** The agent identity asks Entra for its own token, using its own `appId`. Unlike a normal client, it sends no secret or key. Instead, it sends T1 as its proof.
+4. **Entra issues the agent's token:** Entra accepts T1 and returns a token that names the agent identity as the client. So the API that receives this token sees the agent identity, not the blueprint.
 
-In strict OAuth terms, both are OAuth clients: each one calls the token endpoint with its own `client_id` and its own client authentication. On the wire it uses standard OAuth parameters, plus one Microsoft extension, `fmi_path`.
+#### The two requests
 
-| Request | `client_id` | Grant | Client authentication | Result |
-|---|---|---|---|---|
-| 1 | The blueprint's `appId` | `client_credentials` with `scope=api://AzureADTokenExchange/.default`, plus `fmi_path` = the agent identity's `appId` | Client secret, certificate, or federated identity credential. The last two are sent as an RFC 7523 `client_assertion`. | T1 |
-| 2 | The agent identity's `appId` | `client_credentials` (autonomous) or `jwt-bearer` (on-behalf-of) | `client_assertion` = T1 (RFC 7523) | A token that names the agent identity as the client |
+**Request 1 - the blueprint gets T1:**
 
-**Where it leaves plain OAuth:**
+- **`client_id`:** the blueprint's `appId`.
+- **Grant:** `client_credentials`, with `scope=api://AzureADTokenExchange/.default`.
+- **`fmi_path`:** the agent identity's `appId`. This is a Microsoft extension. It is not in any RFC.
+- **Client authentication:** a client secret, a certificate, or a federated identity credential. A certificate or a federated credential is sent as an RFC 7523 `client_assertion`.
 
-- In OAuth, a client usually proves itself with something it holds, like a secret or a key. The agent identity holds nothing. OAuth does allow a client to use an assertion that a third party, such as a token service, created for it (RFC 7521, section 3), but it does not say how the client gets that assertion. Entra fills that gap in a new way: the token service is Entra itself, and another client, the agent's own blueprint, asks for the assertion. The blueprint signs in with its credential and asks for T1 for this one agent identity (request 1). Then the agent identity presents T1 as its client assertion (request 2).
-- `fmi_path` is a Microsoft extension. It is not in any RFC.
+**Request 2 - the agent identity gets its token:**
 
-The closest OAuth anchor is an assertion from a third-party issuer (RFC 7521 section 3, RFC 7523 section 2.2). Entra's own name for this pattern is workload identity federation, and its federated identity credentials work the same way: Entra trusts an assertion from another issuer instead of a secret.
+- **`client_id`:** the agent identity's `appId`.
+- **Grant:** `client_credentials` in the autonomous flow, or `jwt-bearer` in the on-behalf-of (OBO) flow.
+- **Client authentication:** `client_assertion` = T1 (RFC 7523).
+
+#### Where it leaves plain OAuth
+
+- **The anchor:** OAuth already lets a client prove itself with an assertion that a third party created for it (RFC 7521 section 3, RFC 7523 section 2.2). Entra's federated identity credentials work the same way: Entra trusts an assertion from another issuer instead of a secret. Entra calls this pattern workload identity federation.
+- **The break:** OAuth does not say how the client gets that assertion. Entra fills this gap in a new way. The third party is Entra itself, and the one who asks for the assertion is another client: the agent's own blueprint.
+
+**In short:** both are OAuth clients. The blueprint proves identity. The agent identity acts, and the token names it.
+
+**Security note:** the blueprint's credential can get T1 for any of its agent identities, so a leaked blueprint credential exposes all of them.
 
 ## Flows and delegation
 
