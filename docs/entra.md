@@ -93,7 +93,7 @@ The Agent blueprints page lists **blueprint principals**, not blueprints. Openin
 | Agent identities of one blueprint | Open a row > **Linked agent identities** |
 | All agent identities | Entra ID > Agents > Agent identities |
 
-**Enterprise apps does not list them.** Blueprint principals and agent identities are service principals, but only the Agents pages and Graph show them. Seen in this tenant on 23 October 2026: Enterprise apps > All applications, search `agent-steward`, 0 results.
+**Enterprise apps does not list them.** Blueprint principals and agent identities are service principals, but only the Agents pages and Graph show them. Seen in this tenant on 23 October 2026: Enterprise apps > All applications, search `agent-steward`, 0 results. Microsoft Learn documents an Application type value "Agent ID (Preview)" that shows agent identities, but this tenant's filter offers only Enterprise Applications, Microsoft Applications, Managed Identities and All Applications.
 
 The logs on the management page are split by object. "Agent blueprint principal activity" has audit logs and sign-in logs. "Agent blueprint activity" has audit logs only. **Disable** on the overview page disables the principal, and then none of its agent identities can sign in.
 
