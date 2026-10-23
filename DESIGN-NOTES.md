@@ -47,6 +47,6 @@ Patterns that belong to a production version of this system but were deliberatel
 
 ## Future work
 
-Ideas that came up during the build but are outside the 14-day scope. One line each, with the reason it was left out. None of these are built.
+Ideas that came up during the build but are outside of the current scope. One line each, with the reason it was left out. None of these are built as of the writing of this document.
 
 - **CI/CD deployment of `setup/`** with GitHub Actions and OIDC federation: no stored secrets, a dedicated deploy identity, Contributor on one resource group, Graph application permissions, and a GitHub environment approval gate. Left out: federation is design-only in this project (see section 5).
