@@ -53,7 +53,8 @@ So Graph still has only two object types. A blueprint is an application. A bluep
                          -----------                        --------
  LEVEL 1                 Application                        Blueprint
  the definition          example: Microsoft Graph           example: agent-steward-guardian
- (an application)        Command Line Tools                 holds the credential
+ (an application)        Command Line Tools                 holds the credential, shared by
+                                                            all its agents
                               |                                  |
                               | one per tenant                   | one per tenant
                               v                                  v
@@ -65,8 +66,10 @@ So Graph still has only two object types. A blueprint is an application. A bluep
                                                                  v
  LEVEL 3                 - does not exist -                 Agent identity  agent-steward-guardian-01
  accounts for agents                                        Agent identity  (later: -02, -03, ...)
- (service principals)                                       each with its own appId,
-                                                            and no credential
+ (service principals)                                       each with its own appId;
+                                                            no credential of its own:
+                                                            signs in through the
+                                                            blueprint's credential
 ```
 
 **OOP view:** the blueprint is a class with a factory method. The blueprint principal is its one static instance in this tenant, and it runs the factory. The agent identities are the instances that the factory creates.
@@ -77,9 +80,9 @@ So Graph still has only two object types. A blueprint is an application. A bluep
 |---|---|---|---|---|---|
 | Application | `applications` | - | One, in its home tenant | Usually here | App registrations |
 | Service principal | `servicePrincipals` | `Application` | At most one | Rarely | Enterprise apps |
-| Agent identity blueprint | `applications`, type `agentIdentityBlueprint` | - | One, in its home tenant | **Always here** | Agents > Agent blueprints > open a row > Developer settings |
+| Agent identity blueprint | `applications`, type `agentIdentityBlueprint` | - | One, in its home tenant | **Always here**, shared by all its agent identities | Agents > Agent blueprints > open a row > Developer settings |
 | Blueprint principal | `servicePrincipals`, type `agentIdentityBlueprintPrincipal` | `Application` | At most one | No | Agents > Agent blueprints (each row is a principal) |
-| Agent identity | `servicePrincipals`, type `agentIdentity` | `ServiceIdentity` | **Many** | **Never** (not allowed) | Agents > Agent identities |
+| Agent identity | `servicePrincipals`, type `agentIdentity` | `ServiceIdentity` | **Many** | **None of its own** (not allowed); signs in through the blueprint's | Agents > Agent identities |
 
 Seen in this tenant: the blueprint `agent-steward-guardian` shows "Agent identities: 1" on the Agent blueprints page, and that child is `agent-steward-guardian-01`. Enterprise apps lists neither the blueprint principal nor the agent identity, although both are service principals.
 
