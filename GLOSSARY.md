@@ -11,6 +11,7 @@ Two rules keep this table honest:
 
 - [Core identity objects](#core-identity-objects)
   - [Object hierarchy](#object-hierarchy)
+  - [Who it is vs how it proves it](#who-it-is-vs-how-it-proves-it)
 - [Flows and delegation](#flows-and-delegation)
 - [Controls and lifecycle](#controls-and-lifecycle)
 - [Tooling](#tooling)
@@ -29,32 +30,48 @@ Two rules keep this table honest:
 | - (no equivalent) | Managed identity | No CDR analogue: the platform owns the credential, the app never sees one. |
 | IdentityServer admin: whoever can change the configuration store, the user store or the code | Global Administrator (the highest built-in Entra admin role) | Plain IdentityServer has no admin roles: whoever can change the config store or the code has full power. Entra has many smaller built-in roles (for example Application Administrator, Conditional Access Administrator). Microsoft recommends Global Administrator only for setup and emergencies; this project uses it for tenant setup only. |
 | ASP.NET Identity role: a named set of users, used for authorization | Security group: a directory object that holds members (users, devices, service principals) and is used to grant access in one place - app access, Conditional Access targeting, role assignments, licenses, agent sponsors. In Graph: `securityEnabled: true`, `mailEnabled: false`, `groupTypes: []`. The other main kind, the Microsoft 365 group (`groupTypes: ["Unified"]`), is for collaboration (mailbox, Teams), not access control. Membership is either assigned (members added by hand or by code; any member type) or dynamic (a rule on attributes, for example `user.department -eq "Finance"`; users or devices only, never service principals; needs Entra ID P1). A group cannot be both. | An Entra group is its own object with an ID, and its members can be non-humans. ASP.NET Identity has no rule-based membership; attribute rules live in app code (policy-based authorization), while Entra evaluates dynamic rules in the directory itself. Group membership is not in tokens by default. When the `groups` claim is turned on, it carries object IDs, not names, and more than 200 groups in a JWT trigger an overage claim instead of the list. |
-| Accredited software product + its SSA | Agent identity blueprint: in Graph, a special application (`@odata.type` `agentIdentityBlueprint`), with its blueprint principal as its service principal in the tenant (same `appId`, `servicePrincipalType` "Application"). It holds the credentials, and its only power is creating agent identities. A blueprint can be multitenant: the publisher offers it through Microsoft catalogs, and adding it to a customer tenant creates a blueprint principal there. Its agent identities are then created in the customer tenant and stay single-tenant; the credentials stay on the blueprint in the publisher's tenant. | The blueprint is a live template that holds credentials and mints identities; an SSA was a one-shot signed statement. |
-| A deployed instance of a client (in IdentityServer: one more `Client` entry per instance, each with its own secret) | Agent identity: a special service principal (`@odata.type` `agentIdentity`, `servicePrincipalType` "ServiceIdentity") created by a blueprint. It has its own `appId`, and `agentIdentityBlueprintId` points to its blueprint. Seen here: the portal wizard for a new blueprint also created a first agent identity with the same display name. | It holds no credentials and gets tokens only through its blueprint. It is single-tenant, and it needs a sponsor when it is created. An IdentityServer client instance has its own secret and can exist alone. |
+| Accredited software product + its SSA | Agent identity blueprint: in Graph, a special application (`@odata.type` `agentIdentityBlueprint`), with its blueprint principal as its service principal in the tenant (same `appId`, `servicePrincipalType` "Application"). It holds the credentials, and its only power is creating agent identities. A blueprint can be multitenant: the publisher offers it through Microsoft catalogs, and adding it to a customer tenant creates a blueprint principal there. Its agent identities are then created in the customer tenant and stay single-tenant; the credentials stay on the blueprint in the publisher's tenant. A blueprint can have at most 250 agent identities when a non-Microsoft platform creates them with app-only permissions. Delegated calls (like this project's setup script) and Microsoft's own platforms have no such limit. | The blueprint is a live template that holds credentials and mints identities; an SSA was a one-shot signed statement. |
+| A deployed instance of a client (in IdentityServer: one more `Client` entry per instance, each with its own secret) | Agent identity: a special service principal (`@odata.type` `agentIdentity`, `servicePrincipalType` "ServiceIdentity") created by a blueprint. It has its own `appId`, always equal to its object ID (`id`), and `agentIdentityBlueprintId` holds its blueprint's `appId`. Seen here: the portal wizard for a new blueprint also created a first agent identity with the same display name. | It holds no credentials and gets tokens only through its blueprint. It is single-tenant, and it needs a sponsor when it is created. An IdentityServer client instance has its own secret and can exist alone. |
 | A client's business owner vs its technical contact (B2B onboarding) | Sponsor vs owner. **Sponsor:** the human (or a dynamic or Microsoft 365 group) accountable for the agent's purpose and lifecycle; required when a blueprint or agent identity is created; can only disable, soft-delete and change sponsors. **Owner:** the technician (a user or service principal, never a group); optional; can edit settings and credentials, re-enable, restore and hard-delete. | In onboarding these are usually contacts on a form. In Entra both are directory relationships with their own permissions, and the sponsor is enforced at creation. Changing a blueprint's sponsors later returned 403 here with the documented permission, so this project sets sponsors only at creation. The requirement is checked only at creation: when a sponsor's user account was deleted, Entra removed the link and left the agent with zero sponsors, with no warning. |
 | CDR Register (who is accredited, who is accountable) | Agent registry (Agent ID blade; Agent 365 registry) | The CDR Register was ecosystem-wide and regulator-run; the agent registry is per-tenant and self-governed - which is exactly why owner/sponsor fields exist. |
 | Dynamic Client Registration (RFC 7591) | Programmatic agent identity creation from a blueprint; also literal DCR in MCP client onboarding | Blueprint creation is Graph-API-driven, not the RFC 7591 protocol; MCP, however, uses the actual RFC. |
 
 ### Object hierarchy
 
-The classic app model and the Agent ID model have the same shape: a definition (the "class") and its local accounts (the "objects"). The difference is how many objects one definition may have in a tenant.
+**The short version:** think in **three levels**. A classic app has two of them. Agent ID adds a third.
+
+| Level | Classic app | Agent ID | Graph object type | How many per tenant |
+|---|---|---|---|---|
+| 1. The definition (the "class") | Application | **Blueprint** | application | One, in its home tenant |
+| 2. Its **own** account in the tenant | Service principal | **Blueprint principal** | service principal | One |
+| 3. Accounts for its **agents** | **- does not exist -** | **Agent identities** | service principal | **Many** |
+
+So Graph still has only two object types. A blueprint is an application. A blueprint principal and an agent identity are both service principals, but with different jobs: the blueprint principal is the blueprint's own account, and each agent identity is the account of one agent.
 
 ```
-Classic app                                 Agent ID
------------                                 --------
-Application                                 Agent identity blueprint
-(the class; lives in its home tenant;       (a special application; the class;
- usually holds the credentials)              always holds the credentials)
-  |                                           |
-  +-- Service principal                       +-- Blueprint principal
-      (its object in one tenant;              |   (a special service principal, same appId:
-       at most ONE per tenant)                |    the blueprint's presence in this tenant)
-                                              |
-                                              +-- Agent identity     (a special service principal;
-                                              +-- Agent identity      MANY per tenant; own appId;
-                                              +-- ...                 no credentials; points back
-                                                                      to its blueprint)
+                         CLASSIC APP                        AGENT ID
+                         -----------                        --------
+ LEVEL 1                 Application                        Blueprint
+ the definition          example: Microsoft Graph           example: agent-steward-guardian
+ (an application)        Command Line Tools                 holds the credential
+                              |                                  |
+                              | one per tenant                   | one per tenant
+                              v                                  v
+ LEVEL 2                 Service principal                  Blueprint principal
+ its own account         Graph CLI Tools'                   agent-steward-guardian
+ (a service principal)   account in this tenant             (same appId as the blueprint)
+                                                                 |
+                                                                 | creates MANY
+                                                                 v
+ LEVEL 3                 - does not exist -                 Agent identity  agent-steward-guardian-01
+ accounts for agents                                        Agent identity  (later: -02, -03, ...)
+ (service principals)                                       each with its own appId,
+                                                            and no credential
 ```
+
+**OOP view:** the blueprint is a class with a factory method. The blueprint principal is its one static instance in this tenant, and it runs the factory. The agent identities are the instances that the factory creates.
+
+**The detail per object:**
 
 | Object | Graph collection and type | `servicePrincipalType` | Per tenant | Credentials | Portal page |
 |---|---|---|---|---|---|
@@ -65,6 +82,42 @@ Application                                 Agent identity blueprint
 | Agent identity | `servicePrincipals`, type `agentIdentity` | `ServiceIdentity` | **Many** | **Never** (not allowed) | Agents > Agent identities |
 
 Seen in this tenant: the blueprint `agent-steward-guardian` shows "Agent identities: 1" on the Agent blueprints page, and that child is `agent-steward-guardian-01`. Enterprise apps lists neither the blueprint principal nor the agent identity, although both are service principals.
+
+### Who it is vs how it proves it
+
+OAuth already separates two questions: the `client_id` says who the client is, and client authentication proves it. Agent ID answers them on different objects.
+
+| Question | Answered by | Lives on |
+|---|---|---|
+| Who is this? | `appId` | Each agent identity, on its own |
+| How does it prove it? | Credential | The blueprint, shared by all its agent identities |
+
+- Each agent identity has its own `appId` because tokens, logs, permissions and disable all work per agent. With a shared `appId`, Entra could not tell the agents apart.
+- The credential is shared, so there is one secret to protect and rotate, not one per agent.
+
+The blueprint still needs its own `appId`, because it signs in by itself, and in OAuth only a client with a `client_id` can sign in.
+
+| Blueprint job | Why it needs an `appId` |
+|---|---|
+| Start the token exchange | It signs in with its credential to get the first token (T1) for an agent. A credential must belong to a client. |
+| Create agent identities | It calls Graph with its own app-only token. (This project's setup script uses the admin's delegated token instead.) |
+| Be the shared template | App roles, optional claims, publisher and multitenant publishing live on an application object, and every application object has an `appId`. |
+
+So both are clients. The blueprint proves identity. The agent identity acts, and the token names it.
+
+In strict OAuth terms, both are OAuth clients: each one calls the token endpoint with its own `client_id` and its own client authentication. On the wire it is standard OAuth.
+
+| Request | `client_id` | Grant | Client authentication | Result |
+|---|---|---|---|---|
+| 1 | The blueprint's `appId` | `client_credentials`, plus `fmi_path` = the agent identity | Secret, `private_key_jwt`, or a federated assertion (RFC 7523) | T1 |
+| 2 | The agent identity's `appId` | `client_credentials` (autonomous) or `jwt-bearer` (on-behalf-of) | `client_assertion` = T1 (RFC 7523) | A token that names the agent identity as the client |
+
+**Where it leaves plain OAuth:**
+
+- In OAuth, a client proves itself with something it holds. The agent identity holds nothing. Its assertion is a token that Entra issued to another client. OAuth has no idea of one client authenticating through another.
+- `fmi_path` is a Microsoft extension. It is not in any RFC.
+
+The closest OAuth anchor is workload identity federation: the client trusts an assertion from another issuer instead of holding a secret.
 
 ## Flows and delegation
 
