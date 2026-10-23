@@ -108,8 +108,8 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 
 | Req | Status | Evidence |
 |---|---|---|
-| FR1 - Agent identity via blueprint | not started | - |
-| FR2 - Owner + sponsor | not started | - |
+| FR1 - Agent identity via blueprint | in progress | The guardian's agent identity is created from a blueprint by [the setup script](setup/agent-id/Deploy-AgentIdentities.ps1) ([blueprints](docs/screenshots/phase1-agent-blueprints-list.png), [identities](docs/screenshots/phase1-agent-identities-list.png)). Running the guardian under it comes in Phase 2. |
+| FR2 - Owner + sponsor | in progress | Guardian: technical owner and business sponsor are different people ([screenshot](docs/screenshots/phase1-guardian-owner-and-sponsor.png)). The worker's identity comes in Phase 5. |
 | FR3 - Autonomous mode | not started | - |
 | FR4 - OBO mode | not started | - |
 | FR5 - Token validation | not started | - |
@@ -124,7 +124,7 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 | NFR2 - Attribution | not started | - |
 | NFR3 - Untrusted content boundary | not started | - |
 | NFR4 - Observability | not started | - |
-| NFR5 - Reproducibility | not started | - |
+| NFR5 - Reproducibility | in progress | Tenant setup as code: [Bicep smoke test](setup/bicep/phase0-smoke.bicep) and [Agent ID setup script](setup/agent-id/Deploy-AgentIdentities.ps1); see [infra.md](docs/infra.md). `docker compose` comes with the app. |
 | NFR6 - Repo hygiene | not started | - |
 | NFR7 - Threat model | not started | - |
 | NFR8 - Tests | not started | - |
