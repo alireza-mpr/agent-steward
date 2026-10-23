@@ -7,6 +7,14 @@ Two rules keep this table honest:
 1. Every mapping is a **learning scaffold**, not an exact equivalence. The last column says where the analogy breaks.
 2. A term is added the first time it appears in a build phase, not before. If a row has no "breaks" note yet, it is unverified.
 
+## Contents
+
+- [Core identity objects](#core-identity-objects)
+- [Flows and delegation](#flows-and-delegation)
+- [Controls and lifecycle](#controls-and-lifecycle)
+- [Tooling](#tooling)
+- [MCP corner](#mcp-corner)
+
 ## Core identity objects
 
 | Known world (OAuth2/OIDC/CDR) | New world (Entra / Agent ID) | Where the analogy breaks |

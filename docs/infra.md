@@ -2,6 +2,23 @@
 
 How this project creates tenant objects as code: Bicep, Azure Resource Manager (ARM) and Microsoft Graph.
 
+## Contents
+
+- [Why](#why)
+- [The layers](#the-layers)
+  - [Three ways to create the same object](#three-ways-to-create-the-same-object)
+  - [What ARM adds over plain Graph calls](#what-arm-adds-over-plain-graph-calls)
+- [Identity and permissions of a deploy](#identity-and-permissions-of-a-deploy)
+  - [Two separate role systems](#two-separate-role-systems)
+  - [Who is the actor](#who-is-the-actor)
+- [Where deployments go](#where-deployments-go)
+- [Files](#files)
+- [Run it](#run-it)
+- [Where to check a deploy](#where-to-check-a-deploy)
+- [Cost](#cost)
+- [Known issue: Bicep on Apple Silicon](#known-issue-bicep-on-apple-silicon)
+- [Not in scope](#not-in-scope)
+
 ## Why
 
 Tenant setup must be reproducible (NFR5): the tenant can be rebuilt from the repo. Bicep is used for every Entra object type it supports. Graph PowerShell covers the types Bicep does not support.

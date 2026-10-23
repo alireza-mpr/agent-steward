@@ -1,5 +1,15 @@
 # CLAUDE.md - project instructions
 
+## Contents
+
+- [What this project is](#what-this-project-is)
+- [Mentoring (important)](#mentoring-important)
+- [Locked scope decisions (do not reopen)](#locked-scope-decisions-do-not-reopen)
+- [Stack rules](#stack-rules)
+- [Security rules (non-negotiable)](#security-rules-non-negotiable)
+- [Workflow rules](#workflow-rules)
+- [Git / repo hygiene](#git--repo-hygiene)
+
 ## What this project is
 
 A portfolio project built in a strict 14-day timebox (~5 hrs/day): an "Agent Registry Guardian" demonstrating Microsoft Entra Agent ID end to end. The spec is in README.md. The day-by-day plan is in ROADMAP.md. Both are the source of truth; do not expand scope beyond them.

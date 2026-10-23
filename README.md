@@ -6,6 +6,17 @@ The guardian has its own Entra agent identity (created from an agent identity bl
 
 The point of this project: demonstrate, end to end, how an autonomous agent can be **identified, authenticated, authorized, constrained, observed and revoked** using Microsoft Entra Agent ID - with Zero Trust and least privilege applied at every step.
 
+## Contents
+
+- [Architecture](#architecture)
+  - [Agents in this demo](#agents-in-this-demo)
+- [Functional requirements](#functional-requirements)
+- [Non-functional requirements](#non-functional-requirements)
+- [Deliberately out of code scope](#deliberately-out-of-code-scope)
+- [Security controls at a glance](#security-controls-at-a-glance)
+- [Repository layout](#repository-layout)
+- [Delivery status](#delivery-status)
+
 ## Architecture
 
 ```mermaid

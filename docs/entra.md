@@ -4,6 +4,27 @@ Links, the licensing model, and what this project's tenant has. For Bicep, ARM a
 
 Checked against Microsoft Learn on 22 October 2026. Licensing changes often, so check the sources before relying on it.
 
+## Contents
+
+- [Links](#links)
+  - [Portals](#portals)
+  - [Tools](#tools)
+  - [Documentation](#documentation)
+- [Finding things in the portal](#finding-things-in-the-portal)
+  - [Applications vs service principals](#applications-vs-service-principals)
+  - [What to look at in a service principal](#what-to-look-at-in-a-service-principal)
+- [What a license does](#what-a-license-does)
+- [The model](#the-model)
+  - [Reading a plan name](#reading-a-plan-name)
+  - [Licenses and admin roles are separate](#licenses-and-admin-roles-are-separate)
+  - [Which identities use a license](#which-identities-use-a-license)
+- [Entra ID editions](#entra-id-editions)
+- [Bundles, ordered by Entra ID edition](#bundles-ordered-by-entra-id-edition)
+- [Agent ID licensing](#agent-id-licensing)
+- [Trials](#trials)
+- [This project's tenant](#this-projects-tenant)
+- [Sources](#sources)
+
 ## Links
 
 ### Portals

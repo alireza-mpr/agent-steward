@@ -4,6 +4,15 @@ Patterns that belong to a production version of this system but were deliberatel
 
 (To be written in Phase 7. Headings and prompts below.)
 
+## Contents
+
+- [1. Token exchange (RFC 8693) - narrowing tokens](#1-token-exchange-rfc-8693---narrowing-tokens)
+- [2. AIMS - AI Identity Management System](#2-aims---ai-identity-management-system)
+- [3. Agent 365 governance](#3-agent-365-governance)
+- [4. Dynamic agent registration - the CDR parallel](#4-dynamic-agent-registration---the-cdr-parallel)
+- [5. Workload identity federation for non-Microsoft agents](#5-workload-identity-federation-for-non-microsoft-agents)
+- [Future work](#future-work)
+
 ## 1. Token exchange (RFC 8693) - narrowing tokens
 
 - What: exchange a broad token for a narrower, audience-specific downstream token before calling a second API.
