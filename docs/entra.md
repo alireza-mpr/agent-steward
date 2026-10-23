@@ -32,6 +32,25 @@ Checked against Microsoft Learn on 22 October 2026. Licensing changes often, so 
 | Bicep templates for Microsoft Graph | https://learn.microsoft.com/en-us/graph/templates/bicep/overview-bicep-templates-for-graph |
 | Microsoft Entra licensing | https://learn.microsoft.com/en-us/entra/fundamentals/licensing |
 
+## Finding things in the portal
+
+### Applications vs service principals
+
+| You want | Entra admin center page | Notes |
+|---|---|---|
+| Applications (the global definition of an app) | Entra ID > App registrations | Lists only apps registered in this tenant. Microsoft's own apps never appear here; they are registered in Microsoft's tenant. |
+| Service principals (the app's local account in this tenant) | Entra ID > Enterprise apps | **"Enterprise application" is the portal's name for a service principal.** The default filter (Application type = Enterprise Applications) hides Microsoft's apps. Change it to Microsoft Applications or All Applications to see them. |
+
+### What to look at in a service principal
+
+| Tab | Shows |
+|---|---|
+| Properties | The Object ID (this service principal, unique to this tenant) and the Application ID (the `appId`, the same in every tenant) |
+| Permissions | Which permissions were consented, by an admin or by users |
+| Sign-in logs | When the app signed in to this tenant |
+
+Example: the "Microsoft Graph Command Line Tools" service principal is created when a user first consents in `Connect-MgGraph`. Its Permissions tab shows the scopes that the user consented to.
+
 ## What a license does
 
 - Microsoft sells its cloud products as **bundles**, priced per user per month.
