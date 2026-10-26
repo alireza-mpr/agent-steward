@@ -100,8 +100,10 @@ Every participant has a service principal in the tenant, whichever way the token
 |---|---|
 | Properties | The Object ID (this service principal, unique to this tenant) and the Application ID (the `appId`, the same in every tenant) |
 | Security > Permissions | The permissions this app **was granted** on other APIs, as a client (outgoing). **Admin consent:** grants for the whole organization, either application permissions or delegated permissions for all users. **User consent:** delegated permissions that single users granted for themselves. |
-| Manage > Users and groups | Who holds this app's roles, as an API (incoming): users, groups, and also service principals. Seen in this tenant on 26 October 2026: `agent-steward-identity-api` lists the agent identity `agent-steward-guardian-01`, which holds `Findings.Submit`. In Graph: `GET /servicePrincipals/{id}/appRoleAssignedTo`. |
+| Manage > Users and groups | Who holds this app's roles, as an API (incoming): users, groups, and also service principals. It shows one row per role assignment, so a principal with four roles appears four times. Seen in this tenant on 26 October 2026: `agent-steward-identity-api` lists the agent identity `agent-steward-guardian-01`, which holds `Findings.Submit`, and Microsoft Graph lists it four times, once per Graph permission ([screenshot](screenshots/phase2-guardian-graph-permissions.png)). In Graph: `GET /servicePrincipals/{id}/appRoleAssignedTo`. |
 | Sign-in logs | When the app signed in to this tenant |
+
+**Microsoft Graph's name in the portal.** Enterprise apps shows Microsoft Graph's service principal as **GraphAggregatorService**, while Graph itself calls it "Microsoft Graph". Its Application ID tells you which one it is: `00000003-0000-0000-c000-000000000000`, the same in every tenant.
 
 **Who can hold an app's roles.** An app role assignment links one principal to one role of an API's service principal. The principal can be a user, a group, or another service principal, including an agent identity. So assignments run user-to-app and app-to-app alike. Each role sets which kinds it accepts (`allowedMemberTypes`): `Application` for service principals, and `User` for users and groups. This project's `Findings.Submit` accepts only service principals.
 
