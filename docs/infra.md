@@ -17,6 +17,7 @@ How this project creates tenant objects as code: Bicep, Azure Resource Manager (
 - [Where to check a deploy](#where-to-check-a-deploy)
 - [Agent ID objects](#agent-id-objects)
   - [Steps to create a blueprint and its agents](#steps-to-create-a-blueprint-and-its-agents)
+  - [The blueprint's credential](#the-blueprints-credential)
   - [Run the Agent ID scripts](#run-the-agent-id-scripts)
 - [Cost](#cost)
 - [Known issue: Bicep on Apple Silicon](#known-issue-bicep-on-apple-silicon)
@@ -149,6 +150,46 @@ Creating the blueprint does not create its principal. That is a second call, the
 **Not in scope.** The Learn how-to ends with one more step: register the blueprint in the Agent 365 registry. Agent 365 governance is a written design only in this project ([DESIGN-NOTES.md](../DESIGN-NOTES.md#3-agent-365-governance)).
 
 Source: [Create an agent identity blueprint](https://learn.microsoft.com/en-us/entra/agent-id/create-blueprint) (Microsoft Learn, checked 23 October 2026).
+
+### The blueprint's credential
+
+The blueprint's credential proves the blueprint when it asks Entra for T1 (see [Who it is vs how it proves it](../GLOSSARY.md#who-it-is-vs-how-it-proves-it)). The blueprint is only a record in the directory, so it cannot send that request itself. The program that sends it holds the credential: a hosting platform, a sidecar, or the agent's own code.
+
+**Two layers.** In OAuth, a confidential client must present a client credential as proof that it is the client it claims to be. Two layers are involved:
+
+- **The credential type:** What is registered on the client, here the blueprint. It is a secret, a certificate, or a federated identity credential.
+- **The client authentication method:** How the proof is sent in the token request. Entra supports two: `client_secret` and `client_assertion`.
+
+**Which type.**
+
+- **Managed identity, as a federated identity credential:** Microsoft's recommendation for production. Nobody creates or rotates anything, because Azure manages the hidden credential. It works only when the code runs on an Azure service. Sent as a `client_assertion`: the managed identity's token.
+- **Certificate (`keyCredentials`):** For local development and testing, or where a managed identity cannot work. Microsoft's [autonomous flow page](https://learn.microsoft.com/en-us/entra/agent-id/agent-autonomous-app-oauth-flow) prefers it over a secret. Sent as a `client_assertion`: a JWT signed with the private key.
+- **Secret (`passwordCredentials`):** For local development and testing only. Entra generates the value and shows it only once. Sent as `client_secret`: the secret itself.
+
+This project runs locally, not in Azure. So the guardian's blueprint gets a certificate in Phase 2. The expiring fixture has a secret on purpose.
+
+**How a certificate is set up.** It is not created on the fly. A person or a setup script creates it once, ahead of time:
+
+1. **Make the key pair:** Create a private key and a certificate that holds the matching public key, for example with `openssl`.
+2. **Upload the public part:** Add the certificate (the public key only) to the blueprint's `keyCredentials` through Graph. This needs the Agent ID Administrator role and the `AgentIdentityBlueprint.AddRemoveCreds.All` permission.
+3. **Hand over the private key:** Give the private key only to the program that sends the T1 request, through environment injection or a mounted file (FR10). It never goes into the repo or to Entra.
+4. **Use it many times:** For each T1 request, that program signs a fresh, short-lived JWT (the `client_assertion`) with the private key. So the certificate stays the same, while every proof and every token is new.
+
+**Where each half lives.**
+
+- **Private key:** One key, shared by all agents of the blueprint. It is kept in one store, for example Azure Key Vault, a cloud KMS, or (in this lab) a mounted file. Every program that sends T1 requests reads the same copy from that store. With a sidecar, only the sidecar reads it. A store like Key Vault or a KMS can also keep the key inside and sign for the program, so the key is never copied out.
+- **Public key:** The matching certificate, uploaded once to the blueprint in Entra.
+
+The key never says which agent is asking. Each program names its agent with that agent identity's `appId`, which is not a secret.
+
+Of the two types sent as a `client_assertion`, only a certificate has a private key to share. With a managed identity, nothing is copied.
+
+**Lifetime and rotation.**
+
+- **Lifetime:** Chosen when the certificate is created (its end date). A tenant policy can set a maximum. A short-lived lab like this one needs only 30 to 60 days.
+- **Rotation:** A blueprint can hold more than one certificate. So add the new one, switch the program to it, then remove the old one, with no downtime.
+
+Source: [Create an agent identity blueprint](https://learn.microsoft.com/en-us/entra/agent-id/create-blueprint), section "Configure credentials for the agent identity blueprint" (Microsoft Learn, checked 26 October 2026).
 
 ### Run the Agent ID scripts
 
