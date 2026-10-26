@@ -95,6 +95,7 @@ src/guardian/   Guardian agent (Python)
 src/mcp/        MCP server (official Python SDK): tools, allow-list, approval gate
 src/worker/     Live worker timer loop (PowerShell)
 tests/          Offline policy tests + live auth-flow tests
+tools/          Dev tools (token-claims: prints the claims of the guardian's token, never the token itself)
 docs/           Reference (entra.md, infra.md, agent-id.md), screenshots, diagrams
 GLOSSARY.md     Ubiquitous language: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP
 THREATMODEL.md  OWASP Agentic Top 10 x MAESTRO
@@ -108,7 +109,7 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 
 | Req | Status | Evidence |
 |---|---|---|
-| FR1 - Agent identity via blueprint | in progress | The guardian's agent identity is created from a blueprint by [the setup script](setup/agent-id/Deploy-AgentIdentities.ps1) ([blueprints](docs/screenshots/phase1-agent-blueprints-list.png), [identities](docs/screenshots/phase1-agent-identities-list.png)). Running the guardian under it comes in Phase 2. |
+| FR1 - Agent identity via blueprint | in progress | The guardian's agent identity is created from a blueprint by [the setup script](setup/agent-id/Deploy-AgentIdentities.ps1) ([blueprints](docs/screenshots/phase1-agent-blueprints-list.png), [identities](docs/screenshots/phase1-agent-identities-list.png)). The token sidecar gets a real token as this agent identity through its blueprint ([claims](docs/screenshots/phase2-guardian-token-claims.png)): `appid` is the agent identity, `xms_par_app_azp` is the blueprint, and the actor facets contain 11. The guardian's own code comes next. |
 | FR2 - Owner + sponsor | in progress | Guardian: technical owner and business sponsor are different people ([screenshot](docs/screenshots/phase1-guardian-owner-and-sponsor.png)). The worker's identity comes in Phase 5. |
 | FR3 - Autonomous mode | not started | - |
 | FR4 - OBO mode | not started | - |
@@ -117,14 +118,14 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 | FR7 - Human approval | not started | - |
 | FR8 - Audit | not started | - |
 | FR9 - Conditional Access | not started | - |
-| FR10 - Secrets | in progress | The guardian's blueprint uses a certificate. Only the public half goes to Entra, and the private key stays in `secrets/`, which git ignores ([script](setup/agent-id/Deploy-BlueprintCertificate.ps1), [how it works](docs/infra.md#the-blueprints-credential)). Mounting the key into the sidecar comes next. The gitleaks sweep comes in Phase 5. |
+| FR10 - Secrets | in progress | The guardian's blueprint uses a certificate. Only the public half goes to Entra, and the private key stays in `secrets/`, which git ignores ([script](setup/agent-id/Deploy-BlueprintCertificate.ps1), [how it works](docs/infra.md#the-blueprints-credential)). Only the token sidecar container mounts the key, so the guardian's code never sees it ([docker-compose.yml](docker-compose.yml), [local run](docs/infra.md#local-run-the-token-sidecar)). The gitleaks sweep comes in Phase 5. |
 | FR11 - Revocation | not started | - |
 | FR12 - Live worker | not started | - |
 | NFR1 - Least privilege | not started | - |
 | NFR2 - Attribution | not started | - |
 | NFR3 - Untrusted content boundary | not started | - |
 | NFR4 - Observability | not started | - |
-| NFR5 - Reproducibility | in progress | Tenant setup as code: [Bicep smoke test](setup/bicep/phase0-smoke.bicep) and [Agent ID setup script](setup/agent-id/Deploy-AgentIdentities.ps1); see [infra.md](docs/infra.md). `docker compose` comes with the app. |
+| NFR5 - Reproducibility | in progress | Tenant setup as code: [Bicep smoke test](setup/bicep/phase0-smoke.bicep) and [Agent ID setup script](setup/agent-id/Deploy-AgentIdentities.ps1); see [infra.md](docs/infra.md). [docker-compose.yml](docker-compose.yml) runs the token sidecar today ([local run](docs/infra.md#local-run-the-token-sidecar)); the app services join it as they are built. |
 | NFR6 - Repo hygiene | not started | - |
 | NFR7 - Threat model | not started | - |
 | NFR8 - Tests | not started | - |

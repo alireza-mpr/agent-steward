@@ -1,0 +1,65 @@
+# Local run (NFR5). Copy .env.example to .env and fill in the values first.
+#   docker compose up -d sidecar
+#   docker compose run --rm token-claims graph    # print the claims of the guardian's Graph token
+
+name: agent-steward
+
+services:
+  # Microsoft Entra ID Auth SDK (sidecar). It is the only container that holds the
+  # guardian blueprint's private key, and it makes both token requests (T1, T2).
+  # Anyone who can call it can get the guardian's tokens, so it listens on 127.0.0.1 only.
+  # Its callers join its network namespace (network_mode: service:sidecar), like
+  # containers in one Kubernetes pod. Other containers, and the host, cannot reach it.
+  # Since version 1.1 the sidecar also refuses non-loopback callers itself (403).
+  sidecar:
+    # Pinned by digest. Microsoft publishes linux/amd64 only. On Apple Silicon, turn on Docker
+    # Desktop's Rosetta emulation: under the older QEMU emulation the sidecar fails with 500s.
+    image: mcr.microsoft.com/entra-sdk/auth-sidecar:1.1.2-azurelinux3.0-distroless@sha256:73a8763100c93c3da1a3ed1ba3af2c6122c0517687354dceded30537a1aee97f
+    platform: linux/amd64
+    env_file:
+      - secrets/agent-steward-guardian.sidecar.env   # the PFX password (setup/agent-id/Deploy-BlueprintCertificate.ps1)
+    environment:
+      AzureAd__Instance: https://login.microsoftonline.com/
+      AzureAd__TenantId: ${TENANT_ID:?set TENANT_ID in .env}
+      # The sidecar signs in as the blueprint (request 1), then as the agent identity named in each call (request 2).
+      AzureAd__ClientId: ${GUARDIAN_BLUEPRINT_APP_ID:?set GUARDIAN_BLUEPRINT_APP_ID in .env}
+      AzureAd__ClientCredentials__0__SourceType: Path
+      AzureAd__ClientCredentials__0__CertificateDiskPath: /run/secrets/guardian_blueprint_pfx
+      # Microsoft Graph, app-only: the autonomous flow (FR3).
+      DownstreamApis__graph__BaseUrl: https://graph.microsoft.com/v1.0/
+      DownstreamApis__graph__Scopes__0: https://graph.microsoft.com/.default
+      DownstreamApis__graph__RequestAppToken: "true"
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://127.0.0.1:5000
+      # Lets the caller name the agent identity (AgentIdentity=...) on the app-only route.
+      # Off by default, and then the sidecar silently returns the blueprint's own token
+      # instead. This also allows other optionsOverride.* parameters, which is acceptable
+      # only because the caller must share the sidecar's loopback.
+      Sidecar__AllowOverrides__GetAuthorizationHeaderUnauthenticated: "true"
+    secrets:
+      - guardian_blueprint_pfx
+    networks:
+      - agent
+
+  # Dev tool: asks the sidecar for a token as the guardian and prints the token's claims.
+  # It never prints the token itself. Runs only on demand (profile "tools").
+  token-claims:
+    image: python:3.12-alpine
+    profiles: ["tools"]
+    network_mode: "service:sidecar"   # shares the sidecar's loopback
+    environment:
+      SIDECAR_URL: http://127.0.0.1:5000
+      GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
+    volumes:
+      - ./tools:/tools:ro
+    entrypoint: ["python", "/tools/token_claims.py"]
+    depends_on:
+      - sidecar
+
+secrets:
+  guardian_blueprint_pfx:
+    file: secrets/agent-steward-guardian.pfx
+
+networks:
+  agent:
+    driver: bridge

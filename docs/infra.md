@@ -19,6 +19,7 @@ How this project creates tenant objects as code: Bicep, Azure Resource Manager (
   - [Steps to create a blueprint and its agents](#steps-to-create-a-blueprint-and-its-agents)
   - [The blueprint's credential](#the-blueprints-credential)
   - [Run the Agent ID scripts](#run-the-agent-id-scripts)
+- [Local run: the token sidecar](#local-run-the-token-sidecar)
 - [Cost](#cost)
 - [Known issue: Bicep on Apple Silicon](#known-issue-bicep-on-apple-silicon)
 - [Not in scope](#not-in-scope)
@@ -207,6 +208,33 @@ pwsh ./setup/agent-id/Deploy-BlueprintCertificate.ps1 -TenantId <your-domain>.on
 - **`agent-steward-guardian.pfx`:** The private key and the certificate, protected by a random password. Only the sidecar mounts it.
 - **`agent-steward-guardian.crt`:** The public certificate, the same half that Entra holds. Not a secret.
 - **`agent-steward-guardian.sidecar.env`:** The PFX password, as the sidecar's environment variable.
+
+## Local run: the token sidecar
+
+The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). The sidecar is the only container that holds the guardian blueprint's private key, and it makes both token requests (T1 and T2) for the guardian. So the guardian's LLM-driven code never sees the key.
+
+**Before the first run.**
+
+1. **Certificate:** Run `Deploy-BlueprintCertificate.ps1` (see [Run the Agent ID scripts](#run-the-agent-id-scripts)). The sidecar mounts the PFX file as a Compose secret and reads its password from the `.sidecar.env` file.
+2. **IDs:** Copy `.env.example` to `.env` and fill in the tenant ID and the two app IDs. These are identifiers, not secrets, but git ignores `.env` so the real values stay out of the repo.
+3. **Apple Silicon:** Microsoft publishes the sidecar for `linux/amd64` only. Turn on Docker Desktop's Rosetta emulation (Settings > General). Under the older QEMU emulation, the sidecar fails with 500 errors after its first request.
+
+**Run it.**
+
+```sh
+docker compose up -d sidecar
+docker compose run --rm token-claims graph   # claims of the guardian's Graph token
+```
+
+`token-claims` prints the decoded claims, never the token itself ([example](screenshots/phase2-guardian-token-claims.png)). The claims hold real tenant and object IDs, so redact them in any screenshot.
+
+**Three settings that matter.**
+
+- **Loopback only:** Since version 1.1, the sidecar refuses any caller that is not on loopback (403). So it listens on `127.0.0.1`, and its callers join its network namespace (`network_mode: service:sidecar`), like containers in one Kubernetes pod. No other container, and not the host, can ask it for the guardian's tokens.
+- **Agent identity override:** `Sidecar__AllowOverrides__GetAuthorizationHeaderUnauthenticated` must be `true`. When it is off, the sidecar ignores the `AgentIdentity` parameter and silently returns the blueprint's own token instead. The Identity API's agent check will reject such a token, because its actor facets (`xms_act_fct`) do not contain 11.
+- **Pinned image:** The image is pinned by digest, so a changed image cannot slip in.
+
+Sources: the sidecar's [security](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/security), [configuration](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/configuration) and [endpoints](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/endpoints) pages (Microsoft Learn, checked 26 October 2026), and its source code ([`LocalCallerRestriction.cs`](https://github.com/AzureAD/microsoft-identity-web/blob/master/src/Microsoft.Identity.Web.Sidecar/LocalCallerRestriction.cs), [`AuthorizationHeaderEndpoint.cs`](https://github.com/AzureAD/microsoft-identity-web/blob/master/src/Microsoft.Identity.Web.Sidecar/Endpoints/AuthorizationHeaderEndpoint.cs)).
 
 ## Cost
 
