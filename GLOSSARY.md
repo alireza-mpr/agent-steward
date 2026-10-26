@@ -102,9 +102,25 @@ In OAuth, a client answers two questions. Its `client_id` says who it is. Its cl
 
 Because the agent identity holds no credential, it cannot sign in alone. So its blueprint signs in for it. That is why the blueprint needs its own `appId` too: in OAuth, only a client with a `client_id` can sign in.
 
+#### Why Agent ID splits them
+
+- **Agents on the fly:** The credential lives on the blueprint. So creating a new agent is one Graph call, with no secret to make, deliver or rotate. Because of this, a platform can create and delete agents on the fly, at scale.
+- **One credential, outside the agent:** Instead of one credential per agent, there is one credential on the blueprint. Because it belongs to the blueprint, it can live outside the agent's own code, for example in the hosting platform. This matters more for agents, because an LLM drives what an agent does. If the agent's code held a secret, a prompt injection could trick the agent into leaking it. When the credential lives outside the agent's code, the agent has no secret to leak.
+- **One place for governance:** Every agent signs in through its blueprint. So rotating one credential, or applying one Conditional Access policy to the blueprint, covers all its agents.
+
+So what is shared and what is per agent:
+
+- **Shared by all agents of a blueprint:** the credential, and the blueprint's `appId` (the `client_id` of request 1 below).
+- **Per agent:** the agent identity's `appId` (the `client_id` of request 2, and the client named in the final token).
+
 #### How it works
 
-The same agent code makes both requests. Only the `client_id` it sends tells Entra which client is asking. The diagram shows the autonomous flow. The on-behalf-of flow changes only request 2 (see [The two requests](#the-two-requests)).
+The same agent program makes both requests, so it plays two roles. Only the `client_id` it sends tells Entra which role it is in:
+
+- **Role 1, the blueprint (request 1):** It gets T1. Its proof is the blueprint's credential. With a certificate, that is a `client_assertion` signed with the private key that all agents of the blueprint share. Other credential types are listed under [The two requests](#the-two-requests).
+- **Role 2, the agent identity (request 2):** It gets T2, the access token. Its proof is T1, sent as a `client_assertion`.
+
+The diagram shows the autonomous flow. The on-behalf-of flow changes only request 2 (see [The two requests](#the-two-requests)).
 
 ```mermaid
 sequenceDiagram
@@ -112,19 +128,19 @@ sequenceDiagram
     participant Code as Agent code<br/>(has the blueprint's credential)
     participant Entra as Entra ID<br/>(token endpoint)
 
-    Note over Code,Entra: Request 1 - the client is the blueprint
+    Note over Code,Entra: Request 1 - the client is the blueprint<br/>The blueprint's credential is used only here
     Code->>Entra: client_id = the blueprint's appId<br/>proof = the blueprint's credential (secret, certificate or FIC)<br/>grant_type = client_credentials<br/>scope = api://AzureADTokenExchange/.default<br/>fmi_path = the agent identity's appId
     Entra-->>Code: The credential is valid, so Entra returns T1<br/>T1 is for the agent identity in fmi_path<br/>Its only use is request 2
 
-    Note over Code,Entra: Request 2 - the client is the agent identity
+    Note over Code,Entra: Request 2 - the client is the agent identity<br/>The blueprint's credential is not used
     Code->>Entra: client_id = the agent identity's appId<br/>proof = client_assertion = T1 (no secret of its own)<br/>grant_type = client_credentials | jwt-bearer in the OBO flow<br/>scope = the API's scope<br/>(for example https://graph.microsoft.com/.default)
-    Entra-->>Code: T1 is valid, so Entra returns an access token<br/>The token names the agent identity as the client
+    Entra-->>Code: T1 is valid and came from this agent's own blueprint<br/>so Entra returns T2, the agent's access token<br/>azp = the agent identity's appId (the client)<br/>xms_par_app_azp = the blueprint's appId (for logs only)
 ```
 
 1. **Blueprint signs in:** The blueprint asks Entra for a token, using its own `appId` and its credential. In the same request, it names the agent identity it acts for.
-2. **Entra issues T1:** Entra checks the blueprint's credential and returns a first token, T1, for that one agent identity. T1 is not for calling an API. Its only use is the next step.
-3. **Agent identity signs in:** The agent identity asks Entra for its own token, using its own `appId`. Unlike a normal client, it sends no secret or key. Instead, it sends T1 as its proof.
-4. **Entra issues the agent's token:** Entra accepts T1 and returns a token that names the agent identity as the client. So the API that receives this token sees the agent identity, not the blueprint.
+2. **Entra issues T1:** Entra checks the blueprint's credential and returns a first token, T1, for that one agent identity. So T1 is not a general blueprint token, and it is not for calling an API. Its only use is that agent's request 2.
+3. **Agent identity signs in:** The agent identity asks Entra for its own token, using its own `appId`. Unlike a normal client, it sends no secret or key. Instead, it sends T1 as its proof. The blueprint's credential is not used in this request.
+4. **Entra issues the agent's token (T2):** Entra checks that T1 is valid and came from this agent identity's own blueprint. Then it returns T2, a token that names the agent identity as the client. So the API that receives T2 sees the agent identity. T2 still names the blueprint in `xms_par_app_azp`, so the API can log which blueprint the agent belongs to.
 
 #### The two requests
 
@@ -141,14 +157,31 @@ sequenceDiagram
 - **Grant:** `client_credentials` in the autonomous flow, or `jwt-bearer` in the on-behalf-of (OBO) flow.
 - **Client authentication:** `client_assertion` = T1 (RFC 7523).
 
+#### Why two requests, not one
+
+The agent program holds the blueprint's key anyway, so in theory it could sign request 2 with it and skip T1. Entra does not allow this, because OAuth binds each proof to one client.
+
+- **Each request stays standard OAuth:** In `private_key_jwt` client authentication, the assertion's `sub` must be the `client_id` (RFC 7523 section 3), and the server checks the signature with keys registered for that client. A direct request would send the agent identity's `client_id` with a signature from the blueprint's key, which is registered on another client. With two requests, each proof matches its `client_id`: the blueprint's key proves the blueprint, and T1 proves the agent identity.
+- **T1 reuses federated credentials:** Learn calls T1 "the token-exchange token for FIC". Its audience, `api://AzureADTokenExchange`, is the same audience a managed identity token uses as a federated identity credential. So in effect, each agent identity is federated to its own blueprint, and Entra needed no new kind of credential.
+- **One T1 works with every grant:** T1 is a normal `client_assertion`, so the agent identity can use it with `client_credentials` (autonomous flow) or `jwt-bearer` (OBO flow). A direct "sign as my parent" rule would need special handling in each flow.
+
+Microsoft does not publish its reasons for the two-step design. These three follow from the design, the RFC and the Learn pages.
+
+**The same pattern elsewhere.** One trusted caller that gets tokens for many separate identities is common:
+
+- **GCP service account impersonation:** One caller with the Token Creator role gets access tokens for many service accounts. Each service account keeps its own permissions and audit trail.
+- **AWS STS AssumeRole:** One principal assumes many roles. Each role has its own permissions, and CloudTrail logs both the caller and the role.
+
+Unlike Entra, AWS and GCP do it in one call. There it is an authorization question on an IAM API: "may caller X get a token for Y?". Entra does it at the OAuth token endpoint, where the question is "does this client prove itself with its own credential?". So Entra splits it in two: first it gives the agent identity a proof (T1), and then the agent identity signs in like any other client.
+
 #### Where it leaves plain OAuth
 
 - **The anchor:** OAuth already lets a client prove itself with an assertion that a third party created for it (RFC 7521 section 3, RFC 7523 section 2.2). Entra's federated identity credentials work the same way: Entra trusts an assertion from another issuer instead of a secret. Entra calls this pattern workload identity federation.
 - **The break:** OAuth does not say how the client gets that assertion. Entra fills this gap in a new way. The third party is Entra itself, and the one who asks for the assertion is another client: the agent's own blueprint.
 
-**In short:** both are OAuth clients. The blueprint proves identity. The agent identity acts, and the token names it.
+**In short:** both are OAuth clients. T1 proves "the blueprint is asking, for this agent". T2 says "this agent is acting", and the API sees the agent.
 
-**Security note:** the blueprint's credential can get T1 for any of its agent identities, so a leaked blueprint credential exposes all of them.
+**Security note:** the cost of this design is the blast radius. A blueprint can get T1 for any of its agent identities, so a leaked blueprint credential exposes all of them.
 
 ## Flows and delegation
 
