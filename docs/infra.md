@@ -91,6 +91,7 @@ The first deploy also made Entra create a service principal for Microsoft's "Mic
 | [`setup/agent-id/AgentIdHelpers.ps1`](../setup/agent-id/AgentIdHelpers.ps1) | Shared helpers: Graph calls, permission scopes, and one safe-to-rerun `Set-*` function per object type |
 | [`setup/agent-id/Deploy-AgentIdentities.ps1`](../setup/agent-id/Deploy-AgentIdentities.ps1) | Creates the project's blueprints, blueprint principals and agent identities, plus a stand-in sponsor user |
 | [`setup/agent-id/Deploy-Fixtures.ps1`](../setup/agent-id/Deploy-Fixtures.ps1) | Creates the fixture agents with deliberate governance flaws (FR3) |
+| [`setup/agent-id/Deploy-BlueprintCertificate.ps1`](../setup/agent-id/Deploy-BlueprintCertificate.ps1) | Gives the guardian's blueprint a certificate credential: creates the key pair locally and uploads only the public certificate (FR10) |
 
 ## Run it
 
@@ -138,7 +139,7 @@ Creating the blueprint does not create its principal. That is a second call, the
 | # | Step | Graph call | Delegated permission | When needed | In this project |
 |---|---|---|---|---|---|
 | 1 | Create the blueprint. A sponsor is required; an owner is optional. | `POST /v1.0/applications` with `@odata.type` = `Microsoft.Graph.AgentIdentityBlueprint` and the header `OData-Version: 4.0` | `AgentIdentityBlueprint.Create` | Always | `Set-Blueprint` |
-| 2 | Add a credential. Production: a managed identity as a federated identity credential. Local development: a certificate or a secret. | `POST /v1.0/applications/{id}/federatedIdentityCredentials`, or `.../addPassword` | `AgentIdentityBlueprint.AddRemoveCreds.All` | Before the blueprint can get tokens | `Set-ExpiringSecret`, for the expiring fixture |
+| 2 | Add a credential. Production: a managed identity as a federated identity credential. Local development: a certificate or a secret. | `POST /v1.0/applications/{id}/federatedIdentityCredentials`, or `.../addPassword`, or for a first certificate `PATCH /v1.0/applications/{id}/microsoft.graph.agentIdentityBlueprint` with `keyCredentials` | `AgentIdentityBlueprint.AddRemoveCreds.All` | Before the blueprint can get tokens | `Deploy-BlueprintCertificate.ps1`, for the guardian; `Set-ExpiringSecret`, for the expiring fixture |
 | 3 | Set an identifier URI and a scope | `PATCH /v1.0/applications/{id}` with `identifierUris` and `api.oauth2PermissionScopes` | `AgentIdentityBlueprint.UpdateAuthProperties.All` | Only when users or other agents call the agent (on-behalf-of flow) | Not used |
 | 4 | Create the blueprint principal | `POST /v1.0/servicePrincipals/microsoft.graph.agentIdentityBlueprintPrincipal` with the blueprint's `appId` | `AgentIdentityBlueprintPrincipal.Create` | Always | `Set-BlueprintPrincipal` |
 | 5 | Create an agent identity | `POST /beta/servicePrincipals/microsoft.graph.agentIdentity` with `agentIdentityBlueprintId` = the blueprint's `appId` | `AgentIdentity.Create.All` | Once per agent | `Set-AgentIdentity` |
@@ -166,7 +167,7 @@ The blueprint's credential proves the blueprint when it asks Entra for T1 (see [
 - **Certificate (`keyCredentials`):** For local development and testing, or where a managed identity cannot work. Microsoft's [autonomous flow page](https://learn.microsoft.com/en-us/entra/agent-id/agent-autonomous-app-oauth-flow) prefers it over a secret. Sent as a `client_assertion`: a JWT signed with the private key.
 - **Secret (`passwordCredentials`):** For local development and testing only. Entra generates the value and shows it only once. Sent as `client_secret`: the secret itself.
 
-This project runs locally, not in Azure. So the guardian's blueprint gets a certificate in Phase 2. The expiring fixture has a secret on purpose.
+This project runs locally, not in Azure. So the guardian's blueprint has a certificate, created by [`Deploy-BlueprintCertificate.ps1`](../setup/agent-id/Deploy-BlueprintCertificate.ps1). The expiring fixture has a secret on purpose.
 
 **How a certificate is set up.** It is not created on the fly. A person or a setup script creates it once, ahead of time:
 
@@ -198,7 +199,14 @@ The scripts need PowerShell 7 and the `Microsoft.Graph.Authentication` module. E
 ```sh
 pwsh ./setup/agent-id/Deploy-AgentIdentities.ps1 -TenantId <your-domain>.onmicrosoft.com
 pwsh ./setup/agent-id/Deploy-Fixtures.ps1 -TenantId <your-domain>.onmicrosoft.com
+pwsh ./setup/agent-id/Deploy-BlueprintCertificate.ps1 -TenantId <your-domain>.onmicrosoft.com
 ```
+
+`Deploy-BlueprintCertificate.ps1` also needs OpenSSL on the PATH. It writes three files to `secrets/`, which git ignores:
+
+- **`agent-steward-guardian.pfx`:** The private key and the certificate, protected by a random password. Only the sidecar mounts it.
+- **`agent-steward-guardian.crt`:** The public certificate, the same half that Entra holds. Not a secret.
+- **`agent-steward-guardian.sidecar.env`:** The PFX password, as the sidecar's environment variable.
 
 ## Cost
 

@@ -117,7 +117,7 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 | FR7 - Human approval | not started | - |
 | FR8 - Audit | not started | - |
 | FR9 - Conditional Access | not started | - |
-| FR10 - Secrets | not started | - |
+| FR10 - Secrets | in progress | The guardian's blueprint uses a certificate. Only the public half goes to Entra, and the private key stays in `secrets/`, which git ignores ([script](setup/agent-id/Deploy-BlueprintCertificate.ps1), [how it works](docs/infra.md#the-blueprints-credential)). Mounting the key into the sidecar comes next. The gitleaks sweep comes in Phase 5. |
 | FR11 - Revocation | not started | - |
 | FR12 - Live worker | not started | - |
 | NFR1 - Least privilege | not started | - |
