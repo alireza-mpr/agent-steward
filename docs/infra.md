@@ -154,7 +154,7 @@ Source: [Create an agent identity blueprint](https://learn.microsoft.com/en-us/e
 
 ### The blueprint's credential
 
-The blueprint's credential proves the blueprint when it asks Entra for T1 (see [Who it is vs how it proves it](../GLOSSARY.md#who-it-is-vs-how-it-proves-it)). The blueprint is only a record in the directory, so it cannot send that request itself. The program that sends it holds the credential: a hosting platform, a sidecar, or the agent's own code.
+The blueprint's credential proves the blueprint when it asks Entra for T1 (see [Who it is vs how it proves it](agent-id.md#who-it-is-vs-how-it-proves-it)). The blueprint is only a record in the directory, so it cannot send that request itself. The program that sends it holds the credential: a hosting platform, a sidecar, or the agent's own code.
 
 **Two layers.** In OAuth, a confidential client must present a client credential as proof that it is the client it claims to be. Two layers are involved:
 
