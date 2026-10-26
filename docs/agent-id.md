@@ -169,9 +169,12 @@ The on-behalf-of (OBO) flow follows the same steps. Only request 2 changes, as t
 
 **In one line:** an app-only token is about the agent identity itself, with no user (a human) in it, so its permissions come from what an admin granted, not from what the agent asks for.
 
-- **The scope names only the API:** In the app-only flow, the `scope` is always the API's identifier plus `/.default`, for example `https://graph.microsoft.com/.default`. So it names the API, not single permissions.
+- **Application permissions are app roles:** What the portal calls an "application permission", for example `AuditLog.Read.All`, is an app role on the API's application. Granting it creates an app role assignment from the client's service principal (here, the agent identity) to the API's service principal. So it is a fixed fact about the identity, like a role in role-based access control, and not a choice made per request.
+- **No user, so no consent at runtime:** In a delegated flow, Entra can show the user a consent prompt for exactly the scopes requested at that moment. An app-only client has no user to ask, so an admin must grant its permissions ahead of time. There is no incremental or dynamic consent for app-only clients.
+- **The scope names only the API:** So in the app-only flow, the `scope` is always the API's identifier plus `/.default`, for example `https://graph.microsoft.com/.default`. It names the API, not single permissions.
 - **The admin decides the permissions:** `.default` means "every application permission that an admin granted to this client for this API". So Entra puts all of them into the token's `roles` claim, and the token has no `scp` claim.
-- **No subset per request:** In plain OAuth, a client can ask for a subset of its scopes. Entra does not let an app-only client narrow its token. So least privilege comes from granting each agent identity only what it needs.
+- **No subset per request:** In plain OAuth, and in IdentityServer, a client can ask for a subset of its scopes. Entra does not let an app-only client narrow its token. So least privilege comes from granting each agent identity only what it needs.
+- **A named scope is refused:** Asking for `https://graph.microsoft.com/AuditLog.Read.All` instead of `/.default` fails. Seen in this lab on 26 October 2026: the token sidecar refused it before it called Entra, with `IDW10404: 'scope' parameter should be of the form 'AppIdUri/.default'`. Microsoft Learn's [client credentials flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow) also requires the resource identifier plus `.default`.
 
 Asking for single named scopes, which arrive in the `scp` claim, works only in delegated flows such as on-behalf-of, where a user (a human) is in the token.
 
