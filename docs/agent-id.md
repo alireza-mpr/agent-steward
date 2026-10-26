@@ -14,6 +14,7 @@ This doc explains how the Microsoft Entra Agent ID objects fit together, and how
 - [How an agent signs in](#how-an-agent-signs-in)
   - [How it works](#how-it-works)
   - [The two requests](#the-two-requests)
+  - [App-only tokens and the .default scope](#app-only-tokens-and-the-default-scope)
   - [Why two requests, not one](#why-two-requests-not-one)
   - [What the two requests are not](#what-the-two-requests-are-not)
   - [Where it leaves plain OAuth](#where-it-leaves-plain-oauth)
@@ -163,6 +164,16 @@ The on-behalf-of (OBO) flow follows the same steps. Only request 2 changes, as t
 
 - **`azp`:** the agent identity's `appId`, the client.
 - **`xms_par_app_azp`:** the blueprint's `appId`. Use it in logs, but do not authorize on it.
+
+### App-only tokens and the .default scope
+
+**In one line:** an app-only token is about the agent identity itself, with no user (a human) in it, so its permissions come from what an admin granted, not from what the agent asks for.
+
+- **The scope names only the API:** In the app-only flow, the `scope` is always the API's identifier plus `/.default`, for example `https://graph.microsoft.com/.default`. So it names the API, not single permissions.
+- **The admin decides the permissions:** `.default` means "every application permission that an admin granted to this client for this API". So Entra puts all of them into the token's `roles` claim, and the token has no `scp` claim.
+- **No subset per request:** In plain OAuth, a client can ask for a subset of its scopes. Entra does not let an app-only client narrow its token. So least privilege comes from granting each agent identity only what it needs.
+
+Asking for single named scopes, which arrive in the `scp` claim, works only in delegated flows such as on-behalf-of, where a user (a human) is in the token.
 
 ### Why two requests, not one
 
