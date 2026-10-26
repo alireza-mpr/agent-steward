@@ -226,7 +226,7 @@ docker compose up -d sidecar
 docker compose run --rm token-claims graph   # claims of the guardian's Graph token
 ```
 
-`token-claims` prints the decoded claims, never the token itself ([example](screenshots/phase2-guardian-token-claims.png)). The claims hold real tenant and object IDs, so redact them in any screenshot.
+`token-claims` prints the decoded claims, never the token itself ([example](screenshots/phase2-guardian-token-claims.png)). The claims hold real tenant and object IDs, so redact them in any screenshot. For what each claim means, see [Agent tokens](tokens.md).
 
 **Three settings that matter.**
 

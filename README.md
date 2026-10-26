@@ -96,7 +96,7 @@ src/mcp/        MCP server (official Python SDK): tools, allow-list, approval ga
 src/worker/     Live worker timer loop (PowerShell)
 tests/          Offline policy tests + live auth-flow tests
 tools/          Dev tools (token-claims: prints the claims of the guardian's token, never the token itself)
-docs/           Reference (entra.md, infra.md, agent-id.md), screenshots, diagrams
+docs/           Reference (entra.md, infra.md, agent-id.md, tokens.md), screenshots, diagrams
 GLOSSARY.md     Ubiquitous language: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP
 THREATMODEL.md  OWASP Agentic Top 10 x MAESTRO
 DEMO.md         Screenshot walkthrough

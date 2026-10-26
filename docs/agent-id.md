@@ -139,6 +139,8 @@ sequenceDiagram
 4. **Entra issues T2:** Entra checks that T1 is valid and came from this agent identity's own blueprint. Then it returns T2, the agent's access token, which names the agent identity as the client.
 5. **Agent calls the API:** The agent sends T2 to the API. So the API sees the agent identity as the caller, and it can also log which blueprint the agent belongs to.
 
+To see what T2 contains, claim by claim, and what an API must check, see [Agent tokens](tokens.md).
+
 The on-behalf-of (OBO) flow follows the same steps. Only request 2 changes, as the next section shows.
 
 ### The two requests
