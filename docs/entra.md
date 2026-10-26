@@ -12,6 +12,8 @@ Checked against Microsoft Learn on 22 October 2026. Licensing changes often, so 
   - [Documentation](#documentation)
 - [Finding things in the portal](#finding-things-in-the-portal)
   - [Applications vs service principals](#applications-vs-service-principals)
+  - [Client, API, or both](#client-api-or-both)
+  - [What to look at in an application](#what-to-look-at-in-an-application)
   - [What to look at in a service principal](#what-to-look-at-in-a-service-principal)
   - [Agent ID objects](#agent-id-objects)
 - [What a license does](#what-a-license-does)
@@ -72,15 +74,40 @@ Checked against Microsoft Learn on 22 October 2026. Licensing changes often, so 
 | Other | Name, credentials, redirect URIs | Enabled or disabled, owners, who may use it, Conditional Access target, sign-in logs |
 | How many | One, in its home tenant | At most one per tenant |
 
+### Client, API, or both
+
+**In one line:** in Entra, the object type does not say which role an app plays. Its configuration, and its part in each token request, does.
+
+IdentityServer splits the roles into separate config types: a `Client` calls APIs, and an `ApiResource` or `ApiScope` describes an API. Entra uses one model for both. Every app is an application with a service principal in each tenant, and the same application can play either role, or both:
+
+- **As an API (resource):** It defines what callers can be granted: app roles (application permissions) and scopes (delegated permissions). Tokens are issued *for* it, and in this role it only receives and validates them. Its identifier goes into `aud`: its Application ID URI if it has one, or its client ID in v2 tokens. Examples: Microsoft Graph, and this project's `agent-steward-identity-api`, which has no URI, so its `aud` is its client ID.
+- **As a client:** It asks Entra for tokens and calls APIs with them. It usually lists the permissions it wants under "API permissions" and holds a credential, but not always. A public client like Microsoft Graph Command Line Tools holds no secret and uses PKCE. An agent identity has no app registration and no credential of its own. Examples: Microsoft Graph Command Line Tools, and the guardian's agent identity.
+- **As both:** A middle-tier service is an API when it receives a token from a front end, and a client when it asks for a new token to call a downstream API (the on-behalf-of flow).
+
+Every participant has a service principal in the tenant, whichever way the tokens flow. It is the object that grants and sign-in logs attach to, and for some app types Conditional Access policies too. So "Enterprise app" names the object, not the role: Microsoft Graph Command Line Tools (a client) and Microsoft Graph (an API) both appear there.
+
+### What to look at in an application
+
+| Page (App registrations > the app) | Shows | Direction |
+|---|---|---|
+| App roles | The application permissions it offers, as an API. They are defined and edited only here. Enterprise apps cannot change them. | Incoming |
+| Expose an API | The delegated scopes it offers, and its Application ID URI if it has one | Incoming |
+| API permissions | The permissions it requests on other APIs, as a client. It is only a wish list until someone consents. | Outgoing |
+
 ### What to look at in a service principal
 
-| Tab | Shows |
+| Tab (Enterprise apps > the app) | Shows |
 |---|---|
 | Properties | The Object ID (this service principal, unique to this tenant) and the Application ID (the `appId`, the same in every tenant) |
-| Permissions | Which permissions were consented, by an admin or by users |
+| Security > Permissions | The permissions this app **was granted** on other APIs, as a client (outgoing). **Admin consent:** grants for the whole organization, either application permissions or delegated permissions for all users. **User consent:** delegated permissions that single users granted for themselves. |
+| Manage > Users and groups | Who holds this app's roles, as an API (incoming): users, groups, and also service principals. Seen in this tenant on 26 October 2026: `agent-steward-identity-api` lists the agent identity `agent-steward-guardian-01`, which holds `Findings.Submit`. In Graph: `GET /servicePrincipals/{id}/appRoleAssignedTo`. |
 | Sign-in logs | When the app signed in to this tenant |
 
-Example: the "Microsoft Graph Command Line Tools" service principal is created when a user first consents in `Connect-MgGraph`. Its Permissions tab shows the scopes that the user consented to.
+**Who can hold an app's roles.** An app role assignment links one principal to one role of an API's service principal. The principal can be a user, a group, or another service principal, including an agent identity. So assignments run user-to-app and app-to-app alike. Each role sets which kinds it accepts (`allowedMemberTypes`): `Application` for service principals, and `User` for users and groups. This project's `Findings.Submit` accepts only service principals.
+
+Service principals do not grant roles by themselves. An admin creates the assignment: in the portal, through admin consent, or through Graph (like this project's Bicep). Or an app that holds `AppRoleAssignment.ReadWrite.All` creates it. That permission is blocked for agent identities, so an agent can never grant roles.
+
+Example: the "Microsoft Graph Command Line Tools" service principal is created when a user first consents in `Connect-MgGraph`. Its Permissions tab shows, under **User consent**, the scopes that the user consented to for themselves. An admin who ticks "Consent on behalf of your organization" creates admin consent instead.
 
 ### Agent ID objects
 
