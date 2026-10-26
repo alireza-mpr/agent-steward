@@ -7,7 +7,7 @@ How the Microsoft Entra Agent ID objects fit together, and how an agent identity
 - [Object hierarchy](#object-hierarchy)
 - [Who it is vs how it proves it](#who-it-is-vs-how-it-proves-it)
   - [Why Agent ID splits them](#why-agent-id-splits-them)
-  - [One agent identity per logical agent, not per replica](#one-agent-identity-per-logical-agent-not-per-replica)
+  - [One agent identity per logical agent, not per copy or session](#one-agent-identity-per-logical-agent-not-per-copy-or-session)
   - [How it works](#how-it-works)
   - [The two requests](#the-two-requests)
   - [Why two requests, not one](#why-two-requests-not-one)
@@ -81,7 +81,7 @@ Because the agent identity holds no credential, it cannot sign in alone. So its 
 
 ### Why Agent ID splits them
 
-- **Agents on the fly:** The credential lives on the blueprint. So creating a new agent is one Graph call, with no secret to make, deliver or rotate. Because of this, a platform can create and delete agents on the fly, at scale. Here "a new agent" means a new logical agent, not a new copy of a running one (see [One agent identity per logical agent, not per replica](#one-agent-identity-per-logical-agent-not-per-replica)).
+- **Agents on the fly:** The credential lives on the blueprint. So creating a new agent is one Graph call, with no secret to make, deliver or rotate. Because of this, a platform can create and delete agents on the fly, at scale. Here "a new agent" means a new logical agent, not a new copy of a running one or a new chat session (see [One agent identity per logical agent, not per copy or session](#one-agent-identity-per-logical-agent-not-per-copy-or-session)).
 - **One credential, outside the agent:** Instead of one credential per agent, there is one credential on the blueprint. With 100 agents, the team creates, stores and rotates one credential, not 100. Because it belongs to the blueprint, it can live outside the agent's own code, for example in the hosting platform. This matters more for agents, because an LLM drives what an agent does. If the agent's code held a secret, a prompt injection could trick the agent into leaking it. When the credential lives outside the agent's code, the agent has no secret to leak.
 - **One place for governance:** Every agent signs in through its blueprint. So rotating one credential, or applying one Conditional Access policy to the blueprint, covers all its agents.
 
@@ -90,22 +90,42 @@ So what is shared and what is per agent:
 - **Shared by all agents of a blueprint:** the credential, and the blueprint's `appId` (the `client_id` of request 1 below).
 - **Per agent:** the agent identity's `appId` (the `client_id` of request 2, and the client named in the final token).
 
-### One agent identity per logical agent, not per replica
+### One agent identity per logical agent, not per copy or session
 
-**In one line:** an agent identity stands for one logical agent, which is a job with its own purpose, permissions and sponsor. It does not stand for one running copy of the agent's code.
+**In one line:** an agent identity stands for one logical agent, which is a job with its own purpose, permissions and sponsor. It does not stand for one running copy of the agent's code, and not for one chat session.
 
-So when a platform scales out, the new copies do not get new identities. Every copy of the same agent signs in as the same agent identity, through the same blueprint. Each copy still gets its own tokens, because tokens are issued per request, not per identity.
+So when a platform scales out, or when users open new chat sessions, nothing new is created in the directory. Every copy and every session of the same agent signs in as the same agent identity, through the same blueprint. Each one still gets its own tokens, because tokens are issued per request, not per identity.
 
 - **Success - 100 pods of one agent:** A traffic spike starts 100 pods of the HR policy agent. All 100 pods get T1 and T2 for the same agent identity. Nothing is created in the directory.
+- **Success - 1,000 chat sessions:** Each session is state inside the application, not an object in the directory. So all 1,000 sessions use the same agent identity, and a session ID in the application's logs tells them apart. When a session acts for a user (a human), the user goes into the token through the on-behalf-of flow, not through a new agent identity.
 - **Success - a new kind of work:** A team adds a code review agent with its own permissions and sponsor. That is a new logical agent, so it gets a new agent identity, created once.
-- **Failure - one identity per pod:** Each pod creates its own agent identity when it starts. Creating a directory object is a heavy admin action, so this fails in three ways:
-  - **Quotas:** Entra limits how many agent identities a tenant can have, and soft-deleted ones count until they are permanently deleted (error `AgentIdentity_LimitExceeded`). So creating and deleting one identity per pod fills the quota.
-  - **Throttling:** Microsoft Graph throttles bursts of calls, so a scale-out to 100 pods can be slowed down or blocked.
-  - **Orphans:** Pods often die without cleanup, so their identities stay behind, with permissions and sponsors that nobody reviews.
+- **Failure - one identity per pod or per session:** The platform creates a new agent identity for every pod or every chat session. This is an anti-pattern, for the reasons below.
 
-Because all copies share one identity, the sign-in logs cannot tell the copies apart. That is the job of the application's own logs: a correlation ID per request (NFR4) shows which copy did what.
+#### Why creating identities on the fly fails
 
-**Anchor:** in IdentityServer, nobody registers a new client for every server behind a load balancer. The same rule holds here.
+- **A heavy, long-lived object:** An agent identity is a directory object, built to live for months, and it needs a sponsor when it is created. A short session is the wrong unit for it.
+- **Eventual consistency:** Entra copies a new object to its replicas in the background. So using it right away can fail with "Object with id {id} not found" (Agent ID FAQ), and every new session would start by retrying.
+- **Rate limits:** Microsoft Graph throttles bursts of writes with 429 Too Many Requests, and each new identity costs at least one write.
+- **Quotas:** Soft-deleted identities count against the tenant quota for 30 days, so creating and deleting them per session fills it.
+- **Automated privilege assignment:** Granting permissions on the fly needs a permission like `AppRoleAssignment.ReadWrite.All`, which needs admin consent. Microsoft warns that it lets an app "grant additional privileges to itself", so the identity factory becomes the most dangerous service in the tenant.
+- **Orphans:** Pods and sessions often end without cleanup, so their identities stay behind, and nobody reviews them.
+
+#### When you really need many agent identities
+
+**The limit:** a non-Microsoft platform that creates agent identities with app-only permissions can have at most 250 agent identities per blueprint. Delegated calls and Microsoft's own platforms (Foundry, Copilot Studio) have no such cap.
+
+So a design that truly needs 1,000 distinct logical agents has two options:
+
+- **More blueprints:** Create 4 blueprints, and let each one hold up to 250 agent identities. The cost is governance: there are 4 credentials to protect, and every Conditional Access policy or disable must cover all 4 blueprints.
+- **Delegated creation:** Create the agent identities with delegated calls, which have no cap. A delegated call needs a signed-in user (a human), so this fits setup scripts like this project's, not unattended automation.
+
+**Sessions are not agents:** If the real need is to tell thousands of user sessions apart, use the on-behalf-of (OBO) flow instead. One agent identity then serves every session, and each token names the user (a human) as its subject. So logs and permissions work per user, and no new directory objects are created.
+
+**How to choose:** if what differs between them is the user, use OBO. If what differs is the job (its purpose, permissions and sponsor), they are separate logical agents, so use more blueprints or delegated creation.
+
+Because all copies and sessions share one identity, the sign-in logs cannot tell them apart. That is the job of the application's own logs: a correlation ID per request (NFR4) shows which copy or session did what.
+
+**Anchor:** in IdentityServer, nobody registers a new client for every server behind a load balancer, or for every user session. The same rule holds here.
 
 ### How it works
 
