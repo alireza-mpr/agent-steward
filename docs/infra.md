@@ -89,6 +89,7 @@ The first deploy also made Entra create a service principal for Microsoft's "Mic
 |---|---|
 | [`setup/bicep/bicepconfig.json`](../setup/bicep/bicepconfig.json) | Loads the Graph extension (`v1.0` types, version `1.0.0`, pinned) under the alias `microsoftGraphV1` |
 | [`setup/bicep/phase0-smoke.bicep`](../setup/bicep/phase0-smoke.bicep) | Phase 0 smoke test: one security group. Proves the toolchain works end to end. Safe to delete. |
+| [`setup/bicep/identity-api.bicep`](../setup/bicep/identity-api.bicep) | The Identity API's app registration (app role `Findings.Submit`, v2 tokens, the agent claims as optional claims, an owner), its service principal, and the role assigned to the guardian's agent identity (FR3, FR5) |
 | [`setup/agent-id/AgentIdHelpers.ps1`](../setup/agent-id/AgentIdHelpers.ps1) | Shared helpers: Graph calls, permission scopes, and one safe-to-rerun `Set-*` function per object type |
 | [`setup/agent-id/Deploy-AgentIdentities.ps1`](../setup/agent-id/Deploy-AgentIdentities.ps1) | Creates the project's blueprints, blueprint principals and agent identities, plus a stand-in sponsor user |
 | [`setup/agent-id/Deploy-Fixtures.ps1`](../setup/agent-id/Deploy-Fixtures.ps1) | Creates the fixture agents with deliberate governance flaws (FR3) |
@@ -113,6 +114,21 @@ Clean up (the group must be deleted through Graph, not through the resource grou
 ```sh
 az rest --method delete --url "https://graph.microsoft.com/v1.0/groups(uniqueName='agentStewardPhase0Smoke')"
 ```
+
+Deploy the Identity API's registration. It needs the guardian's agent identity, so run [the Agent ID scripts](#run-the-agent-id-scripts) first, and fill in `.env`:
+
+```sh
+set -a; source .env; set +a
+az deployment group create --resource-group rg-agent-steward \
+  --template-file setup/bicep/identity-api.bicep \
+  --parameters guardianAgentId=$GUARDIAN_AGENT_APP_ID \
+               ownerId=$(az ad signed-in-user show --query id -o tsv) \
+  --query properties.outputs.identityApiAppId.value -o tsv
+```
+
+It prints the API's app ID. Put it in `.env` as `IDENTITY_API_APP_ID`.
+
+If the app was deleted in the last 30 days, the deploy fails with an error about `owners`. The cause is that the deleted app still holds its unique name. So first restore it (`POST /directory/deletedItems/{id}/restore`), or delete it for good (`DELETE /directory/deletedItems/{id}`).
 
 ## Where to check a deploy
 

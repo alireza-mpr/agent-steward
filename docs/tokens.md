@@ -1,9 +1,10 @@
 # Agent tokens: claims and validation
 
-This doc explains what is inside an agent's access token (T2), and what an API must check before it accepts one. For how the agent gets the token, see [How an agent signs in](agent-id.md#how-an-agent-signs-in). Every claim below was seen in a real token from this lab, and each one says whether Microsoft documents it.
+This doc explains why an API must be registered before any token exists for it, what is inside an agent's access token (T2), and what an API must check before it accepts one. For how the agent gets the token, see [How an agent signs in](agent-id.md#how-an-agent-signs-in). Every claim below was seen in a real token from this lab, and each one says whether Microsoft documents it.
 
 ## Contents
 
+- [Why the API must be registered first](#why-the-api-must-be-registered-first)
 - [See a real token](#see-a-real-token)
 - [The autonomous token, claim by claim](#the-autonomous-token-claim-by-claim)
   - [Who issued it, for which API, and for how long](#who-issued-it-for-which-api-and-for-how-long)
@@ -14,6 +15,21 @@ This doc explains what is inside an agent's access token (T2), and what an API m
 - [What an API must check](#what-an-api-must-check)
   - [A real negative case: the blueprint's own token](#a-real-negative-case-the-blueprints-own-token)
 - [Sources](#sources)
+
+## Why the API must be registered first
+
+**In one line:** an authorization server can only issue an access token for an API it already knows, so every API is registered before any token is issued for it.
+
+In OAuth, the authorization server, such as IdentityServer or Microsoft Entra ID, is the central registry of APIs. In IdentityServer, an API's registration is an `ApiResource` or `ApiScope` config entry. In Entra, it is the API's app registration and service principal, like this project's [identity-api.bicep](../setup/bicep/identity-api.bicep). The registration describes a separate API that accepts the server's tokens. It is not an endpoint of the server itself.
+
+The server needs the registration for four reasons:
+
+1. **Scope mapping:** A client asks for a scope, not for an API. So the server must map the requested scope to the API that owns it. In IdentityServer, each `ApiResource` lists its `ApiScope`s, so a request for a scope leads to the API resources that include it. In Entra, the scope names its API: the guardian asks for `<IDENTITY_API_APP_ID>/.default`, which leads to our API's registration, and `.default` means "every app role granted to me on this API".
+2. **Audience:** From that mapping, the server writes the API's identifier into `aud`. The API accepts only tokens with its own `aud`, so a token for one API cannot be replayed at another. Without a registration, there is no identifier to write.
+3. **Permissions:** The API defines what can be granted on it: scopes (delegated) or app roles (application). The server can only grant, and write into a token, permissions that exist. Here, that is the app role `Findings.Submit`.
+4. **Token shape:** The registration tells the server how to build tokens for this API. In Entra, that includes the token version (`requestedAccessTokenVersion`) and the optional claims. In this lab, the agent claims appeared only after the API asked for them. In IdentityServer, the `ApiResource` lists the user claims to include and the allowed signing algorithms.
+
+Token lifetime is not one of these reasons in IdentityServer. There it is a client setting (`AccessTokenLifetime`), not an API setting.
 
 ## See a real token
 
@@ -91,7 +107,7 @@ Learn calls some claims "opaque": they are internal to Entra, and resources shou
 
 To tell the modes apart, `idtyp` is `app` in the autonomous flow and `user` when a user is in the token. `xms_sub_fct` containing `13` marks an agent's user account instead of a human.
 
-Learn lists the `xms_*` agent claims as optional claims, so check that tokens for your own API carry them. If they are missing, check 5 rejects the token, so the API fails safe.
+Learn lists the `xms_*` agent claims as optional claims, so check that tokens for your own API carry them. If they are missing, check 5 rejects the token, so the API fails safe. In this lab, the guardian's first token for the Identity API had none of them, and no `idtyp` either. They appeared only after the API's app registration asked for them as optional claims (`idtyp`, `xms_act_fct`, `xms_sub_fct` and `xms_par_app_azp`, in [identity-api.bicep](../setup/bicep/identity-api.bicep)).
 
 This is the check list for the project's Identity API (FR5).
 

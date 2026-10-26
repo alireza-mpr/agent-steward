@@ -29,6 +29,10 @@ services:
       DownstreamApis__graph__BaseUrl: https://graph.microsoft.com/v1.0/
       DownstreamApis__graph__Scopes__0: https://graph.microsoft.com/.default
       DownstreamApis__graph__RequestAppToken: "true"
+      # The project's Identity API, app-only (FR3, FR5). Its scope is its app ID + /.default.
+      DownstreamApis__identity-api__BaseUrl: http://api:8000/
+      DownstreamApis__identity-api__Scopes__0: ${IDENTITY_API_APP_ID:?set IDENTITY_API_APP_ID in .env}/.default
+      DownstreamApis__identity-api__RequestAppToken: "true"
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://127.0.0.1:5000
       # Lets the caller name the agent identity (AgentIdentity=...) on the app-only route.
