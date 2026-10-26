@@ -103,6 +103,13 @@ Every participant has a service principal in the tenant, whichever way the token
 | Manage > Users and groups | Who holds this app's roles, as an API (incoming): users, groups, and also service principals. It shows one row per role assignment, so a principal with four roles appears four times. Seen in this tenant on 26 October 2026: `agent-steward-identity-api` lists the agent identity `agent-steward-guardian-01`, which holds `Findings.Submit`, and Microsoft Graph lists it four times, once per Graph permission ([screenshot](screenshots/phase2-guardian-graph-permissions.png)). In Graph: `GET /servicePrincipals/{id}/appRoleAssignedTo`. |
 | Sign-in logs | When the app signed in to this tenant |
 
+**In short:**
+
+- **A role is what an application offers.** It is defined on the application (App registrations > App roles). In each tenant, the application's service principal offers it and receives the grants.
+- **It can be granted to users, groups, or service principals.** An agent identity is a service principal, so it can hold roles too. The role's `allowedMemberTypes` decides which kinds are allowed.
+- **What an app holds on other APIs:** Enterprise apps > the app > Permissions (outgoing).
+- **Who holds the app's roles:** Enterprise apps > the app > Users and groups (incoming).
+
 **Microsoft Graph's name in the portal.** Enterprise apps shows Microsoft Graph's service principal as **GraphAggregatorService**, while Graph itself calls it "Microsoft Graph". Its Application ID tells you which one it is: `00000003-0000-0000-c000-000000000000`, the same in every tenant.
 
 **Who can hold an app's roles.** An app role assignment links one principal to one role of an API's service principal. The principal can be a user, a group, or another service principal, including an agent identity. So assignments run user-to-app and app-to-app alike. Each role sets which kinds it accepts (`allowedMemberTypes`): `Application` for service principals, and `User` for users and groups. This project's `Findings.Submit` accepts only service principals.
