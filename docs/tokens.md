@@ -15,6 +15,9 @@ This doc explains why an API must be registered before any token exists for it, 
 - [T1 and T2 side by side](#t1-and-t2-side-by-side)
   - [What changes from T1 to T2](#what-changes-from-t1-to-t2)
   - [The claims, masked](#the-claims-masked)
+  - [Where Entra checks the parent blueprint](#where-entra-checks-the-parent-blueprint)
+  - [How a token names the API](#how-a-token-names-the-api)
+  - [What T2 does not show: the blueprint's credential](#what-t2-does-not-show-the-blueprints-credential)
 - [What an API must check](#what-an-api-must-check)
   - [What kind of caller vs what it may do](#what-kind-of-caller-vs-what-it-may-do)
   - [A real negative case: the blueprint's own token](#a-real-negative-case-the-blueprints-own-token)
@@ -118,7 +121,7 @@ It is a dev-only exception: it reads the guardian blueprint's private key from `
 - **The actor facets (`xms_act_fct`):** T1's are `9 3`, with no `11`, because the actor is the blueprint. T2's contain `11`, because the actor is an agent identity.
 - **The permissions (`roles`):** T1 has none. T2 has `Findings.Submit`.
 - **The parent (`xms_par_app_azp`):** Only T2 has it. It names the blueprint.
-- **The client authentication (`azpacr`):** `2` in both. In request 1 the blueprint signed with its certificate. In request 2 the agent sent T1 as its assertion.
+- **The client authentication (`azpacr`):** `2` in both. In request 1 the blueprint signed with its certificate. In request 2 the agent sent T1 as its assertion. So T2's `2` describes request 2 only (see [What T2 does not show](#what-t2-does-not-show-the-blueprints-credential)).
 - **`xms_ficinfo`:** Only T1 has it. It is not documented, and its name suggests federated credential information, which fits T1's use as a federated assertion.
 
 ### The claims, masked
@@ -129,11 +132,12 @@ Reference:
 ```
 b445…63b4: Blueprint's application id
 0927…28e5: Blueprint's principal id
-1927…9d25: Agent id's principal id (same for app id - gap filler)
+1927…9d25: Agent identity's object ID, and also its app ID (the two are equal for an agent identity)
 cc7d…c57a: Identity API's application id
+fb60…9936: the token exchange resource (api://AzureADTokenExchange)
 ```
 
-```json
+```jsonc
 {
   "aio": "ASQA…0eg=",
   "aud": "fb60…9936",
@@ -163,11 +167,11 @@ cc7d…c57a: Identity API's application id
 
 T2, from request 2 (client: the agent identity, for the Identity API):
 
-```json
+```jsonc
 {
   "aio": "ASQA…gt0=",
   "aud": "cc7d…c57a", // Identity API's application.
-  "azp": "1927…9d25", // Agent id's principal (same for app id - gap filler) - who requested this.
+  "azp": "1927…9d25", // The agent identity's app ID (its client ID) - who requested this. For an agent identity it equals its object ID.
   "azpacr": "2",
   "exp": 1793071205,
   "iat": 1793067305,
@@ -189,6 +193,47 @@ T2, from request 2 (client: the agent identity, for the Identity API):
 ```
 
 Seen in this lab on 27 October 2026. The screenshot comes from a later run, so the values that change with every token differ: the times, `aio`, `uti`, `xms_ftd`, and the order of the facet numbers.
+
+### Where Entra checks the parent blueprint
+
+**In one line:** Entra checks that the agent belongs to the blueprint only at request 2, when the agent presents T1.
+
+Tested in this lab on 27 October 2026, with the guardian's blueprint and an agent of another blueprint (the dormant fixture):
+
+1. **Request 1 was issued:** The guardian's blueprint asked for T1 with `fmi_path` naming the foreign agent, and Entra issued it. T1's `sub` even named that agent.
+2. **Request 2 was refused:** The foreign agent presented that T1, and Entra refused with `AADSTS7002134`: "The presented credential was issued for agent blueprint '…' and agent identity '…', but agent identity '…' has a different blueprint as parent."
+
+**The lesson:** T1 alone proves nothing about the agent, because Entra will issue a T1 naming any agent. The parent–child link is enforced only when the agent presents T1. So a leaked blueprint key exposes only that blueprint's own agents.
+
+### How a token names the API
+
+**In one line:** the token names the API by its app ID. The service principal's object ID only appears in the directory's own records: the sign-in log (`resourceServicePrincipalId`) and the role assignments (`resourceId`).
+
+Checked in this lab on 27 October 2026, for the Identity API and the sign-in event behind T2:
+
+| Where | What identifies the Identity API |
+|---|---|
+| The token (T2) | `aud` = its app ID (the Application ID in the portal) |
+| Entra's sign-in log | `resourceId` = its app ID, and `resourceServicePrincipalId` = its service principal's object ID |
+| Graph role assignments | `resourceId` = its service principal's object ID |
+
+The client asks for the API by its app ID (`<appId>/.default`), and the app ID is the same in every tenant, while the object ID belongs to one tenant only. Note the asymmetry: the token names its subject, the caller, by object ID (`oid`), but its audience, the API, by app ID (`aud`).
+
+### What T2 does not show: the blueprint's credential
+
+**In one line:** T2 does not say whether the blueprint proved itself with a secret or a certificate, so an API cannot require "certificates only". Only Entra's sign-in log shows it.
+
+Tested in this lab on 27 October 2026. A 1-day secret was added to the guardian's blueprint for the test and removed after it.
+
+| | The blueprint used its certificate | The blueprint used a secret |
+|---|---|---|
+| Request 1 | T1 issued | T1 issued |
+| T1 `azpacr` | `2` | `1` |
+| T2 `azpacr` | `2` | `2` |
+| Sign-in log, request 1 (`clientCredentialType`) | `clientAssertion` | `clientSecret` |
+| Sign-in log, request 2 (`clientCredentialType`) | `federatedIdentityCredential` | `federatedIdentityCredential` |
+
+T2's `azpacr` describes request 2 only. There the client is the agent identity, and its proof is always T1, a signed assertion. Entra records that proof as a federated identity credential. So a rule like "blueprints use certificates, never secrets" must be enforced on the blueprint itself, by the credentials it holds ([how](infra.md#the-blueprints-credential)), or watched in the sign-in log. The Identity API cannot enforce it.
 
 ## What an API must check
 

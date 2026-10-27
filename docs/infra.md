@@ -194,9 +194,16 @@ The blueprint's credential proves the blueprint when it asks Entra for T1 (see [
 
 - **Managed identity, as a federated identity credential:** Microsoft's recommendation for production. Nobody creates or rotates anything, because Azure manages the hidden credential. It works only when the code runs on an Azure service. Sent as a `client_assertion`: the managed identity's token.
 - **Certificate (`keyCredentials`):** For local development and testing, or where a managed identity cannot work. Microsoft's [autonomous flow page](https://learn.microsoft.com/en-us/entra/agent-id/agent-autonomous-app-oauth-flow) prefers it over a secret. Sent as a `client_assertion`: a JWT signed with the private key.
-- **Secret (`passwordCredentials`):** For local development and testing only. Entra generates the value and shows it only once. Sent as `client_secret`: the secret itself.
+- **Secret (`passwordCredentials`):** For local development and testing only. Entra generates the value and shows it only once. Sent as `client_secret`: the secret itself. Tested in this lab: a secret also gets T1, and T2 does not show which credential the blueprint used ([details](tokens.md#what-t2-does-not-show-the-blueprints-credential)).
 
 This project runs locally, not in Azure. So the guardian's blueprint has a certificate, created by [`Deploy-BlueprintCertificate.ps1`](../setup/agent-id/Deploy-BlueprintCertificate.ps1). The expiring fixture has a secret on purpose.
+
+**How to make a blueprint certificate-only.** Link the blueprint to an app management policy that blocks new secrets. A blueprint can have one, because it inherits the `appManagementPolicies` relationship from application ([Learn](https://learn.microsoft.com/en-us/graph/api/resources/agentidentityblueprint?view=graph-rest-beta)). The steps follow [Configure app management policies](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-app-management-policies), "Apply a restriction to a specific application":
+
+1. **Create the policy:** `POST /beta/policies/appManagementPolicies` with `isEnabled: true` and, under `restrictions.passwordCredentials`, the `passwordAddition` and `symmetricKeyAddition` restrictions set to `enabled`.
+2. **Link it to the blueprint:** `POST /beta/applications/{blueprint object ID}/appManagementPolicies/$ref` with `{"@odata.id": "https://graph.microsoft.com/v1.0/policies/appManagementPolicies/{policy ID}"}`.
+
+The policy blocks only new secrets. A secret that is already on the blueprint keeps working, so remove it first. The roles needed are Global Administrator, or Security Administrator plus Cloud Application Administrator or Application Administrator. Not tested in this lab yet.
 
 **How a certificate is set up.** It is not created on the fly. A person or a setup script creates it once, ahead of time:
 

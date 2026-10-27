@@ -147,6 +147,8 @@ flowchart TB
 
 **Roles and administrators** (Enterprise apps > the app) is not part of this picture. It shows the Entra admin roles that may manage the app, such as Cloud Application Administrator, not what the app may call.
 
+**Inherited permissions.** An agent can also inherit permissions from its blueprint: the blueprint lists which APIs' permissions may pass down to its agents, and an admin consents to them on the blueprint principal. The key detail: **inherited permissions never show on the agent identity, neither in Graph nor in the portal, only in its tokens.** Graph beta lists them for each agent (`inheritedAppRoleAssignments`), and the guardian reads them too, so its over-permissioned check sees what an agent can really do ([graph_reader.py](../src/guardian/graph_reader.py)). Source: [Inheritable permissions](https://learn.microsoft.com/en-us/entra/agent-id/concept-inheritable-permissions) (Microsoft Learn).
+
 ### Quick reference
 
 | Object | Graph collection and type | `servicePrincipalType` | Per tenant | Credentials | Portal page |
@@ -274,7 +276,7 @@ Some explanations of T1 and T2 get these points wrong:
 
 **In short:** both are OAuth clients. T1 proves "the blueprint is asking, for this agent". T2 says "this agent is acting", and the API sees the agent.
 
-**Security note:** the cost of this design is the blast radius. A blueprint can get T1 for any of its agent identities, so a leaked blueprint credential exposes all of them.
+**Security note:** the cost of this design is the blast radius. A blueprint can get T1 for any of its agent identities, so a leaked blueprint credential exposes all of them. It exposes no other blueprint's agents: Entra checks the parent at request 2 ([tested](tokens.md#where-entra-checks-the-parent-blueprint)).
 
 ## One agent identity per logical agent, not per copy or session
 
