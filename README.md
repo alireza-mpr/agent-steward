@@ -89,6 +89,7 @@ Workload identity federation for non-Microsoft agents, token exchange (RFC 8693)
 ## Repository layout
 
 ```
+config/           Policy: the permissions each agent may hold (agent-permissions.json)
 setup/            Tenant setup as code: Bicep + Graph PowerShell (blueprint, identities, fixtures)
 src/identity_api/ Identity API (Python / FastAPI): token validation, audit
 src/guardian/     Guardian agent (Python)

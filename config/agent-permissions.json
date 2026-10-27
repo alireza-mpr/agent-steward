@@ -1,0 +1,12 @@
+{
+  "description": "The permissions each agent may hold, by display name. An agent not listed may hold nothing. Each permission names its API: a role name means nothing without it. The guardian flags anything else as over-permissioned (src/guardian/rules.py).",
+  "agents": {
+    "agent-steward-guardian-01": [
+      "Microsoft Graph/AgentIdentity.Read.All",
+      "Microsoft Graph/AgentIdentityBlueprint.Read.All",
+      "Microsoft Graph/Application.Read.All",
+      "Microsoft Graph/AuditLog.Read.All",
+      "agent-steward-identity-api/Findings.Submit"
+    ]
+  }
+}
