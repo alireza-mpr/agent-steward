@@ -111,16 +111,16 @@ flowchart TB
     subgraph APPS["APPLICATIONS: the templates, what is declared"]
         direction LR
         BP["<b>Blueprint</b> (a special application)<br/><i>agent-steward-guardian</i><br/>holds the credential (certificate)"]
-        APIAPP["<b>Application</b><br/><i>agent-steward-identity-api</i><br/>defines the app role <b>Findings.Submit</b>"]
-        GAPP["<b>Application</b><br/><i>Microsoft Graph</i><br/>(registered in Microsoft's tenant)<br/>defines app roles like <b>AgentIdentity.Read.All</b>"]
+        APIAPP["<b>Application</b><br/><i>agent-steward-identity-api</i><br/><b>App roles</b> page: what it offers<br/>(Findings.Submit)<br/><b>API permissions</b> page: its wish list"]
+        GAPP["<b>Application</b><br/><i>Microsoft Graph</i><br/>(registered in Microsoft's tenant)<br/><b>App roles</b>: what it offers<br/>(AgentIdentity.Read.All, ...)"]
     end
 
     subgraph TENANT["SERVICE PRINCIPALS in our tenant: the decisions"]
         direction LR
         BPP["<b>Blueprint principal</b><br/>signs in for T1"]
-        AI["<b>Agent identity</b><br/><i>agent-steward-guardian-01</i><br/>a service principal with<br/>no application of its own"]
-        APISP["<b>Service principal</b><br/><i>agent-steward-identity-api</i><br/>stores who holds its roles"]
-        GSP["<b>Service principal</b><br/><i>Microsoft Graph</i><br/>stores who holds its roles"]
+        AI["<b>Agent identity</b><br/><i>agent-steward-guardian-01</i><br/>a service principal with<br/>no application of its own,<br/>so no wish list: an admin<br/>assigns its roles directly"]
+        APISP["<b>Service principal</b><br/><i>agent-steward-identity-api</i><br/><b>Users and groups</b> page:<br/>who holds its roles<br/><b>Permissions</b> page:<br/>its wish list, as granted"]
+        GSP["<b>Service principal</b><br/><i>Microsoft Graph</i><br/><b>Users and groups</b> page:<br/>who holds its roles"]
     end
 
     BP -- "presence in this tenant<br/>agree on: the appId" --> BPP
@@ -137,6 +137,15 @@ flowchart TB
 | The blueprint principal and an agent identity | The blueprint's `appId`, stored as the agent's `agentIdentityBlueprintId` | T1's `sub` (the FMI path) and T2's `xms_par_app_azp` |
 | An agent identity and an API's service principal | The role's ID (`appRoleId`), defined on the API's application | The API's Users and groups page, and T2's `roles` |
 | An agent identity and the API it calls | The API's `appId`, asked for as `<appId>/.default` | T2's `aud` ([tokens.md](tokens.md#t1-and-t2-side-by-side)) |
+
+**The portal pages in the picture:**
+
+- **App registrations > the app > App roles:** What the app offers. The roles are defined here, and only here.
+- **App registrations > the app > API permissions:** What the app asks for on other APIs, its wish list, under "Configured permissions". Asking grants nothing. The same page also lists "Other permissions granted for <tenant>": grants that exist on the app's service principal in this tenant without being on the wish list, like the test client's `Findings.Submit`, which Bicep assigned directly.
+- **Enterprise apps > the app > Security > Permissions:** The wish list as granted in this tenant.
+- **Enterprise apps > the app > Manage > Users and groups:** Who holds the app's roles. Agent identities are listed here too.
+
+**Roles and administrators** (Enterprise apps > the app) is not part of this picture. It shows the Entra admin roles that may manage the app, such as Cloud Application Administrator, not what the app may call.
 
 ### Quick reference
 

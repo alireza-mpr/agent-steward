@@ -97,7 +97,7 @@ Every participant has a service principal in the tenant, whichever way the token
 |---|---|---|
 | App roles | The application permissions it offers, as an API. They are defined and edited only here. Enterprise apps cannot change them. | Incoming |
 | Expose an API | The delegated scopes it offers, and its Application ID URI if it has one | Incoming |
-| API permissions | The permissions it requests on other APIs, as a client. It is only a wish list until someone consents. | Outgoing |
+| API permissions | The permissions it requests on other APIs, as a client, under "Configured permissions". It is only a wish list until someone consents. Below it, "Other permissions granted for <tenant>" shows grants on the app's service principal in this tenant that are not on the wish list, for example a role assigned directly through Graph. | Outgoing |
 
 ### What to look at in a service principal
 
