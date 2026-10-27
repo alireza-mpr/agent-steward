@@ -1,6 +1,6 @@
 # Agent tokens: claims and validation
 
-This doc explains why an API must be registered before any token exists for it, what is inside an agent's access token (T2), and what an API must check before it accepts one. For how the agent gets the token, see [How an agent signs in](agent-id.md#how-an-agent-signs-in). Every claim below was seen in a real token from this lab, and each one says whether Microsoft documents it.
+This doc explains why an API must be registered before any token exists for it, what is inside an agent's access token (T2), and what an API must check before it accepts one. For how the agent gets the token, see [How an agent signs in](agent-id.md#3-the-two-step-sign-in-dance). Every claim below was seen in a real token from this lab, and each one says whether Microsoft documents it.
 
 ## Contents
 

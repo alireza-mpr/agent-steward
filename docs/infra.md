@@ -175,7 +175,7 @@ Creating the blueprint does not create its principal. That is a second call, the
 
 **Who may run them.** Agent ID Developer or Agent ID Administrator, or any user when the tenant setting "Users can create agent blueprints" is Yes. Only Agent ID Administrator may add a secret or a certificate. The owner of a blueprint can create its agent identities without an Agent ID role. This lab runs the scripts as Global Administrator, for tenant setup only.
 
-**Portal alternative.** Entra ID > Agents > Agent blueprints > New agent blueprint (Preview). The wizard does steps 1 and 4 only. To see the result in the portal, see [Agent ID objects in the portal](entra.md#agent-id-objects).
+**Portal alternative.** Entra ID > Agents > Agent blueprints > New agent blueprint (Preview). The wizard does steps 1 and 4 only. To see the result in the portal, see [Agent ID objects in the portal](entra.md#4-finding-agent-id-objects).
 
 **Not in scope.** The Learn how-to ends with one more step: register the blueprint in the Agent 365 registry. Agent 365 governance is a written design only in this project ([DESIGN-NOTES.md](../DESIGN-NOTES.md#3-agent-365-governance)).
 
@@ -183,7 +183,7 @@ Source: [Create an agent identity blueprint](https://learn.microsoft.com/en-us/e
 
 ### The blueprint's credential
 
-The blueprint's credential proves the blueprint when it asks Entra for T1 (see [Who it is vs how it proves it](agent-id.md#who-it-is-vs-how-it-proves-it)). The blueprint is only a record in the directory, so it cannot send that request itself. The program that sends it holds the credential: a hosting platform, a sidecar, or the agent's own code.
+The blueprint's credential proves the blueprint when it asks Entra for T1 (see [Who it is vs how it proves it](agent-id.md#2-identity-vs-credential-who-you-are-vs-how-you-prove-it)). The blueprint is only a record in the directory, so it cannot send that request itself. The program that sends it holds the credential: a hosting platform, a sidecar, or the agent's own code.
 
 **Two layers.** In OAuth, a confidential client must present a client credential as proof that it is the client it claims to be. Two layers are involved:
 
