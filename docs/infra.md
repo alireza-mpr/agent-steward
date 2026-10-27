@@ -205,6 +205,8 @@ This project runs locally, not in Azure. So the guardian's blueprint has a certi
 
 The policy blocks only new secrets. A secret that is already on the blueprint keeps working, so remove it first. The roles needed are Global Administrator, or Security Administrator plus Cloud Application Administrator or Application Administrator. Not tested in this lab yet.
 
+**In the portal:** Entra ID > Enterprise apps > Application policies > Block password addition can turn the restriction on for all applications in the tenant only. Its app picker does not list blueprints (seen in this lab on 27 October 2026), so use Graph for one blueprint.
+
 **How a certificate is set up.** It is not created on the fly. A person or a setup script creates it once, ahead of time:
 
 1. **Make the key pair:** Create a private key and a certificate that holds the matching public key, for example with `openssl`.
