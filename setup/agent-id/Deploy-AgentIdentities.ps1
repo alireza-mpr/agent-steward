@@ -33,8 +33,11 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/AgentIdHelpers.ps1"
 
 # Kind -> instances. The worker is added here in Phase 5.
+# agent-steward-guardian-norole-01 is a test agent for the live negative test (FR5): it
+# holds no app role on the Identity API, so the API must reject it at the permission check.
+# It sits under the guardian's blueprint because the sidecar holds only that blueprint's key.
 $Agents = @(
-    @{ Blueprint = 'agent-steward-guardian'; Identities = @('agent-steward-guardian-01') }
+    @{ Blueprint = 'agent-steward-guardian'; Identities = @('agent-steward-guardian-01', 'agent-steward-guardian-norole-01') }
 )
 
 $admin   = Connect-AgentIdTenant -TenantId $TenantId -Scopes $BaseScopes
