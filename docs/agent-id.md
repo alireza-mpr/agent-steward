@@ -9,6 +9,7 @@ This doc explains how the Microsoft Entra Agent ID objects fit together, and how
   - [Agent ID](#agent-id)
   - [What is different](#what-is-different)
   - [Why an agent identity has no application](#why-an-agent-identity-has-no-application)
+  - [How the objects connect](#how-the-objects-connect)
   - [Quick reference](#quick-reference)
 - [Who it is vs how it proves it](#who-it-is-vs-how-it-proves-it)
   - [Why Agent ID splits them](#why-agent-id-splits-them)
@@ -98,6 +99,44 @@ The split into an application and a service principal exists because an app can 
 So an agent identity's grants, sign-ins, sponsor and enabled flag all live on the agent identity, the same way they live on any service principal. This project's roles (`Findings.Submit` and the guardian's Graph roles) are assigned to the agent identity's object ID.
 
 Source: [Agent autonomous app OAuth flow](https://learn.microsoft.com/en-us/entra/agent-id/agent-autonomous-app-oauth-flow) (Microsoft Learn, checked 26 October 2026).
+
+### How the objects connect
+
+**In one line:** the applications declare, the service principals in the tenant hold the decisions, and every link between two objects is an ID that both sides agree on.
+
+The diagram shows this project's real objects. The applications on top are the templates. The service principals below are their presence in our tenant. The agent identity is the only one with no application of its own, and its roles are app role assignments that point at an API's service principal.
+
+```mermaid
+flowchart TB
+    subgraph APPS["APPLICATIONS: the templates, what is declared"]
+        direction LR
+        BP["<b>Blueprint</b> (a special application)<br/><i>agent-steward-guardian</i><br/>holds the credential (certificate)"]
+        APIAPP["<b>Application</b><br/><i>agent-steward-identity-api</i><br/>defines the app role <b>Findings.Submit</b>"]
+        GAPP["<b>Application</b><br/><i>Microsoft Graph</i><br/>(registered in Microsoft's tenant)<br/>defines app roles like <b>AgentIdentity.Read.All</b>"]
+    end
+
+    subgraph TENANT["SERVICE PRINCIPALS in our tenant: the decisions"]
+        direction LR
+        BPP["<b>Blueprint principal</b><br/>signs in for T1"]
+        AI["<b>Agent identity</b><br/><i>agent-steward-guardian-01</i><br/>a service principal with<br/>no application of its own"]
+        APISP["<b>Service principal</b><br/><i>agent-steward-identity-api</i><br/>stores who holds its roles"]
+        GSP["<b>Service principal</b><br/><i>Microsoft Graph</i><br/>stores who holds its roles"]
+    end
+
+    BP -- "presence in this tenant<br/>agree on: the appId" --> BPP
+    APIAPP -- "presence in this tenant<br/>agree on: the appId" --> APISP
+    GAPP -- "presence in this tenant<br/>agree on: the appId" --> GSP
+    BPP -- "creates<br/>agree on: the blueprint's appId<br/>(agentIdentityBlueprintId)" --> AI
+    AI == "holds <b>Findings.Submit</b><br/>agree on: the role's ID<br/>(app role assignment)" ==> APISP
+    AI == "holds 4 Graph read roles<br/>agree on: each role's ID<br/>(app role assignments)" ==> GSP
+```
+
+| Link | They agree on | Where you see it |
+|---|---|---|
+| An application and its service principal | The `appId` | In the portal: the same Application ID on both pages |
+| The blueprint principal and an agent identity | The blueprint's `appId`, stored as the agent's `agentIdentityBlueprintId` | T1's `sub` (the FMI path) and T2's `xms_par_app_azp` |
+| An agent identity and an API's service principal | The role's ID (`appRoleId`), defined on the API's application | The API's Users and groups page, and T2's `roles` |
+| An agent identity and the API it calls | The API's `appId`, asked for as `<appId>/.default` | T2's `aud` ([tokens.md](tokens.md#t1-and-t2-side-by-side)) |
 
 ### Quick reference
 
