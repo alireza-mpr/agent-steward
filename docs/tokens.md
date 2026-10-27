@@ -137,16 +137,16 @@ cc7d…c57a: Identity API's application id
 {
   "aio": "ASQA…0eg=",
   "aud": "fb60…9936",
-  "azp": "b445…63b4", // Blueprint's application id
+  "azp": "b445…63b4", // Blueprint's application - who requested the token.
   "azpacr": "2",
   "exp": 1793071205,
   "iat": 1793067305,
   "idtyp": "app",
   "iss": "https://login.microsoftonline.com/6dfa…8171/v2.0",
   "nbf": 1793067305,
-  "oid": "0927…28e5", // Blueprint's principal id
+  "oid": "0927…28e5", // Blueprint's principal - who's authenticated.
   "rh": "1.AU…CAA.",
-  "sub": "/eid1/c/pub/t/Qj76…qBcQ/a/uulF…pjtA/1927…9d25", // Agent id's principal id
+  "sub": "/eid1/c/pub/t/Qj76…qBcQ/a/uulF…pjtA/1927…9d25", // Agent id's principal - the entity this token represents.
   "tid": "6dfa…8171",
   "uti": "Slcw…fXAA",
   "ver": "2.0",
@@ -166,8 +166,8 @@ T2, from request 2 (client: the agent identity, for the Identity API):
 ```json
 {
   "aio": "ASQA…gt0=",
-  "aud": "cc7d…c57a", // Identity API's application id
-  "azp": "1927…9d25", // Agent id's principal id (same for app id - gap filler)
+  "aud": "cc7d…c57a", // Identity API's application.
+  "azp": "1927…9d25", // Agent id's principal (same for app id - gap filler) - who requested this.
   "azpacr": "2",
   "exp": 1793071205,
   "iat": 1793067305,
@@ -177,7 +177,7 @@ T2, from request 2 (client: the agent identity, for the Identity API):
   "oid": "1927…9d25", // Agent id's principal id
   "rh": "1.AU…CAA.",
   "roles": ["Findings.Submit"],
-  "sub": "1927…9d25",
+  "sub": "1927…9d25", // the entity this token represents.
   "tid": "6dfa…8171",
   "uti": "tbBt…sqAA",
   "ver": "2.0",
