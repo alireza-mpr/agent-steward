@@ -125,20 +125,28 @@ It is a dev-only exception: it reads the guardian blueprint's private key from `
 
 T1, from request 1 (client: the blueprint):
 
+Reference:
+```
+b445…63b4: Blueprint's application id
+0927…28e5: Blueprint's principal id
+1927…9d25: Agent id's principal id (same for app id - gap filler)
+cc7d…c57a: Identity API's application id
+```
+
 ```json
 {
   "aio": "ASQA…0eg=",
   "aud": "fb60…9936",
-  "azp": "b445…63b4",
+  "azp": "b445…63b4", // Blueprint's application id
   "azpacr": "2",
   "exp": 1793071205,
   "iat": 1793067305,
   "idtyp": "app",
   "iss": "https://login.microsoftonline.com/6dfa…8171/v2.0",
   "nbf": 1793067305,
-  "oid": "0927…28e5",
+  "oid": "0927…28e5", // Blueprint's principal id
   "rh": "1.AU…CAA.",
-  "sub": "/eid1/c/pub/t/Qj76…qBcQ/a/uulF…pjtA/1927…9d25",
+  "sub": "/eid1/c/pub/t/Qj76…qBcQ/a/uulF…pjtA/1927…9d25", // Agent id's principal id
   "tid": "6dfa…8171",
   "uti": "Slcw…fXAA",
   "ver": "2.0",
@@ -158,15 +166,15 @@ T2, from request 2 (client: the agent identity, for the Identity API):
 ```json
 {
   "aio": "ASQA…gt0=",
-  "aud": "cc7d…c57a",
-  "azp": "1927…9d25",
+  "aud": "cc7d…c57a", // Identity API's application id
+  "azp": "1927…9d25", // Agent id's principal id (same for app id - gap filler)
   "azpacr": "2",
   "exp": 1793071205,
   "iat": 1793067305,
   "idtyp": "app",
   "iss": "https://login.microsoftonline.com/6dfa…8171/v2.0",
   "nbf": 1793067305,
-  "oid": "1927…9d25",
+  "oid": "1927…9d25", // Agent id's principal id
   "rh": "1.AU…CAA.",
   "roles": ["Findings.Submit"],
   "sub": "1927…9d25",
