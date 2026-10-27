@@ -146,7 +146,7 @@ cc7d…c57a: Identity API's application id
   "nbf": 1793067305,
   "oid": "0927…28e5", // Blueprint's principal - who's authenticated.
   "rh": "1.AU…CAA.",
-  "sub": "/eid1/c/pub/t/Qj76…qBcQ/a/uulF…pjtA/1927…9d25", // Agent id's principal - the entity this token represents.
+  "sub": "/eid1/c/pub/t/Qj76…qBcQ/a/uulF…pjtA/1927…9d25", // The FMI path, which names the tenant, the blueprint and the agent (agent = agent id's principal) - the entity this token represents.
   "tid": "6dfa…8171",
   "uti": "Slcw…fXAA",
   "ver": "2.0",
