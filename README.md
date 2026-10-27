@@ -89,18 +89,18 @@ Workload identity federation for non-Microsoft agents, token exchange (RFC 8693)
 ## Repository layout
 
 ```
-setup/          Tenant setup as code: Bicep + Graph PowerShell (blueprint, identities, fixtures)
-src/api/        Identity API (Python / FastAPI): token validation, audit
-src/guardian/   Guardian agent (Python)
-src/mcp/        MCP server (official Python SDK): tools, allow-list, approval gate
-src/worker/     Live worker timer loop (PowerShell)
-tests/          Offline policy tests + live auth-flow tests
-tools/          Dev tools (token-claims: prints the claims of the guardian's token, never the token itself)
-docs/           Reference (entra.md, infra.md, agent-id.md, tokens.md), screenshots, diagrams
-GLOSSARY.md     Ubiquitous language: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP
-THREATMODEL.md  OWASP Agentic Top 10 x MAESTRO
-DEMO.md         Screenshot walkthrough
-DESIGN-NOTES.md Written designs for out-of-scope patterns
+setup/            Tenant setup as code: Bicep + Graph PowerShell (blueprint, identities, fixtures)
+src/identity_api/ Identity API (Python / FastAPI): token validation, audit
+src/guardian/     Guardian agent (Python)
+src/mcp/          MCP server (official Python SDK): tools, allow-list, approval gate
+src/worker/       Live worker timer loop (PowerShell)
+tests/            Offline policy tests + live auth-flow tests
+tools/            Dev tools (token-claims: prints the claims of the guardian's token, never the token itself)
+docs/             Reference (entra.md, infra.md, agent-id.md, tokens.md), screenshots, diagrams
+GLOSSARY.md       Ubiquitous language: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP
+THREATMODEL.md    OWASP Agentic Top 10 x MAESTRO
+DEMO.md           Screenshot walkthrough
+DESIGN-NOTES.md   Written designs for out-of-scope patterns
 ```
 
 ## Delivery status

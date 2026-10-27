@@ -45,6 +45,16 @@ services:
     networks:
       - agent
 
+  # The Identity API (FR5): checks every token (docs/tokens.md) and writes one audit line
+  # per decision (FR8). No port is published: callers reach it as http://api:8000.
+  api:
+    build: src/identity_api
+    environment:
+      TENANT_ID: ${TENANT_ID:?set TENANT_ID in .env}
+      IDENTITY_API_APP_ID: ${IDENTITY_API_APP_ID:?set IDENTITY_API_APP_ID in .env}
+    networks:
+      - agent
+
   # Dev tool: asks the sidecar for a token as the guardian and prints the token's claims.
   # It never prints the token itself. Runs only on demand (profile "tools").
   token-claims:
