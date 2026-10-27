@@ -128,10 +128,25 @@ In standard OAuth, a client uses a `client_id` to say *who it is*, and a secret/
 - **Who it is (The Agent Identity):** Each agent has its own `appId`. This allows tokens, permissions, logs, and disable-flags to work on a per-agent basis.
 - **How it proves it (The Blueprint):** All agent identities share the credential held by their blueprint. Because the agent identity has no credential of its own, it cannot sign in alone—its blueprint must sign in *for* it. 
 
-### Why split them up?
-1. **Frictionless Creation:** Creating a new agent is just a single Graph call. There are no new secrets to generate, deliver, or rotate.
-2. **Security & Prompt Injection:** Because the credential lives on the blueprint (often in the hosting platform) and not in the agent's code, an LLM prompt injection cannot trick the agent into leaking a secret it doesn't possess.
-3. **Centralized Governance:** Rotating one blueprint credential—or applying a Conditional Access policy to it—automatically secures all 100+ agents underneath it.
+### Why a Blueprint Is Needed
+Without blueprints, every agent would be a classic application, with its own service principal and its own credential. The blueprint model changes this in three ways.
+
+**1. Separation of concerns: the value of credential-less segmentation.** This is where the blueprint model pays off.
+- **The sidecar holds the credential:** In this project, the blueprint's credential lives only in the sidecar (in production, often the hosting platform), and the sidecar runs no AI logic. So a prompt injection cannot trick the agent into leaking a secret it does not have. This works only when the credential stays out of the agent code.
+- **The agent code holds only T2:** The agent code runs the AI logic, which is the part an attacker can reach. It signs in as its agent identity and receives only T2. T2 carries only the roles granted to that one agent identity, for one API (see [the `.default` rule](#app-only-tokens-and-the-default-scope)). So T2 is exactly as narrow as the agent identity's grants.
+- **Segmentation costs no credential:** Each agent identity has its own grants, sign-in logs and disable flag, but no credential. So you can give each job its own agent identity without adding a credential. With classic applications, each extra identity is one more application with its own credential to register and rotate.
+- *Limit:* This protects the credential, not the choice of identity. The sidecar lets its caller name the agent identity, so any code that can reach the sidecar can get T2 for any agent identity of that blueprint ([docs/infra.md](infra.md#local-run-the-token-sidecar)).
+
+**2. Directory bloat and quota: fewer objects.** The blueprint is the aggregation layer: it maps many lightweight service principals under one heavyweight application.
+- **Without blueprints:** One application can have at most one service principal in a tenant. So 1,000 agents need 1,000 applications and 1,000 service principals. That is 2,000 directory objects, 1,000 application definitions to maintain, and every object counts against the tenant's directory object quota.
+- **With blueprints:** The blueprint (the application) holds the definition and the credential once. The agent identities are service principals with no application of their own. So 1,000 agents need 1,002 objects: the blueprint, its blueprint principal and 1,000 agent identities.
+
+**3. Credential management at scale.**
+- **Without blueprints:** 1,000 agents need 1,000 credentials. Each one must be created, stored in a vault and rotated on its own schedule, and the orchestrator must mount the correct one into the correct pod.
+- **With blueprints:** You manage and rotate one credential per blueprint. It works for all of the blueprint's agent identities, and only for them, because Entra checks the parent at request 2 ([docs/tokens.md](tokens.md#where-entra-checks-the-parent-blueprint)). Creating a new agent is one Graph call, with no credential to create, deliver or rotate. A pod only needs its agent identity's `appId`, which is not a secret.
+- **Central control:** Rotating the blueprint's credential, or a Conditional Access policy that targets the blueprint, covers all of its agent identities at once.
+- **The 250 limit:** A blueprint can have at most 250 agent identities when a non-Microsoft platform creates them with app-only permissions (see [Hitting the Limits](#hitting-the-limits-and-how-to-bypass-them)). So 1,000 such agents need 4 blueprints: 4 credentials, not 1,000.
+- *Trade-off:* One credential for many agents means a larger blast radius. A stolen blueprint credential exposes all of its agent identities (see the *Note on Blast Radius* in section 3).
 
 ---
 
