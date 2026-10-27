@@ -5,10 +5,23 @@ This document breaks down how Microsoft Entra Agent ID objects fit together and 
 *(For short definitions of each term and how they map to OAuth, OIDC, and CDR terminology, please see the [glossary](../GLOSSARY.md). For foundational context, you can reference the `agent-id.md` file).*
 
 ## Contents
+
 - [1. The Object Hierarchy](#1-the-object-hierarchy)
+  - [The Classic App Model](#the-classic-app-model)
+  - [The Agent ID Model](#the-agent-id-model)
+  - [Why Agent Identities Don't Need an "Application" Template](#why-agent-identities-dont-need-an-application-template)
+  - [How the Objects Connect](#how-the-objects-connect)
+  - [Quick Reference Guide](#quick-reference-guide)
 - [2. Identity vs. Credential (Who you are vs. How you prove it)](#2-identity-vs-credential-who-you-are-vs-how-you-prove-it)
+  - [Why a Blueprint Is Needed](#why-a-blueprint-is-needed)
 - [3. The Two-Step Sign-In Dance](#3-the-two-step-sign-in-dance)
+  - [The Requests in Detail](#the-requests-in-detail)
+  - [App-Only Tokens and the `.default` Scope](#app-only-tokens-and-the-default-scope)
+  - [Why use two requests instead of one?](#why-use-two-requests-instead-of-one)
+  - [Clarifying Misconceptions](#clarifying-misconceptions)
 - [4. Scaling: Logical Agents vs. Copies and Sessions](#4-scaling-logical-agents-vs-copies-and-sessions)
+  - [Why dynamic, on-the-fly identity creation is an anti-pattern](#why-dynamic-on-the-fly-identity-creation-is-an-anti-pattern)
+  - [Hitting the Limits (and how to bypass them)](#hitting-the-limits-and-how-to-bypass-them)
 - [5. Industry Parallels](#5-industry-parallels)
 
 ---

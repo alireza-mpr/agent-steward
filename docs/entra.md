@@ -6,6 +6,31 @@ This guide serves as your roadmap to Microsoft Entra for this project. It covers
 
 **Note on accuracy:** These details were checked against Microsoft Learn on **22 October 2026**. Because Microsoft's licensing changes frequently, always verify with official sources before making purchasing decisions.
 
+## Contents
+
+- [1. Essential Links](#1-essential-links)
+  - [Portals](#portals)
+  - [Tools](#tools)
+  - [Official Documentation](#official-documentation)
+- [2. Finding Things in the Portal (Without Getting Lost)](#2-finding-things-in-the-portal-without-getting-lost)
+  - [Applications vs. Service Principals](#applications-vs-service-principals)
+  - [Client, API, or Both?](#client-api-or-both)
+- [3. Where to Look: A Cheat Sheet](#3-where-to-look-a-cheat-sheet)
+  - [When viewing an Application (App registrations)](#when-viewing-an-application-app-registrations)
+  - [When viewing a Service Principal (Enterprise apps)](#when-viewing-a-service-principal-enterprise-apps)
+- [4. Finding Agent ID Objects](#4-finding-agent-id-objects)
+- [5. Demystifying Entra Licensing](#5-demystifying-entra-licensing)
+  - [The Hierarchy](#the-hierarchy)
+  - [Who actually needs a license?](#who-actually-needs-a-license)
+  - [Entra ID Editions Overview](#entra-id-editions-overview)
+  - [Bundles (Ranked by Entra ID Edition)](#bundles-ranked-by-entra-id-edition)
+- [6. Agent ID Licensing & Trials](#6-agent-id-licensing--trials)
+  - [What you need for Agent ID features](#what-you-need-for-agent-id-features)
+  - [How Trials Work](#how-trials-work)
+- [7. This Project's Tenant State](#7-this-projects-tenant-state)
+  - [Project Requirements Mapping](#project-requirements-mapping)
+- [8. Sources](#8-sources)
+
 ---
 
 ## 1. Essential Links
