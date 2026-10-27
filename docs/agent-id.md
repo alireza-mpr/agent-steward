@@ -171,8 +171,10 @@ sequenceDiagram
 
 ### App-Only Tokens and the `.default` Scope
 App-only tokens represent the agent itself, with no human user involved. Because there is no user to click "Accept" on a consent prompt, permissions must be granted by an admin ahead of time.
-- **No dynamic subsets:** You cannot ask for specific scopes (like `AuditLog.Read.All`) per request. If you try, Entra will reject it (e.g., throwing error `IDW10404`). 
+- **No dynamic subsets:** You cannot ask for specific scopes (like `AuditLog.Read.All`) per request. If you try, Entra rejects it with error `AADSTS1002012`: "Client credential flows must have a scope value with /.default suffixed to the resource identifier" (tested in this lab on 27 October 2026, by asking for the Identity API's role `Findings.Submit`).
 - **The `.default` rule:** You must request the API identifier plus `/.default` (e.g., `https://graph.microsoft.com/.default`). This tells Entra to look at every permission an admin has granted this agent and bundle them all into the token's `roles` claim. (The `scp` claim is not used here).
+- **The agent cannot narrow itself:** There is no per-request least privilege for app roles. Least privilege lives entirely in the grant.
+- **Different access means different identity:** If one agent needs a narrow token for path A and a wide token for path B, you need two agent identities (or two blueprints), not one agent asking for two scopes. Two blueprints are needed when the wide roles are inheritable permissions on the blueprint, because every agent identity under that blueprint inherits them.
 
 ### Why use two requests instead of one?
 While the agent code holds the blueprint's key and *could* theoretically sign Request 2 directly, Entra prevents this to maintain OAuth standards:
