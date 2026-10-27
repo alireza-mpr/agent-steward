@@ -147,7 +147,12 @@ flowchart TB
 
 **Roles and administrators** (Enterprise apps > the app) is not part of this picture. It shows the Entra admin roles that may manage the app, such as Cloud Application Administrator, not what the app may call.
 
-**Inherited permissions.** An agent can also inherit permissions from its blueprint: the blueprint lists which APIs' permissions may pass down to its agents, and an admin consents to them on the blueprint principal. The key detail: **inherited permissions never show on the agent identity, neither in Graph nor in the portal, only in its tokens.** Graph beta lists them for each agent (`inheritedAppRoleAssignments`), and the guardian reads them too, so its over-permissioned check sees what an agent can really do ([graph_reader.py](../src/guardian/graph_reader.py)). Source: [Inheritable permissions](https://learn.microsoft.com/en-us/entra/agent-id/concept-inheritable-permissions) (Microsoft Learn).
+**Inherited permissions.** An agent can also inherit permissions from its blueprint: the blueprint lists which APIs' permissions may pass down to its agents, and an admin consents to them on the blueprint principal. The key detail is that the token and the directory view differ:
+
+- **The agent's token combines them:** its `roles` holds the agent's own roles plus the ones it inherits from the blueprint. Learn calls this the "effective permissions in token".
+- **The directory view does not:** Graph and the portal show only the agent's own assignments. Inherited permissions never show on the agent identity there, only in its tokens. Graph beta is the exception: it lists them for each agent in `inheritedAppRoleAssignments`.
+
+So without `inheritedAppRoleAssignments`, the over-permissioned rule would miss a permission that the agent really has in its tokens. That is why the guardian reads both ([graph_reader.py](../src/guardian/graph_reader.py)). Source: [Inheritable permissions](https://learn.microsoft.com/en-us/entra/agent-id/concept-inheritable-permissions) (Microsoft Learn).
 
 ### Quick reference
 
