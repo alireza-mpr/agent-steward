@@ -198,7 +198,7 @@ To tell the modes apart, `idtyp` is `app` in the autonomous flow and `user` when
 
 Learn lists the `xms_*` agent claims as optional claims, so check that tokens for your own API carry them. If they are missing, check 5 rejects the token, so the API fails safe. In this lab, the guardian's first token for the Identity API had none of them, and no `idtyp` either. They appeared only after the API's app registration asked for them as optional claims (`idtyp`, `xms_act_fct`, `xms_sub_fct` and `xms_par_app_azp`, in [identity-api.bicep](../setup/bicep/identity-api.bicep)).
 
-This is the check list for the project's Identity API (FR5). The code is [token_validation.py](../src/identity_api/token_validation.py), and its offline tests are in [tests/identity_api](../tests/identity_api/test_token_validation.py).
+This is the check list for the project's Identity API (FR5). The code is [token_validation.py](../src/identity_api/token_validation.py), its unit tests are in [tests/unit/identity_api](../tests/unit/identity_api/test_token_validation.py), and its integration tests with real Entra tokens are in [tests/integration/identity_api](../tests/integration/identity_api/test_with_real_tokens.py).
 
 ### What kind of caller vs what it may do
 

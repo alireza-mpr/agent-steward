@@ -55,6 +55,29 @@ services:
     networks:
       - agent
 
+  # Integration tests (FR5, NFR8): real tokens from Entra against the running Identity API.
+  # Runs only on demand (profile "tools"): docker compose run --rm integration-tests
+  integration-tests:
+    build: tests/integration
+    profiles: ["tools"]
+    network_mode: "service:sidecar"   # agent tokens come from the sidecar's loopback
+    env_file:
+      - path: secrets/test-client.env   # the plain test client's secret, for one negative test
+        required: false
+    environment:
+      SIDECAR_URL: http://127.0.0.1:5000
+      API_URL: http://api:8000
+      TENANT_ID: ${TENANT_ID:-}
+      IDENTITY_API_APP_ID: ${IDENTITY_API_APP_ID:-}
+      GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:-}
+      GUARDIAN_NOROLE_AGENT_APP_ID: ${GUARDIAN_NOROLE_AGENT_APP_ID:-}
+      TEST_CLIENT_APP_ID: ${TEST_CLIENT_APP_ID:-}
+    volumes:
+      - ./tests/integration:/tests:ro
+    depends_on:
+      - sidecar
+      - api
+
   # Dev tool: asks the sidecar for a token as the guardian and prints the token's claims.
   # It never prints the token itself. Runs only on demand (profile "tools").
   token-claims:

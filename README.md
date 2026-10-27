@@ -94,7 +94,7 @@ src/identity_api/ Identity API (Python / FastAPI): token validation, audit
 src/guardian/     Guardian agent (Python)
 src/mcp/          MCP server (official Python SDK): tools, allow-list, approval gate
 src/worker/       Live worker timer loop (PowerShell)
-tests/            Offline policy tests + live auth-flow tests
+tests/            Unit tests, offline (unit/), and integration tests with real Entra tokens (integration/)
 tools/            Dev tools that print token claims, never tokens (token-claims: the guardian's token from the sidecar; token_exchange: T1 and T2 side by side)
 docs/             Reference (entra.md, infra.md, agent-id.md, tokens.md), screenshots, diagrams
 GLOSSARY.md       Ubiquitous language: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP
@@ -113,10 +113,10 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 | FR2 - Owner + sponsor | in progress | Guardian: technical owner and business sponsor are different people ([screenshot](docs/screenshots/phase1-guardian-owner-and-sponsor.png)). The worker's identity comes in Phase 5. |
 | FR3 - Autonomous mode | not started | - |
 | FR4 - OBO mode | not started | - |
-| FR5 - Token validation | not started | - |
+| FR5 - Token validation | done | The Identity API checks every token in 7 steps ([docs/tokens.md](docs/tokens.md#what-an-api-must-check), [code](src/identity_api/token_validation.py)). It rejects a caller that is not an agent identity (check 5) or lacks the app role (check 6). Unit tests: [tests/unit/identity_api](tests/unit/identity_api/test_token_validation.py). Integration tests with real Entra tokens: [tests/integration/identity_api](tests/integration/identity_api/test_with_real_tokens.py), where a plain app that holds the role is still rejected as not an agent, and an agent without the role is rejected ([screenshot](docs/screenshots/phase2-live-tests.png)). |
 | FR6 - MCP allow-list | not started | - |
 | FR7 - Human approval | not started | - |
-| FR8 - Audit | not started | - |
+| FR8 - Audit | in progress | The Identity API writes one JSON audit line per decision, rejections included, with the FR8 fields: agent object ID, blueprint app ID, mode, delegating user, tool, approver, correlation ID, timestamp and outcome ([code](src/identity_api/main.py)). The lines go to the container log today. Durable storage comes in Phase 4. |
 | FR9 - Conditional Access | not started | - |
 | FR10 - Secrets | in progress | The guardian's blueprint uses a certificate. Only the public half goes to Entra, and the private key stays in `secrets/`, which git ignores ([script](setup/agent-id/Deploy-BlueprintCertificate.ps1), [how it works](docs/infra.md#the-blueprints-credential)). Only the token sidecar container mounts the key, so the guardian's code never sees it ([docker-compose.yml](docker-compose.yml), [local run](docs/infra.md#local-run-the-token-sidecar)). The gitleaks sweep comes in Phase 5. |
 | FR11 - Revocation | not started | - |
@@ -128,7 +128,7 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 | NFR5 - Reproducibility | in progress | Tenant setup as code: [Bicep smoke test](setup/bicep/phase0-smoke.bicep) and [Agent ID setup script](setup/agent-id/Deploy-AgentIdentities.ps1); see [infra.md](docs/infra.md). [docker-compose.yml](docker-compose.yml) runs the token sidecar today ([local run](docs/infra.md#local-run-the-token-sidecar)); the app services join it as they are built. |
 | NFR6 - Repo hygiene | not started | - |
 | NFR7 - Threat model | not started | - |
-| NFR8 - Tests | not started | - |
+| NFR8 - Tests | in progress | The "offline tests" are unit tests: the token claim checks ([tests/unit/identity_api](tests/unit/identity_api/test_token_validation.py)). The "live test per auth flow" is an integration test with real Entra tokens: the autonomous flow ([tests/integration/identity_api](tests/integration/identity_api/test_with_real_tokens.py)). Tests for the allow-list and the approval gate come in Phase 4, and the OBO integration test in Phase 3. |
 | NFR9 - Durable proof | not started | - |
 
 Evidence links point to DEMO.md sections, screenshots in `docs/screenshots/`, test files, or Entra log captures.
