@@ -12,7 +12,11 @@ This doc explains why an API must be registered before any token exists for it, 
   - [The Agent ID claims](#the-agent-id-claims)
   - [What the token allows](#what-the-token-allows)
   - [Internal claims](#internal-claims)
+- [T1 and T2 side by side](#t1-and-t2-side-by-side)
+  - [What changes from T1 to T2](#what-changes-from-t1-to-t2)
+  - [The claims, masked](#the-claims-masked)
 - [What an API must check](#what-an-api-must-check)
+  - [What kind of caller vs what it may do](#what-kind-of-caller-vs-what-it-may-do)
   - [A real negative case: the blueprint's own token](#a-real-negative-case-the-blueprints-own-token)
 - [Sources](#sources)
 
@@ -93,6 +97,91 @@ Learn calls some claims "opaque": they are internal to Entra, and resources shou
 - **`xms_pftexp` (observed):** Exactly 24 hours after `exp`.
 - **`xms_ftd`, `xms_rd` and `xms_sess_fct` (observed):** No documented meaning.
 
+## T1 and T2 side by side
+
+**In one line:** T1 is the blueprint's token for one agent, usable only as that agent's proof, and T2 is the agent's own token for an API.
+
+The sidecar keeps T1 to itself. To see it, the dev tool [token_exchange.py](../tools/token_exchange.py) makes both requests the same way the sidecar does, and prints both tokens' claims (never the tokens themselves):
+
+```sh
+.venv/bin/python tools/token_exchange.py --mask
+```
+
+It is a dev-only exception: it reads the guardian blueprint's private key from `secrets/`, which in normal runs only the sidecar holds. `--mask` keeps the first and last 4 characters of IDs and opaque values ([screenshot](screenshots/phase2-t1-t2-claims.png)).
+
+### What changes from T1 to T2
+
+- **The audience (`aud`):** T1's is the token exchange resource that request 1 asked for (`api://AzureADTokenExchange`), so T1 cannot call any API. T2's is the Identity API.
+- **The client (`azp`):** T1's is the blueprint. T2's is the agent identity.
+- **The principal (`oid`):** T1's is the blueprint principal, the blueprint's service principal in this tenant. T2's is the agent identity.
+- **The subject (`sub`):** T1's is an FMI path, `/eid1/c/pub/t/<tenant>/a/<blueprint>/<agent>`. The tenant ID and the blueprint's appId are written as 22 characters of base64url, and the agent's appId as a plain GUID. So T1 names exactly one agent of one blueprint. T2's `sub` is the agent identity.
+- **The actor facets (`xms_act_fct`):** T1's are `9 3`, with no `11`, because the actor is the blueprint. T2's contain `11`, because the actor is an agent identity.
+- **The permissions (`roles`):** T1 has none. T2 has `Findings.Submit`.
+- **The parent (`xms_par_app_azp`):** Only T2 has it. It names the blueprint.
+- **The client authentication (`azpacr`):** `2` in both. In request 1 the blueprint signed with its certificate. In request 2 the agent sent T1 as its assertion.
+- **`xms_ficinfo`:** Only T1 has it. It is not documented, and its name suggests federated credential information, which fits T1's use as a federated assertion.
+
+### The claims, masked
+
+T1, from request 1 (client: the blueprint):
+
+```json
+{
+  "aio": "ASQA…0eg=",
+  "aud": "fb60…9936",
+  "azp": "b445…63b4",
+  "azpacr": "2",
+  "exp": 1793071205,
+  "iat": 1793067305,
+  "idtyp": "app",
+  "iss": "https://login.microsoftonline.com/6dfa…8171/v2.0",
+  "nbf": 1793067305,
+  "oid": "0927…28e5",
+  "rh": "1.AU…CAA.",
+  "sub": "/eid1/c/pub/t/Qj76…qBcQ/a/uulF…pjtA/1927…9d25",
+  "tid": "6dfa…8171",
+  "uti": "Slcw…fXAA",
+  "ver": "2.0",
+  "xms_act_fct": "9 3",
+  "xms_aud_guid": "fb60…9936",
+  "xms_ficinfo": "CAAQABgAIAAoAjAA",
+  "xms_ftd": "O_7K…c21z",
+  "xms_idrel": "7 26",
+  "xms_sess_fct": "21 14",
+  "xms_sub_fct": "9 3",
+  "xms_tnt_fct": "3 4"
+}
+```
+
+T2, from request 2 (client: the agent identity, for the Identity API):
+
+```json
+{
+  "aio": "ASQA…gt0=",
+  "aud": "cc7d…c57a",
+  "azp": "1927…9d25",
+  "azpacr": "2",
+  "exp": 1793071205,
+  "iat": 1793067305,
+  "idtyp": "app",
+  "iss": "https://login.microsoftonline.com/6dfa…8171/v2.0",
+  "nbf": 1793067305,
+  "oid": "1927…9d25",
+  "rh": "1.AU…CAA.",
+  "roles": ["Findings.Submit"],
+  "sub": "1927…9d25",
+  "tid": "6dfa…8171",
+  "uti": "tbBt…sqAA",
+  "ver": "2.0",
+  "xms_act_fct": "3 11 9",
+  "xms_ftd": "vDZi…c21z",
+  "xms_par_app_azp": "b445…63b4",
+  "xms_sub_fct": "11 3 9"
+}
+```
+
+Seen in this lab on 27 October 2026. The screenshot comes from a later run, so the values that change with every token differ: the times, `aio`, `uti`, `xms_ftd`, and the order of the facet numbers.
+
 ## What an API must check
 
 **In one line:** an API decides from the token alone whether to accept a call, using a fixed list of checks, and the first failed check rejects the call.
@@ -109,7 +198,19 @@ To tell the modes apart, `idtyp` is `app` in the autonomous flow and `user` when
 
 Learn lists the `xms_*` agent claims as optional claims, so check that tokens for your own API carry them. If they are missing, check 5 rejects the token, so the API fails safe. In this lab, the guardian's first token for the Identity API had none of them, and no `idtyp` either. They appeared only after the API's app registration asked for them as optional claims (`idtyp`, `xms_act_fct`, `xms_sub_fct` and `xms_par_app_azp`, in [identity-api.bicep](../setup/bicep/identity-api.bicep)).
 
-This is the check list for the project's Identity API (FR5).
+This is the check list for the project's Identity API (FR5). The code is [token_validation.py](../src/identity_api/token_validation.py), and its offline tests are in [tests/identity_api](../tests/identity_api/test_token_validation.py).
+
+### What kind of caller vs what it may do
+
+**In one line:** check 5 decides what kind of caller this is, and check 6 decides what it may do. They are two separate decisions.
+
+- **What kind of caller (check 5):** Entra stamps facts about the caller into the token. `xms_act_fct` containing `11` means the client (the actor) is an agent identity. An agent identity can get a token only through its blueprint, with T1 and then T2, so the value also implies that sign-in path. The Identity API enforces this itself: it accepts agents only. A plain app or a blueprint carries no `11` (for example `3 9`), so it is rejected, even if it holds the right role.
+- **What it may do (check 6):** The authorization is role-based. `roles` must contain `Findings.Submit`. Which agents hold that role is decided in Entra, as an app role assignment, not in a list of agent IDs inside the API. So it is governed in one place, visible in the portal, and revoked without a deploy.
+- **What is not an authorization decision:** The agent's own ID (`azp`, `oid`) and its blueprint (`xms_par_app_azp`) are only logged. Never authorize on the blueprint: every agent of that blueprint would pass.
+
+Why check 6 alone is not enough: an app role can be assigned to any service principal, including a plain app. So without check 5, a role given to a normal app by mistake would let that app in.
+
+**Anchor:** FAPI, which CDR builds on, makes the API check the `cnf` claim: the access token is bound to the client's mTLS certificate, so only the holder of that certificate may use it. Like check 5, it is a fact about the client that the authorization server stamps into the token, and the API checks it separately from the scopes, which say what the client may do. Unlike check 5, it does not say what kind of client this is, and it says nothing about the grant: a token from the authorization code grant and one from the refresh token grant carry the same binding.
 
 ### A real negative case: the blueprint's own token
 

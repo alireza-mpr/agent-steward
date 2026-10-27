@@ -65,7 +65,12 @@ Checked against Microsoft Learn on 22 October 2026. Licensing changes often, so 
 | Applications (the global definition of an app) | Entra ID > App registrations | Lists only apps registered in this tenant. Microsoft's own apps never appear here; they are registered in Microsoft's tenant. |
 | Service principals (the app's local representation in this tenant) | Entra ID > Enterprise apps | **"Enterprise application" is the portal's name for a service principal.** The default filter (Application type = Enterprise Applications) hides Microsoft's apps. Change it to Microsoft Applications or All Applications to see them. |
 
-**What each one holds.** The application declares; the service principal holds this tenant's decisions. Neither contains code: they are identity records, like a badge and the list of doors it opens, not the person who carries it.
+**What each one holds.** This is the most important difference between the two:
+
+- **The application is the template, a wish list.** It declares what the app needs and offers: the permissions it requests on other APIs, the roles and scopes it offers as an API, its name, and usually its credentials. Declaring something here grants nothing.
+- **The service principal is that template made real in one tenant.** It is where this tenant ticks the boxes: which requested permissions were granted, who holds the roles the app offers, whether the app is enabled, who its owners are, which Conditional Access policies target it, and its sign-in logs.
+
+Neither contains code: they are identity records, like a badge and the list of doors it opens, not the person who carries it.
 
 | | Application | Service principal |
 |---|---|---|

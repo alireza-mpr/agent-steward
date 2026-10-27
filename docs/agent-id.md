@@ -8,6 +8,7 @@ This doc explains how the Microsoft Entra Agent ID objects fit together, and how
   - [A classic app](#a-classic-app)
   - [Agent ID](#agent-id)
   - [What is different](#what-is-different)
+  - [Why an agent identity has no application](#why-an-agent-identity-has-no-application)
   - [Quick reference](#quick-reference)
 - [Who it is vs how it proves it](#who-it-is-vs-how-it-proves-it)
   - [Why Agent ID splits them](#why-agent-id-splits-them)
@@ -32,9 +33,9 @@ To see what is new, start with the classic app model that Agent ID builds on.
 
 ### A classic app
 
-- **The application:** An application is the definition of an app. It lives in one tenant, its home tenant.
-- **The service principal:** In each tenant that uses the app, Entra creates one service principal for it. The service principal is the app's local representation in that tenant, and it holds that tenant's decisions about the app.
-- **One per tenant:** So the application works like a class, and the service principal works like its object. But a tenant can hold at most one service principal per application.
+- **The application:** An application is the global definition of an app. It lives in one tenant, its home tenant.
+- **The service principal:** In each tenant that uses the app, Entra creates one service principal for it. The service principal is the app's presence in that tenant (Entra calls it the app's local representation). It holds that tenant's decisions about the app: the grants, enabled or disabled, the owners, Conditional Access, and the sign-in logs. So the application is the template, a wish list of what the app requests and offers, and the service principal is where one tenant ticks the boxes ([details](entra.md#applications-vs-service-principals)).
+- **One per tenant:** A multitenant app has one service principal in each tenant that uses it, but a tenant can hold at most one service principal per application. Both are records in Entra's directory. Neither runs any code: the code that uses them runs elsewhere.
 
 ### Agent ID
 
@@ -76,7 +77,27 @@ flowchart TB
 - **One credential for all:** A classic app's credential proves only that app. A blueprint holds the only credential, and all its agent identities sign in through it.
 - **Still two base types:** Graph still has only applications and service principals. So a blueprint is a special application, and a blueprint principal and an agent identity are special service principals, each with its own Graph type.
 
-**Anchor:** in OOP terms, the blueprint is a class with a factory method. The blueprint principal is its one static instance in this tenant, and the agent identities are the instances that the factory creates.
+**In short:** the blueprint is the global definition of one kind of agent, and the blueprint principal is its presence in this tenant, just like a classic app. What is new is that the blueprint also creates many agent identities in the same tenant, and each one is a service principal of its own. All of them are records in Entra's directory. The code that runs is elsewhere.
+
+### Why an agent identity has no application
+
+**In one line:** an agent identity is a service principal with no application behind it, because it can never live in more than one tenant, so it needs no template of its own.
+
+The split into an application and a service principal exists because an app can live in many tenants. The application is the one template, and each tenant that uses the app gets its own service principal, where that tenant ticks the boxes ([details](entra.md#applications-vs-service-principals)). Even a single-tenant app keeps both halves, because the model is the same for every app.
+
+- **A classic app can be multitenant:** It can be published to other tenants. So it needs both halves.
+- **A blueprint can be multitenant too:** A publisher can offer it to other tenants. So it also has both halves: the blueprint (its template) and a blueprint principal in each tenant that uses it.
+- **An agent identity never can:** Microsoft Learn says agent identities "are always single-tenant regardless of their parent Agent identity blueprint's tenancy model". So it needs no template of its own, because its blueprint already is one. It needs only the tenant half, and that half is the agent identity itself.
+
+| Object | Template half (application) | Tenant half (service principal) |
+|---|---|---|
+| Classic app | The application | Its service principal, one per tenant |
+| Blueprint | The blueprint | The blueprint principal, one per tenant |
+| Agent identity | None: the blueprint is its template | The agent identity itself, in exactly one tenant |
+
+So an agent identity's grants, sign-ins, sponsor and enabled flag all live on the agent identity, the same way they live on any service principal. This project's roles (`Findings.Submit` and the guardian's Graph roles) are assigned to the agent identity's object ID.
+
+Source: [Agent autonomous app OAuth flow](https://learn.microsoft.com/en-us/entra/agent-id/agent-autonomous-app-oauth-flow) (Microsoft Learn, checked 26 October 2026).
 
 ### Quick reference
 
@@ -140,7 +161,7 @@ sequenceDiagram
 4. **Entra issues T2:** Entra checks that T1 is valid and came from this agent identity's own blueprint. Then it returns T2, the agent's access token, which names the agent identity as the client.
 5. **Agent calls the API:** The agent sends T2 to the API. So the API sees the agent identity as the caller, and it can also log which blueprint the agent belongs to.
 
-To see what T2 contains, claim by claim, and what an API must check, see [Agent tokens](tokens.md).
+To see what T2 contains, claim by claim, and what an API must check, see [Agent tokens](tokens.md). To see real T1 and T2 tokens side by side, see [T1 and T2 side by side](tokens.md#t1-and-t2-side-by-side).
 
 The on-behalf-of (OBO) flow follows the same steps. Only request 2 changes, as the next section shows.
 
