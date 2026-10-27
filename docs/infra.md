@@ -253,6 +253,7 @@ The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.mi
 docker compose up -d sidecar
 docker compose run --rm token-claims graph   # claims of the guardian's Graph token
 docker compose up -d api
+docker compose run --rm guardian            # one scan of the tenant's agents, reported to the Identity API
 docker compose run --rm integration-tests   # integration tests: real Entra tokens against the Identity API
 ```
 

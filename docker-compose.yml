@@ -55,6 +55,22 @@ services:
     networks:
       - agent
 
+  # The guardian (FR3): one scan of the tenant's agents per run, reported to the Identity API.
+  # docker compose up runs it once; docker compose run --rm guardian runs it again.
+  guardian:
+    build: src/guardian
+    network_mode: "service:sidecar"   # its tokens come from the sidecar's loopback; it never sees the key
+    environment:
+      SIDECAR_URL: http://127.0.0.1:5000
+      API_URL: http://api:8000
+      GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
+      POLICY_PATH: /config/agent-permissions.json
+    volumes:
+      - ./config:/config:ro   # the permission policy: edit it and run again, no rebuild
+    depends_on:
+      - sidecar
+      - api
+
   # Integration tests (FR5, NFR8): real tokens from Entra against the running Identity API.
   # Runs only on demand (profile "tools"): docker compose run --rm integration-tests
   integration-tests:

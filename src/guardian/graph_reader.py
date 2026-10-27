@@ -23,20 +23,24 @@ NO_ROLE = "00000000-0000-0000-0000-000000000000"   # appRoleId of a plain assign
 
 class GraphClient:
     def __init__(self, get_token: Callable[[], str]):
-        self._headers = {"Authorization": f"Bearer {get_token()}"}
+        # Asked for a token on every request: the sidecar caches it and renews it near expiry,
+        # so a long run never sends an expired token.
+        self._get_token = get_token
+
+    def _get_url(self, url: str) -> dict:
+        request = urllib.request.Request(url, headers={"Authorization": f"Bearer {self._get_token()}"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.load(response)
 
     def get(self, path: str, params: dict | None = None) -> dict:
-        url = GRAPH + path + ("?" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote) if params else "")
-        with urllib.request.urlopen(urllib.request.Request(url, headers=self._headers), timeout=60) as response:
-            return json.load(response)
+        return self._get_url(GRAPH + path + ("?" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote) if params else ""))
 
     def get_all(self, path: str, params: dict | None = None) -> list[dict]:
         """Follow Graph's pages until the last one."""
         page = self.get(path, params)
         items = page["value"]
         while next_link := page.get("@odata.nextLink"):
-            with urllib.request.urlopen(urllib.request.Request(next_link, headers=self._headers), timeout=60) as response:
-                page = json.load(response)
+            page = self._get_url(next_link)
             items += page["value"]
         return items
 
