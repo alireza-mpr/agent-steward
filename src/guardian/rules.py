@@ -36,6 +36,7 @@ class Finding:
     agent_name: str
     check: str      # orphan, expiring_credential, over_permissioned or dormant
     detail: str
+    date: str | None = None   # YYYY-MM-DD: when the credential ends, or when the agent last got a token
 
 
 def load_permission_policy(path: Path) -> dict[str, frozenset[str]]:
@@ -65,12 +66,12 @@ def find_expiring_credentials(agents: list[Agent], blueprints: list[Blueprint], 
             continue
         last_end = max(blueprint.credential_end_times)
         if last_end <= now:
-            detail = f"blueprint {blueprint.name}: its last credential expired on {last_end:%Y-%m-%d}"
+            detail = f"blueprint {blueprint.name}: its last credential has expired"
         elif last_end - now <= EXPIRING_WITHIN:
-            detail = f"blueprint {blueprint.name}: its last credential ends on {last_end:%Y-%m-%d}"
+            detail = f"blueprint {blueprint.name}: its last credential ends within 14 days"
         else:
             continue
-        findings.append(Finding(agent.app_id, agent.name, "expiring_credential", detail))
+        findings.append(Finding(agent.app_id, agent.name, "expiring_credential", detail, f"{last_end:%Y-%m-%d}"))
     return findings
 
 
@@ -100,10 +101,10 @@ def find_dormant(agents: list[Agent], last_sign_ins: dict[str, datetime], now: d
         if last is None:
             detail = "no sign-in in the last 30 days"
         elif now - last > DORMANT_AFTER:
-            detail = f"last sign-in on {last:%Y-%m-%d}, more than 30 days ago"
+            detail = "last sign-in more than 30 days ago"
         else:
             continue
-        findings.append(Finding(agent.app_id, agent.name, "dormant", detail))
+        findings.append(Finding(agent.app_id, agent.name, "dormant", detail, f"{last:%Y-%m-%d}" if last else None))
     return findings
 
 

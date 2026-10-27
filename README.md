@@ -95,7 +95,7 @@ src/identity_api/ Identity API (Python / FastAPI): token validation, audit
 src/guardian/     Guardian agent (Python)
 src/mcp/          MCP server (official Python SDK): tools, allow-list, approval gate
 src/worker/       Live worker timer loop (PowerShell)
-tests/            Unit tests, offline (unit/), and integration tests with real Entra tokens (integration/)
+tests/            Unit tests, offline (unit/); integration tests with real Entra tokens (integration/); end-to-end test of the guardian (end_to_end/)
 tools/            Dev tools that print token claims, never tokens (token-claims: the guardian's token from the sidecar; token_exchange: T1 and T2 side by side)
 docs/             Reference (entra.md, infra.md, agent-id.md, tokens.md), screenshots, diagrams
 GLOSSARY.md       Ubiquitous language: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP
@@ -110,9 +110,9 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 
 | Req | Status | Evidence |
 |---|---|---|
-| FR1 - Agent identity via blueprint | in progress | The guardian's agent identity is created from a blueprint by [the setup script](setup/agent-id/Deploy-AgentIdentities.ps1) ([blueprints](docs/screenshots/phase1-agent-blueprints-list.png), [identities](docs/screenshots/phase1-agent-identities-list.png)). The token sidecar gets a real token as this agent identity through its blueprint ([claims](docs/screenshots/phase2-guardian-token-claims.png)): `appid` is the agent identity, `xms_par_app_azp` is the blueprint, and the actor facets contain 11. The guardian's own code comes next. |
+| FR1 - Agent identity via blueprint | done | The guardian's agent identity is created from a blueprint by [the setup script](setup/agent-id/Deploy-AgentIdentities.ps1) ([blueprints](docs/screenshots/phase1-agent-blueprints-list.png), [identities](docs/screenshots/phase1-agent-identities-list.png)). The token sidecar gets a real token as this agent identity through its blueprint ([claims](docs/screenshots/phase2-guardian-token-claims.png)): `appid` is the agent identity, `xms_par_app_azp` is the blueprint, and the actor facets contain 11. The guardian now runs under it: it gets every token from the sidecar as this agent identity, and never sees the blueprint's key ([guardian run](docs/screenshots/phase2-guardian-run.png)). |
 | FR2 - Owner + sponsor | in progress | Guardian: technical owner and business sponsor are different people ([screenshot](docs/screenshots/phase1-guardian-owner-and-sponsor.png)). The worker's identity comes in Phase 5. |
-| FR3 - Autonomous mode | not started | - |
+| FR3 - Autonomous mode | done | The guardian gets its tokens through its blueprint (client credentials, via the sidecar), reads the tenant's agents from Graph with read-only permissions, applies the four checks (orphan, expiring credential, over-permissioned, dormant), and reports the findings to the Identity API ([code](src/guardian), [permissions](setup/bicep/guardian-permissions.bicep), [policy](config/agent-permissions.json)). Unit tests: [tests/unit/guardian](tests/unit/guardian). End-to-end test of the whole run: [tests/end_to_end](tests/end_to_end/test_guardian_scan.py). Every fixture is flagged for its planned flaw ([screenshot](docs/screenshots/phase2-guardian-run.png)). |
 | FR4 - OBO mode | not started | - |
 | FR5 - Token validation | done | The Identity API checks every token in 7 steps ([docs/tokens.md](docs/tokens.md#what-an-api-must-check), [code](src/identity_api/token_validation.py)). It rejects a caller that is not an agent identity (check 5) or lacks the app role (check 6). Unit tests: [tests/unit/identity_api](tests/unit/identity_api/test_token_validation.py). Integration tests with real Entra tokens: [tests/integration/identity_api](tests/integration/identity_api/test_with_real_tokens.py), where a plain app that holds the role is still rejected as not an agent, and an agent without the role is rejected ([screenshot](docs/screenshots/phase2-integration-tests.png)). |
 | FR6 - MCP allow-list | not started | - |
@@ -122,14 +122,14 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 | FR10 - Secrets | in progress | The guardian's blueprint uses a certificate. Only the public half goes to Entra, and the private key stays in `secrets/`, which git ignores ([script](setup/agent-id/Deploy-BlueprintCertificate.ps1), [how it works](docs/infra.md#the-blueprints-credential)). Only the token sidecar container mounts the key, so the guardian's code never sees it ([docker-compose.yml](docker-compose.yml), [local run](docs/infra.md#local-run-the-token-sidecar)). The gitleaks sweep comes in Phase 5. |
 | FR11 - Revocation | not started | - |
 | FR12 - Live worker | not started | - |
-| NFR1 - Least privilege | not started | - |
+| NFR1 - Least privilege | in progress | The guardian holds only four read-only Graph permissions, each with the check it serves ([guardian-permissions.bicep](setup/bicep/guardian-permissions.bicep)), and the Identity API role `Findings.Submit`. The policy of which agent may hold what is a reviewed file ([config/agent-permissions.json](config/agent-permissions.json)), and the guardian flags any agent that holds more. Permissions per MCP tool come in Phase 4. |
 | NFR2 - Attribution | not started | - |
 | NFR3 - Untrusted content boundary | not started | - |
 | NFR4 - Observability | not started | - |
 | NFR5 - Reproducibility | in progress | Tenant setup as code: [Bicep smoke test](setup/bicep/phase0-smoke.bicep) and [Agent ID setup script](setup/agent-id/Deploy-AgentIdentities.ps1); see [infra.md](docs/infra.md). [docker-compose.yml](docker-compose.yml) runs the token sidecar today ([local run](docs/infra.md#local-run-the-token-sidecar)); the app services join it as they are built. |
 | NFR6 - Repo hygiene | not started | - |
 | NFR7 - Threat model | not started | - |
-| NFR8 - Tests | in progress | The "offline tests" are unit tests: the token claim checks ([tests/unit/identity_api](tests/unit/identity_api/test_token_validation.py)). The "live test per auth flow" is an integration test with real Entra tokens: the autonomous flow ([tests/integration/identity_api](tests/integration/identity_api/test_with_real_tokens.py)). Tests for the allow-list and the approval gate come in Phase 4, and the OBO integration test in Phase 3. |
+| NFR8 - Tests | in progress | The "offline tests" are unit tests: the token claim checks ([tests/unit/identity_api](tests/unit/identity_api/test_token_validation.py)). The "live test per auth flow" is an integration test with real Entra tokens: the autonomous flow ([tests/integration/identity_api](tests/integration/identity_api/test_with_real_tokens.py)). Unit tests also cover the guardian's rules and its Graph translation ([tests/unit/guardian](tests/unit/guardian)), and an end-to-end test runs the whole guardian ([tests/end_to_end](tests/end_to_end/test_guardian_scan.py)). Tests for the allow-list and the approval gate come in Phase 4, and the OBO integration test in Phase 3. |
 | NFR9 - Durable proof | not started | - |
 
 Evidence links point to DEMO.md sections, screenshots in `docs/screenshots/`, test files, or Entra log captures.

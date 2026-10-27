@@ -46,7 +46,8 @@ def test_orphan_rule_flags_only_the_agent_without_a_sponsor():
 def test_expiring_rule_flags_the_agents_of_a_blueprint_whose_last_credential_ends_soon():
     findings = find_expiring_credentials(AGENTS, BLUEPRINTS, NOW)
     assert names(findings) == ["agent-steward-fixture-expiring-01"]
-    assert findings[0].detail == "blueprint agent-steward-fixture-expiring: its last credential ends on 2026-11-02"
+    assert (findings[0].date, findings[0].detail) == (
+        "2026-11-02", "blueprint agent-steward-fixture-expiring: its last credential ends within 14 days")
 
 
 def test_a_rotation_is_not_flagged():
@@ -58,7 +59,7 @@ def test_a_rotation_is_not_flagged():
 def test_an_expired_credential_is_flagged():
     expired = replace(EXPIRING_BLUEPRINT, credential_end_times=(NOW - timedelta(days=1),))
     [finding] = find_expiring_credentials([EXPIRING], [expired], NOW)
-    assert "expired on 2026-10-26" in finding.detail
+    assert (finding.date, finding.detail) == ("2026-10-26", "blueprint agent-steward-fixture-expiring: its last credential has expired")
 
 
 def test_a_blueprint_without_credentials_is_not_flagged_as_expiring():
@@ -92,11 +93,13 @@ def test_dormant_rule_flags_every_agent_without_a_recent_sign_in():
         "agent-steward-fixture-dormant-01", "agent-steward-fixture-expiring-01",
         "agent-steward-fixture-orphan-01", "agent-steward-fixture-overperm-01",
     ]
+    # No sign-in at all in the log, so there is no date to show.
+    assert {finding.date for finding in find_dormant(AGENTS, LAST_SIGN_INS, NOW)} == {None}
 
 
 def test_a_sign_in_older_than_30_days_is_dormant():
     [finding] = find_dormant([GUARDIAN], {"a-guardian": NOW - timedelta(days=31)}, NOW)
-    assert finding.detail == "last sign-in on 2026-09-26, more than 30 days ago"
+    assert (finding.date, finding.detail) == ("2026-09-26", "last sign-in more than 30 days ago")
 
 
 # All rules

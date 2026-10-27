@@ -77,6 +77,7 @@ class Finding(BaseModel):
     agent_name: str
     check: Literal["orphan", "expiring_credential", "over_permissioned", "dormant"]
     detail: str
+    date: str | None = None   # YYYY-MM-DD: when a credential ends, or when the agent last got a token
 
 
 class FindingsReport(BaseModel):

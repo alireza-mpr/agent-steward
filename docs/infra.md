@@ -255,6 +255,7 @@ docker compose run --rm token-claims graph   # claims of the guardian's Graph to
 docker compose up -d api
 docker compose run --rm guardian            # one scan of the tenant's agents, reported to the Identity API
 docker compose run --rm integration-tests   # integration tests: real Entra tokens against the Identity API
+docker compose run --rm end-to-end-tests    # end-to-end test: the real guardian against the tenant and the API
 ```
 
 `token-claims` prints the decoded claims, never the token itself ([example](screenshots/phase2-guardian-token-claims.png)). The claims hold real tenant and object IDs, so redact them in any screenshot. For what each claim means, see [Agent tokens](tokens.md).

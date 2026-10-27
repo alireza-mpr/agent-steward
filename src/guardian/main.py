@@ -13,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -62,26 +62,45 @@ def submit(findings: list[Finding], correlation_id: str) -> dict:
         return json.load(response)
 
 
+@dataclass(frozen=True)
+class ScanResult:
+    findings: list[Finding]
+    answer: dict           # the Identity API's answer
+    correlation_id: str    # the Identity API writes the same ID into its audit line
+
+
+def scan() -> ScanResult:
+    """One whole run: read the tenant, apply the rules, report the findings. The end-to-end test calls it too."""
+    now = datetime.now(timezone.utc)
+    correlation_id = str(uuid.uuid4())
+    graph = GraphClient(token_for("graph"))
+    findings = run_all_rules(fetch_agents(graph), fetch_blueprints(graph),
+                             load_permission_policy(POLICY_PATH), fetch_last_sign_ins(graph, now), now)
+    return ScanResult(findings, submit(findings, correlation_id), correlation_id)
+
+
 def main() -> int:
     wait_until_ready(f"{SIDECAR_URL}/healthz")
     wait_until_ready(f"{API_URL}/health")
-    now = datetime.now(timezone.utc)
-    correlation_id = str(uuid.uuid4())   # the Identity API writes the same ID into its audit line
-
     try:
-        graph = GraphClient(token_for("graph"))
-        findings = run_all_rules(fetch_agents(graph), fetch_blueprints(graph),
-                                 load_permission_policy(POLICY_PATH), fetch_last_sign_ins(graph, now), now)
-        answer = submit(findings, correlation_id)
+        result = scan()
     except urllib.error.HTTPError as error:
-        print(f"Guardian run {correlation_id} failed: {error.code} from {error.url}", file=sys.stderr)
+        print(f"Guardian run failed: {error.code} from {error.url}", file=sys.stderr)
         return 1
 
-    print(f"Guardian run {correlation_id}: {len(findings)} findings, "
-          f"{answer['accepted']} accepted by the Identity API")
-    for finding in sorted(findings, key=lambda finding: (finding.agent_name, finding.check)):
-        print(f"  {finding.agent_name:<36} {finding.check:<20} {finding.detail}")
+    print(f"Guardian run {result.correlation_id}: {len(result.findings)} findings, "
+          f"{result.answer['accepted']} accepted by the Identity API\n")
+    print(f"{'ISSUE':<20} {'AGENT':<36} {'DATE':<16} DESCRIPTION")
+    for finding in sorted(result.findings, key=lambda finding: (finding.check, finding.agent_name)):
+        print(f"{finding.check:<20} {finding.agent_name:<36} {date_column(finding):<16} {finding.detail}")
     return 0
+
+
+def date_column(finding: Finding) -> str:
+    """Expiring: when the credential ends. Dormant: when the agent last got a token."""
+    if finding.date:
+        return finding.date
+    return "none in 30 days" if finding.check == "dormant" else "-"
 
 
 if __name__ == "__main__":
