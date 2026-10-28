@@ -141,6 +141,13 @@ In standard OAuth, a client uses a `client_id` to say *who it is*, and a secret/
 - **Who it is (The Agent Identity):** Each agent has its own `appId`. This allows tokens, permissions, logs, and disable-flags to work on a per-agent basis.
 - **How it proves it (The Blueprint):** All agent identities share the credential held by their blueprint. Because the agent identity has no credential of its own, it cannot sign in alone—its blueprint must sign in *for* it. 
 
+**A blueprint supports three credential types** ([details](infra.md#the-blueprints-credential)):
+- **A secret:** For testing only. Tested in this lab on 27 October 2026: a secret also gets T1.
+- **A certificate:** What this project uses today, because it runs locally.
+- **A federated identity credential:** Microsoft's recommendation for production, with a managed identity as its source. The blueprint does not store a token: the federated identity credential says "trust tokens from this managed identity", and at sign-in the managed identity's token is sent as the proof.
+
+Whatever the credential, request 1 is the blueprint signing in, and its result is T1. T1 cannot call any API: it is only the proof for request 2, and only for the one agent identity named in `fmi_path`.
+
 ### Why a Blueprint Is Needed
 Without blueprints, every agent would be a classic application, with its own service principal and its own credential. The blueprint model changes this in three ways.
 
@@ -200,7 +207,8 @@ sequenceDiagram
 ### App-Only Tokens and the `.default` Scope
 App-only tokens represent the agent itself, with no human user involved. Because there is no user to click "Accept" on a consent prompt, permissions must be granted by an admin ahead of time.
 - **No dynamic subsets:** You cannot ask for specific scopes (like `AuditLog.Read.All`) per request. If you try, Entra rejects it with error `AADSTS1002012`: "Client credential flows must have a scope value with /.default suffixed to the resource identifier" (tested in this lab on 27 October 2026, by asking for the Identity API's role `Findings.Submit`).
-- **The `.default` rule:** You must request the API identifier plus `/.default` (e.g., `https://graph.microsoft.com/.default`). This tells Entra to look at every permission an admin has granted this agent and bundle them all into the token's `roles` claim. (The `scp` claim is not used here).
+- **The `.default` rule:** You must request the API identifier plus `/.default` (e.g., `https://graph.microsoft.com/.default`). This tells Entra to look at every app role an admin has granted this agent *on that API* and bundle them all into the token's `roles` claim. (The `scp` claim is not used here).
+- **The scope narrows the token to one API, not to some of its roles:** A token is for one API: `aud` names that API's application, and `roles` carries the entire set of roles the agent holds on that API, which means the roles assigned to this agent on the API's service principal plus the roles it inherits from its blueprint for that API. App roles are defined on each API's application, so the scope is how the agent picks the API. Tested in this lab: the guardian holds four Graph roles and `Findings.Submit`, yet its T2 for the Identity API carried only `"roles": ["Findings.Submit"]` ([the token](tokens.md#the-claims-masked)).
 - **The agent cannot narrow itself:** There is no per-request least privilege for app roles. Least privilege lives entirely in the grant.
 - **Different access means different identity:** If one agent needs a narrow token for path A and a wide token for path B, you need two agent identities (or two blueprints), not one agent asking for two scopes. Two blueprints are needed when the wide roles are inheritable permissions on the blueprint, because every agent identity under that blueprint inherits them.
 
