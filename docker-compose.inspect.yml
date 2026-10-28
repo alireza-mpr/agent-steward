@@ -1,0 +1,25 @@
+# Dev only: lets the MCP Inspector on this machine reach the guardian's MCP server.
+# How to use the Inspector, a Python client or curl against it: docs/mcp.md.
+#
+# Normally the MCP server is reachable only inside the Compose network (docs/agent-architecture.md, D1).
+# This file publishes its port on 127.0.0.1, so only this machine can reach it, and while it is
+# on, any program on this machine can call the tools. Use it only while inspecting:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.inspect.yml up -d sidecar mcp-server
+#   npx @modelcontextprotocol/inspector@2.12.0      # then connect to http://localhost:8100/mcp
+#
+# Close it again afterwards (Compose recreates both containers without the published port):
+#
+#   docker compose up -d sidecar mcp-server
+
+services:
+  # The MCP server shares the sidecar's network namespace, so its port is published on the sidecar.
+  # The sidecar's own port (5000) stays unpublished, and it listens on 127.0.0.1 inside anyway.
+  sidecar:
+    ports:
+      - "127.0.0.1:8100:8100"
+
+  mcp-server:
+    environment:
+      # Also accept the Host header the Inspector sends (DNS rebinding protection).
+      MCP_ALLOWED_HOSTS: sidecar:8100,localhost:8100,127.0.0.1:8100

@@ -6,6 +6,9 @@ ROADMAP2.md
 MENTOR.md
 CHAT-RULES.md
 
+# local guardian traces (they hold real tenant data)
+run*.txt
+
 # secrets / local env
 .env
 *.env

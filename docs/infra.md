@@ -248,30 +248,32 @@ pwsh ./setup/agent-id/Deploy-BlueprintCertificate.ps1 -TenantId <your-domain>.on
 
 ## Local run: the token sidecar
 
-The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). The sidecar is the only container that holds the guardian blueprint's private key, and it makes both token requests (T1 and T2) for the guardian. So the guardian's LLM-driven code never sees the key.
+The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). The sidecar is the only container that holds the guardian blueprint's private key, and it makes both token requests (T1 and T2) for the guardian. Only the MCP server shares the sidecar's network namespace, so only the guardian's tools can get its tokens. The guardian's harness, which talks to Claude, runs outside it and never sees a key or a token ([Agent architecture](agent-architecture.md#3-the-guardians-design-today)). For how the sidecar compares with the in-process and token broker patterns, see [Credentials and Tokens](agent-architecture.md#6-credentials-and-tokens-how-a-workload-gets-them).
 
 **Before the first run.**
 
 1. **Certificate:** Run `Deploy-BlueprintCertificate.ps1` (see [Run the Agent ID scripts](#run-the-agent-id-scripts)). The sidecar mounts the PFX file as a Compose secret and reads its password from the `.sidecar.env` file.
 2. **IDs:** Copy `.env.example` to `.env` and fill in the tenant ID and the two app IDs. These are identifiers, not secrets, but git ignores `.env` so the real values stay out of the repo.
-3. **Apple Silicon:** Microsoft publishes the sidecar for `linux/amd64` only. Turn on Docker Desktop's Rosetta emulation (Settings > General). Under the older QEMU emulation, the sidecar fails with 500 errors after its first request.
+3. **Model key:** Put an Anthropic API key in `secrets/anthropic.env` as `ANTHROPIC_API_KEY=<key>`. Git ignores the folder, and only the guardian container gets the file.
+4. **Apple Silicon:** Microsoft publishes the sidecar for `linux/amd64` only. Turn on Docker Desktop's Rosetta emulation (Settings > General). Under the older QEMU emulation, the sidecar fails with 500 errors after its first request.
 
 **Run it.**
 
 ```sh
 docker compose up -d sidecar
 docker compose run --rm token-claims graph   # claims of the guardian's Graph token
-docker compose up -d api
-docker compose run --rm guardian            # one scan of the tenant's agents, reported to the Identity API
+docker compose up -d api mcp-server
+docker compose run --rm guardian            # one run of the agent loop: Claude asks, the MCP tools act
+docker compose run --rm -e GUARDIAN_TRACE=1 guardian   # the same, showing every message to and from the model as a chat (json: full JSON)
 docker compose run --rm integration-tests   # integration tests: real Entra tokens against the Identity API
-docker compose run --rm end-to-end-tests    # end-to-end test: the real guardian against the tenant and the API
+docker compose run --rm end-to-end-tests    # end-to-end test: the real MCP tools from the guardian's network, no model
 ```
 
 `token-claims` prints the decoded claims, never the token itself ([example](screenshots/phase2-guardian-token-claims.png)). The claims hold real tenant and object IDs, so redact them in any screenshot. For what each claim means, see [Agent tokens](tokens.md).
 
 **Three settings that matter.**
 
-- **Loopback only:** Since version 1.1, the sidecar refuses any caller that is not on loopback (403). So it listens on `127.0.0.1`, and its callers join its network namespace (`network_mode: service:sidecar`), like containers in one Kubernetes pod. No other container, and not the host, can ask it for the guardian's tokens.
+- **Loopback only:** Since version 1.1, the sidecar refuses any caller that is not on loopback (403). So it listens on `127.0.0.1`, and its callers join its network namespace (`network_mode: service:sidecar`), like containers in one Kubernetes pod: the MCP server, the integration tests and `token-claims`. No other container, and not the host, can ask it for the guardian's tokens. The end-to-end test proves this for the guardian's container.
 - **Agent identity override:** `Sidecar__AllowOverrides__GetAuthorizationHeaderUnauthenticated` must be `true`. When it is off, the sidecar ignores the `AgentIdentity` parameter and silently returns the blueprint's own token instead. The Identity API's agent check will reject such a token, because its actor facets (`xms_act_fct`) do not contain 11.
 - **Pinned image:** The image is pinned by digest, so a changed image cannot slip in.
 

@@ -6,12 +6,14 @@ Two layers:
   They have no network access, so they are unit-tested with sample JSON (NFR8).
 
 Every call uses the guardian's read-only Graph permissions (setup/bicep/guardian-permissions.bicep).
+The MCP server's tools call these functions; the guardian's harness never does (docs/agent-architecture.md).
 """
 
 import json
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 
 from rules import DORMANT_AFTER, Agent, Blueprint
@@ -81,11 +83,34 @@ def permission_names(assignments: list[dict], role_values: dict[str, dict[str, s
     return frozenset(names)
 
 
+@dataclass(frozen=True)
+class AgentDetails:
+    app_id: str
+    name: str
+    blueprint_app_id: str
+    description: str   # free text from whoever registered the agent: data, never instructions (NFR3)
+
+
+def parse_agent_details(items: list[dict]) -> AgentDetails | None:
+    """The first agent identity in a Graph answer, or None when there is none."""
+    if not items:
+        return None
+    item = items[0]
+    return AgentDetails(item["appId"], item["displayName"], item["agentIdentityBlueprintId"],
+                        item.get("description") or "")
+
+
 def parse_last_sign_ins(events: list[dict]) -> dict[str, datetime]:
-    """Each agent identity's newest sign-in, by app ID. Its blueprint's sign-ins do not count."""
+    """Each agent identity's newest successful sign-in, by app ID. Its blueprint's sign-ins do not count.
+
+    A failed sign-in is not activity: on 27 October a parent-check test (AADSTS7002134) logged a
+    failed request 2 for the dormant fixture, and counting it hid that the fixture is dormant.
+    """
     last: dict[str, datetime] = {}
     for event in events:
         if (event.get("agent") or {}).get("agentType") != AGENT_SIGN_IN:
+            continue
+        if (event.get("status") or {}).get("errorCode", 0) != 0:
             continue
         when = parse_time(event["createdDateTime"])
         if event["appId"] not in last or when > last[event["appId"]]:
@@ -126,3 +151,11 @@ def fetch_last_sign_ins(client: GraphClient, now: datetime) -> dict[str, datetim
         "$top": "1000",
     })
     return parse_last_sign_ins(events)
+
+
+def fetch_agent_details(client: GraphClient, app_id: str) -> AgentDetails | None:
+    """One agent identity, by app ID. The caller must check that app_id is a GUID first,
+    because it goes into the Graph filter."""
+    return parse_agent_details(client.get_all("/v1.0/servicePrincipals/microsoft.graph.agentIdentity",
+                                              {"$filter": f"appId eq '{app_id}'",
+                                               "$select": "appId,displayName,description,agentIdentityBlueprintId"}))

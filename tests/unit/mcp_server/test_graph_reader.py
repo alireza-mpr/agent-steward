@@ -5,7 +5,7 @@ The sample JSON copies the shape of real Graph answers from this lab, with made-
 
 from datetime import datetime, timezone
 
-from graph_reader import NO_ROLE, parse_agents, parse_blueprints, parse_last_sign_ins, permission_names
+from graph_reader import NO_ROLE, parse_agent_details, parse_agents, parse_blueprints, parse_last_sign_ins, permission_names
 
 GRAPH_SP = "sp-graph"
 USER_READ_ALL = "role-user-read-all"
@@ -66,4 +66,21 @@ def test_only_the_agents_own_sign_ins_count_and_the_newest_wins():
         # A sign-in by an app that is not an agent at all.
         {"appId": "app-1", "createdDateTime": "2026-10-26T09:00:00Z", "agent": None},
     ]
+    assert parse_last_sign_ins(events) == {"a-1": datetime(2026, 10, 26, 8, 45, 18, tzinfo=timezone.utc)}
+
+
+def test_agent_details_keep_the_description_and_an_empty_answer_means_no_agent():
+    [item] = [{"appId": "a-1", "displayName": "agent-steward-fixture-orphan-01",
+               "agentIdentityBlueprintId": "bp-1", "description": None}]
+
+    assert parse_agent_details([item]).description == ""
+    assert parse_agent_details([]) is None
+
+
+def test_a_failed_sign_in_is_not_activity():
+    # Real case from this lab: a parent-check test logged a failed request 2 for the dormant fixture.
+    events = [{"appId": "a-dormant", "createdDateTime": "2026-10-27T06:17:40Z",
+               "agent": {"agentType": "agenticAppInstance"}, "status": {"errorCode": 7002134}},
+              {"appId": "a-1", "createdDateTime": "2026-10-26T08:45:18Z",
+               "agent": {"agentType": "agenticAppInstance"}, "status": {"errorCode": 0}}]
     assert parse_last_sign_ins(events) == {"a-1": datetime(2026, 10, 26, 8, 45, 18, tzinfo=timezone.utc)}

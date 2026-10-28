@@ -55,21 +55,43 @@ services:
     networks:
       - agent
 
-  # The guardian (FR3): one scan of the tenant's agents per run, reported to the Identity API.
-  # docker compose up runs it once; docker compose run --rm guardian runs it again.
-  guardian:
-    build: src/guardian
-    network_mode: "service:sidecar"   # its tokens come from the sidecar's loopback; it never sees the key
+  # The MCP server (FR6): the agent's hands. Its tools read Graph, apply the four rules (FR3) and
+  # report to the Identity API. It is the only part of the agent that can get the guardian's
+  # tokens, because it shares the sidecar's network namespace. It listens for MCP on port 8100,
+  # which the guardian reaches as http://sidecar:8100/mcp.
+  mcp-server:
+    build: src/mcp_server
+    network_mode: "service:sidecar"   # It mirrors how containers inside a Kubernetes Pod communicate. MCP's tokens come from the sidecar's loopback; it never sees the key
     environment:
       SIDECAR_URL: http://127.0.0.1:5000
       API_URL: http://api:8000
       GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
       POLICY_PATH: /config/agent-permissions.json
+      MCP_PORT: "8100"
+      # The names the server may be reached BY (the Host header), not who may call it. The
+      # guardian calls http://sidecar:8100/mcp, because the MCP server has no name of its own
+      # in the sidecar's namespace. Protects against DNS rebinding, not against callers (D1).
+      MCP_ALLOWED_HOSTS: sidecar:8100
     volumes:
       - ./config:/config:ro   # the permission policy: edit it and run again, no rebuild
     depends_on:
       - sidecar
       - api
+
+  # The guardian (FR6): the harness. One run of the agent loop: Claude asks for tools, the MCP
+  # server runs them. It holds only the Anthropic API key, and it is NOT in the sidecar's
+  # network namespace, so it cannot get an Entra token (docs/agent-architecture.md).
+  # docker compose up runs it once; docker compose run --rm guardian runs it again.
+  guardian:
+    build: src/guardian
+    env_file:
+      - secrets/anthropic.env   # ANTHROPIC_API_KEY, given to this container only
+    environment:
+      MCP_URL: http://sidecar:8100/mcp
+    networks:
+      - agent
+    depends_on:
+      - mcp-server
 
   # Integration tests (FR5, NFR8): real tokens from Entra against the running Identity API.
   # Runs only on demand (profile "tools"): docker compose run --rm integration-tests
@@ -94,26 +116,21 @@ services:
       - sidecar
       - api
 
-  # End-to-end test (FR3): runs the real guardian code against the tenant and the Identity API.
-  # Runs only on demand (profile "tools"): docker compose run --rm end-to-end-tests
+  # End-to-end test (FR3, FR6): calls the real MCP server from where the guardian sits, so the
+  # tools run against the tenant and the Identity API, and checks that the sidecar is out of reach.
+  # No model is involved. Runs only on demand (profile "tools"): docker compose run --rm end-to-end-tests
   end-to-end-tests:
     build: tests/integration   # the same small pytest image
     profiles: ["tools"]
-    network_mode: "service:sidecar"
     environment:
-      SIDECAR_URL: http://127.0.0.1:5000
-      API_URL: http://api:8000
-      GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:-}
-      POLICY_PATH: /config/agent-permissions.json
-      PYTHONPATH: /guardian
+      MCP_URL: http://sidecar:8100/mcp
+    networks:
+      - agent   # the guardian's network, outside the sidecar's namespace
     volumes:
       - ./tests/end_to_end:/tests:ro
-      - ./src/guardian:/guardian:ro
-      - ./config:/config:ro
     command: ["pytest", "-v", "-m", "end_to_end", "-p", "no:cacheprovider", "/tests"]
     depends_on:
-      - sidecar
-      - api
+      - mcp-server
 
   # Dev tool: asks the sidecar for a token as the guardian and prints the token's claims.
   # It never prints the token itself. Runs only on demand (profile "tools").

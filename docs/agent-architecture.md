@@ -2,9 +2,9 @@
 
 This document breaks down the anatomy of an AI agent into four distinct parts, outlines an ideal enterprise reference architecture with strict trust boundaries, and examines how our project's **Guardian** agent is built today—including every pragmatic shortcut it takes and the security trade-offs involved.
 
-> **Current Implementation Status: Design**
-> * **Built today:** The Entra identity, the token sidecar, the Identity API, and the Guardian's four registry rules (which currently call Microsoft Graph directly).
-> * **Not built yet:** The MCP server, the model integration, the tool allow-list, and the human approval gate. 
+> **Current Implementation Status: Partly Built**
+> * **Built:** The Entra identity, the token sidecar, the Identity API, the MCP server with two tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent), and the harness's agent loop with Claude. The Guardian's container cannot reach the token sidecar, and an end-to-end test proves it.
+> * **Not built yet:** The tool allow-list, the human approval gate, and the correlation-ID scaffold. 
 > 
 > *(See the README's [Delivery status](../README.md#delivery-status) for live progress tracking).*
 
@@ -24,6 +24,10 @@ This document breaks down the anatomy of an AI agent into four distinct parts, o
   * [Step-by-Step: How One Run Works](#step-by-step-how-one-run-works)
   * [The API Payloads](#the-api-payloads)
 * [5. Blast Radius: What Happens If One Part Is Compromised?](#5-blast-radius-what-happens-if-one-part-is-compromised)
+* [6. Credentials and Tokens: How a Workload Gets Them](#6-credentials-and-tokens-how-a-workload-gets-them)
+  * [Layer 1: The Root Credential](#layer-1-the-root-credential)
+  * [Layer 2: Who Gets the Tokens](#layer-2-who-gets-the-tokens)
+  * [What the Guardian Uses and Why](#what-the-guardian-uses-and-why)
 
 ---
 
@@ -103,6 +107,8 @@ To understand why the enterprise diagram is wired this way, look closely at thre
 3. **The MCP Server Uses Its Own Token for Downstream APIs:** How the MCP server calls backend APIs depends on the mode:
    * *With a human user (Delegated):* It uses the On-Behalf-Of (OBO) flow, meaning the downstream token carries the identity of both the human user and the calling service.
    * *Without a human user (Autonomous):* Entra's OBO flow cannot be used here because OBO strictly requires a human user in the incoming token. Instead, the MCP server authenticates using its own app token and records which agent requested the action in its audit logs. *(Note: While a standard RFC 8693 token exchange could theoretically preserve the agent's identity in the downstream token, Entra does not support it for this scenario).*
+
+   **No token passthrough.** The MCP server never forwards the token it received to a downstream API. The MCP spec forbids this and calls it "token passthrough". There are three reasons. The token's audience is the MCP server, so a downstream API must refuse it. An MCP server that accepted a token meant for another API would let callers use that token at the API directly, which skips its allow-list and approval gate. And the API's logs would show the original caller, not who really made the call. So each hop gets its own token, with its own audience. Source: [MCP Security Best Practices](https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices.md) (checked 28 October 2026).
 
 ### How the Harness Authenticates
 
@@ -286,8 +292,8 @@ flowchart TB
     HARNESS -- "D1: MCP with no token<br/>(network location only)" --> MCP
     MCP -- "loopback: get T2" --> SIDECAR
     SIDECAR -- "T1, then T2,<br/>as the guardian" --> ENTRA
-    MCP -- "the guardian's T2" --> GRAPH
-    MCP -- "the guardian's T2" --> API
+    MCP -- "T2 for Graph" --> GRAPH
+    MCP -- "T2 for the Identity API" --> API
     HARNESS -.-> LOGS
     MCP -.-> LOGS
     API -.-> LOGS
@@ -303,6 +309,8 @@ flowchart TB
 | **D4** | No static model key: the harness signs in to the model provider with workload identity federation (or, failing that, reads a key from a cloud vault). | **API Key File:** An Anthropic service account API key in `secrets/anthropic.env` (the folder is excluded via `.gitignore`), given only to the guardian container. | Local demo environment, with no managed identity to federate. | The Anthropic API key sits unencrypted on the host disk. |
 | **D5** | Supports Delegated mode with OBO when a human user is present. | **Autonomous Mode Only:** OBO exists strictly as written documentation. | Project timebox. | No human user ever appears in the token chain. |
 | **D6** | Audit logs and distributed traces ship to a central SIEM/sink. | **Local Logs:** A single trace ID flows across the Guardian, MCP server, and Identity API, written locally. | Project timebox. | All audit logs reside on the same single machine. |
+
+For the credential options behind D2, D3 and D4, and how to move from the Guardian's shortcuts to the enterprise design, see [Credentials and Tokens](#6-credentials-and-tokens-how-a-workload-gets-them).
 
 ### Component Inventory: Who Holds What?
 
@@ -405,3 +413,62 @@ We separate the agent into distinct trust boundaries specifically to contain the
   * *Impact:* High. Due to shortcut **D2** (where the sidecar lets its caller request tokens for any child of the blueprint), a compromised MCP server can obtain T2 access tokens for *any* agent identity under that blueprint. Consequently, in the Guardian's current design, the MCP server is our most trusted component and its codebase must be kept as small and auditable as possible.
 * **Scenario 4: The Token Sidecar is Compromised**
   * *Impact:* Critical. The blueprint's private certificate is exposed (**D3**), immediately compromising every agent identity governed by that blueprint *(see the blast radius note in [Agent ID](agent-id.md#why-use-two-requests-instead-of-one))*.
+
+---
+
+## 6. Credentials and Tokens: How a Workload Gets Them
+
+Every part of an agent that calls a protected service must answer two questions, and the second one always stands on the first:
+
+1. **The root credential:** What does the workload prove itself with, and how does it get that credential safely?
+2. **The tokens:** Which component uses that credential to get tokens, and how does that component know who is asking?
+
+### Layer 1: The Root Credential
+
+Every way of storing a credential runs into the **secret zero** problem: to protect a secret, you put it in a vault, but to open the vault, the workload needs a first credential of its own. There are three options, from weakest to strongest:
+
+1. **A file (a secret or a certificate):** The workload reads it from disk or from an environment variable. It is the simplest option, but the file can be copied and used anywhere, and someone must rotate it by hand. The Guardian uses this locally (**D3**, **D4**).
+2. **A vault, such as Azure Key Vault:** The workload reads the secret from the vault when it starts, so no secret sits in its image or its configuration. But this only *moves* the problem: the workload still needs a credential to open the vault. In Azure, that credential is usually a managed identity.
+3. **A managed identity, used directly:** The platform vouches for the machine the workload runs on, so no secret exists at all: nothing to store, copy or rotate. It replaces the vault, not just the key that opens it. For the blueprint, it becomes a federated identity credential, so the blueprint trusts tokens from that managed identity. For the model provider, workload identity federation swaps an Entra-issued token for a short-lived provider token ([How the Harness Authenticates](#how-the-harness-authenticates)). It works only where a platform can vouch for the machine, such as Azure.
+
+Applied to each credential the agent needs:
+
+| Credential | The Guardian today | Enterprise design |
+|---|---|---|
+| The blueprint's credential | A certificate file, mounted only into the token sidecar (**D3**) | A managed identity, as the blueprint's federated identity credential |
+| The model provider's credential | An API key in a file, given only to the Guardian's container (**D4**) | Workload identity federation: no key |
+| The MCP server's own identity | None: it acts as the Guardian (**D2**) | A managed identity of its own |
+
+### Layer 2: Who Gets the Tokens
+
+Once a workload has a root credential, some component must use it to get tokens. There are three patterns.
+
+**In-process.** A library inside the program gets tokens itself, for example Microsoft.Identity.Web in a .NET program, with a managed identity as the credential.
+* *How the caller proves itself:* There is no separate caller: the code that needs the token is the code that gets it.
+* *Where the credential lives:* Inside the program's own process.
+* *Blast radius:* That one program.
+* *Fits when:* The program's language has a good token library, and the platform offers a managed identity.
+
+**Token sidecar.** A token service runs next to one workload, in the same pod, and serves only that workload over `127.0.0.1`.
+* *How the caller proves itself:* By location. Only code in the same pod shares the loopback, so no extra authentication is needed.
+* *Where the credential lives:* With the sidecar: a file it mounts, or the platform's managed identity. The program that asks for tokens never sees it.
+* *Blast radius:* One pod. If it is compromised, the identities that pod's sidecar can sign in as are exposed.
+* *Fits when:* The program has no good token library in its language, or it should never touch the credential. Microsoft's Entra SDK sidecar, which the Guardian uses, exists for exactly this.
+
+**Token broker.** One central service holds the credentials and issues tokens to many workloads over the network.
+* *How the caller proves itself:* Explicitly, for example with mTLS or a workload identity token, because any machine on the network could ask.
+* *Where the credential lives:* All of them in one place, which makes rotation and audit easier.
+* *Blast radius:* Every workload the broker serves. That makes it a high-value target, and also a single point of failure.
+* *Fits when:* Many workloads need tokens, central control and audit matter, and strong workload authentication (mTLS, SPIFFE) already exists. Examples: HashiCorp Vault issuing short-lived credentials, or GCP service account impersonation.
+
+**The differences:**
+1. **Caller proof:** none needed (in-process), location (sidecar), or explicit authentication (broker).
+2. **Credential location:** inside each program, next to each program, or in one central place.
+3. **Breach impact:** one program, one pod, or every workload the broker serves.
+
+**How to choose:** Prefer **in-process** with a managed identity when the language has a good library, because there is no second component to protect. Use a **sidecar** when it does not, or when the program must never touch the credential. Use a **broker** only when central control is worth more than the larger blast radius, and only with strong workload authentication in place.
+
+### What the Guardian Uses and Why
+
+* **Locally (today):** A certificate file (layer 1, **D3**) and a **token sidecar** (layer 2). Python has no Microsoft library for agent identities, and the sidecar keeps the private key out of every container except its own. Only the MCP server shares the sidecar's network namespace, so only the Guardian's tools can get tokens ([Component Inventory](#component-inventory-who-holds-what)).
+* **In the enterprise design:** A managed identity as the root credential, so no file and no vault key exist. The token sidecar can stay, or an in-process library can replace it where the language has one.
