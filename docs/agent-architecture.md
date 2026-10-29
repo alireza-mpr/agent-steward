@@ -8,7 +8,7 @@ The details of each part are in their own documents:
 |---|---|
 | [The harness](harness.md) | The agent loop, why the model stopped, the model settings, and how to see a run |
 | [Authentication](authentication.md) | How each part proves who it is, and how a workload gets its credential and its tokens |
-| [JWT Bearer and Token Exchange](jwt-bearer-and-token-exchange.md) | The three token-endpoint values (JWT bearer grant, JWT client assertion, token exchange), and why Entra's OBO is not RFC 8693 |
+| [JWT Bearer and Token Exchange](jwt-bearer-and-token-exchange.md) | The two questions every token request answers (client authentication, and the grant), the three token-endpoint values, the issuer, subject and requester roles, why Anthropic uses the grant, and why Entra's OBO is not RFC 8693 |
 | [MCP](mcp.md) | The MCP protocol, how a tool reaches its API, and the guardian's MCP server |
 | [The Messages API](messages-api.md) | How any harness talks to a model |
 | [Security controls](security-controls.md) | Every control in place, with its evidence |

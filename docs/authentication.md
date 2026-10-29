@@ -32,12 +32,12 @@ The harness talks to two services, and each one trusts a different credential. I
 **Two values that look alike.** RFC 7523 defines two ways to send a JWT to a token endpoint, and each way has its own value. Vendors reuse both values with rules of their own, so the value alone does not tell you what a request means.
 
 * `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`: the JWT is the *grant*, sent in `assertion` ([RFC 7523, section 2.1](https://www.rfc-editor.org/rfc/rfc7523.html#section-2.1)).
-  * **Anthropic (step 2)** uses it as the RFC describes: a JWT from another issuer, Entra ID, is the grant. It adds parameters of its own: the federation rule, the organization, the service account and the workspace.
+  * **Anthropic (step 2)** uses it as the RFC describes: a JWT from another issuer, Entra ID, is the grant. It adds parameters of its own: the federation rule, the organization, the service account and the workspace. Why the grant and not a client assertion: [Grant or Client Assertion](jwt-bearer-and-token-exchange.md#51-anthropic-uses-the-grant-not-a-client-assertion).
   * **Entra's On-Behalf-Of flow** reuses the same value as a Microsoft extension, with `requested_token_use=on_behalf_of`. Its assertion is the access token the middle tier received, so the audience is the middle tier. RFC 7523 says a token endpoint must reject a JWT whose audience is not the token endpoint itself ([section 3](https://www.rfc-editor.org/rfc/rfc7523.html#section-3)). So OBO is neither plain RFC 7523 nor RFC 8693 token exchange ([On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow)).
 * `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`: the JWT proves who the *client* is, in place of a secret, sent in `client_assertion`. The grant is something else, here `client_credentials` ([RFC 7523, section 2.2](https://www.rfc-editor.org/rfc/rfc7523.html#section-2.2)).
   * **Entra's requests 1 and 2 (steps 3 and 4)** use it. Request 1 also goes beyond the RFC. The RFC says the JWT's subject must be the client's ID, but token 2's subject is the managed identity's object ID. Entra accepts it because the blueprint's federated identity credential names that issuer and subject ([source](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity)). `fmi_path`, which names the agent identity, is a Microsoft extension too.
 
-What each value sends and gets back, the RFC 8693 token exchange grant, and why OBO is not RFC 8693: [JWT Bearer and Token Exchange](jwt-bearer-and-token-exchange.md).
+The two questions every token request answers (who is asking, and what token for whom), what each value sends and gets back, the RFC 8693 token exchange grant, and why OBO is not RFC 8693: [JWT Bearer and Token Exchange](jwt-bearer-and-token-exchange.md).
 
 ```mermaid
 sequenceDiagram
