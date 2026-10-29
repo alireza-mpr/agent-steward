@@ -264,7 +264,9 @@ docker compose up -d sidecar
 docker compose run --rm token-claims graph   # claims of the guardian's Graph token
 docker compose up -d api mcp-server
 docker compose run --rm guardian            # one run of the agent loop: Claude asks, the MCP tools act
-docker compose run --rm -e GUARDIAN_TRACE=1 guardian   # the same, showing every message to and from the model as a chat (json: full JSON)
+docker compose run --rm -e GUARDIAN_TRACE=1 guardian   # the same, showing every message to and from the model and the MCP server, each in its own panels, as a chat, shortened
+docker compose run --rm -e GUARDIAN_TRACE=json guardian   # the same, as JSON: each model message once, no settings
+docker compose run --rm -e GUARDIAN_TRACE=full guardian > run.txt   # the exact request and response bodies, model and MCP server apart, in full (run*.txt: git ignores it)
 docker compose run --rm integration-tests   # integration tests: real Entra tokens against the Identity API
 docker compose run --rm end-to-end-tests    # end-to-end test: the real MCP tools from the guardian's network, no model
 ```

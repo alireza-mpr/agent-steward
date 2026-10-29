@@ -8,7 +8,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import anthropic
+import httpx2
 import pytest
+from mcp.types import CallToolResult, Tool
 
 import harness
 
@@ -45,23 +48,24 @@ SCAN_SCHEMA = {"type": "object", "properties": {}}
 
 
 class FakeMcpServer:
+    """Answers with real MCP types, as the MCP client does, without a server or a network."""
     def __init__(self, results):
         self.results = results
         self.calls = []
 
     async def list_tools(self):
-        return SimpleNamespace(tools=[SimpleNamespace(name="scan_registry", description="Scan.",
-                                                      input_schema=SCAN_SCHEMA)])
+        return SimpleNamespace(tools=[Tool.model_validate({"name": "scan_registry", "description": "Scan.",
+                                                           "inputSchema": SCAN_SCHEMA})])
 
     async def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
         return self.results[name]
 
 
-SCAN_OK = SimpleNamespace(is_error=False, content=[], structured_content={"findings": [], "accepted": 0,
-                                                                          "correlation_id": "c-1"})
-TOOL_FAILED = SimpleNamespace(is_error=True, content=[text("Unknown tool: delete_everything")],
-                              structured_content=None)
+SCAN_OK = CallToolResult.model_validate({"content": [], "isError": False, "structuredContent": {
+    "findings": [], "accepted": 0, "correlation_id": "c-1"}})
+TOOL_FAILED = CallToolResult.model_validate({"content": [{"type": "text", "text": "Unknown tool: delete_everything"}],
+                                             "isError": True})
 
 
 def run(claude, mcp_server, settings=SETTINGS, log=lambda line: None):
@@ -172,7 +176,15 @@ def test_the_trace_is_off_by_default_and_the_model_is_not_asked_for_thinking_sum
     assert "thinking" not in claude.requests[0]
 
 
-def test_the_trace_shows_the_prompt_the_tool_requests_and_the_results_sent_back():
+def test_with_show_thinking_the_model_is_asked_for_thinking_summaries():
+    claude = ScriptedClaude(answer("end_turn", text("Done.")))
+
+    asyncio.run(harness.run_agent(claude, FakeMcpServer({}), SETTINGS, log=lambda line: None, show_thinking=True))
+
+    assert claude.requests[0]["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+
+def test_the_json_trace_shows_the_prompt_the_tool_requests_and_the_results_sent_back():
     claude = ScriptedClaude(answer("tool_use", tool_use("toolu_1", "scan_registry", {})),
                             answer("end_turn", text("No findings.")))
     lines = []
@@ -184,7 +196,79 @@ def test_the_trace_shows_the_prompt_the_tool_requests_and_the_results_sent_back(
     assert harness.SYSTEM_PROMPT.splitlines()[0] in trace
     assert '"id": "toolu_1"' in trace and '"tool_use_id": "toolu_1"' in trace
     assert "model: claude-opus-5-5" in trace
-    assert claude.requests[0]["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+
+def test_the_json_trace_keeps_the_mcp_conversation_apart_from_the_model_conversation():
+    claude = ScriptedClaude(answer("tool_use", tool_use("toolu_1", "scan_registry", {})),
+                            answer("end_turn", text("No findings.")))
+    lines = []
+
+    asyncio.run(harness.run_agent(claude, FakeMcpServer({"scan_registry": SCAN_OK}), SETTINGS,
+                                  log=lambda line: None, trace=harness.Trace(lines.append, mcp_endpoint="POST /mcp")))
+
+    headings = [line.strip() for line in lines if line.strip().startswith("=====")]
+    assert headings == ["===== Start: harness -> MCP server (POST /mcp) =====", "===== Start: MCP server -> harness =====",
+                        "===== Round 1: harness -> model =====", "===== Round 1: model -> harness =====",
+                        "===== Round 1: harness -> MCP server (POST /mcp) =====", "===== Round 1: MCP server -> harness =====",
+                        "===== Round 2: harness -> model =====", "===== Round 2: model -> harness ====="]
+    trace = "\n".join(lines)
+    assert '"name": "scan_registry"' in trace and '"arguments": {}' in trace      # the tools/call request
+    assert '"isError": false' in trace and '"structuredContent"' in trace         # MCP's own field names
+    assert '"inputSchema"' in trace                                               # the tools as MCP lists them
+
+
+# --- The body log (GUARDIAN_TRACE=full): the real SDK, a fake HTTP connection ---
+
+ANTHROPIC_ANSWER = {
+    "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
+    "content": [{"type": "thinking", "thinking": "", "signature": "c2lnbmF0dXJl"},
+                {"type": "tool_use", "id": "toolu_1", "name": "scan_registry", "input": {}}],
+    "stop_reason": "tool_use", "stop_sequence": None,
+    "usage": {"input_tokens": 1520, "output_tokens": 210},
+}
+
+
+def test_the_body_log_prints_both_bodies_in_full_and_never_the_api_key():
+    lines = []
+    log = harness.BodyLog("model", lines.append)
+    transport = httpx2.MockTransport(lambda request: httpx2.Response(200, json=ANTHROPIC_ANSWER))
+    claude = anthropic.AsyncAnthropic(api_key="sk-ant-test-key", http_client=anthropic.DefaultAsyncHttpxClient(
+        transport=transport, event_hooks=log.hooks()))
+    settings = dataclasses.replace(SETTINGS, strict_tool_inputs=True, refusal_fallback=True)
+    tools = [harness.to_claude_tool(SimpleNamespace(name="scan_registry", description="Scan.",
+                                                    input_schema=SCAN_SCHEMA), strict=True)]
+
+    response = asyncio.run(harness.ask_model(claude, settings, tools, [{"role": "user", "content": harness.TASK}]))
+
+    sent, received = json.loads(lines[1]), json.loads(lines[3])
+    assert sent["system"] == harness.SYSTEM_PROMPT                    # every field, under its real name
+    assert sent["tools"] == tools
+    assert sent["messages"] == [{"role": "user", "content": harness.TASK}]
+    assert sent["output_config"] == {"effort": "medium"} and sent["fallbacks"] == "default"
+    assert received == ANTHROPIC_ANSWER                               # nothing left out, the signature included
+    assert response.stop_reason == "tool_use"                         # the SDK still reads the body after the log
+    shown = "\n".join(lines)
+    assert "sk-ant-test-key" not in shown and "anthropic-beta" not in shown   # bodies only, never headers
+    assert lines[0].strip() == "===== harness -> model: request 1, the exact body ====="
+    assert lines[2].strip() == "===== model -> harness: response 1, the exact body (HTTP 200) ====="
+
+
+def test_the_body_log_leaves_an_event_stream_unread_for_the_client():
+    lines = []
+    log = harness.BodyLog("MCP server", lines.append, show_endpoint=True)
+    stream = b'event: message\ndata: {"jsonrpc": "2.0", "id": 1, "result": {}}\n\n'
+    transport = httpx2.MockTransport(lambda request: httpx2.Response(
+        200, content=stream, headers={"content-type": "text/event-stream"}))
+
+    async def post():
+        async with httpx2.AsyncClient(transport=transport, event_hooks=log.hooks()) as client:
+            response = await client.post("http://mcp/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+            return await response.aread()
+
+    assert asyncio.run(post()) == stream                              # the client still gets the whole stream
+    assert lines[0].strip() == "===== harness -> MCP server: request 1, POST /mcp, method: tools/list, the exact body ====="
+    assert json.loads(lines[1])["method"] == "tools/list"
+    assert lines[3] == "(an event stream: left unread here, so the client can read it)"
 
 
 # --- The settings file (fail closed: a missing or wrong value stops the run) ---

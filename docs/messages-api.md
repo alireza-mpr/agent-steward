@@ -47,6 +47,12 @@ Every message in the `messages` list is tagged with a `role`. This tells the API
 * **Tool results travel inside `user` messages:** When the model asks to run a tool, your harness runs it and sends the output back inside a `user` message.
 * **Turns alternate:** Conversations strictly alternate between `user` and `assistant` messages.
 
+**Why the system prompt is not `messages[0]`:**
+* **It is an API design choice.** In Anthropic's API, `system` is a top-level field for the operator's standing instructions, and `messages` holds only the conversation turns.
+* **The separation keeps the two apart.** The operator's rules cannot be confused with user content or tool results.
+* **The model still reads `system` first.** The provider's server puts it before the messages when it builds the model's prompt.
+* **Other APIs differ.** OpenAI's older Chat Completions API puts it inside the list, as `messages[0]` with role `system`. Gemini (`system_instruction`) and OpenAI's newer Responses API (`instructions`) keep it outside, like Anthropic.
+
 ## 3. Inside a Message: Content Blocks
 
 Rather than holding a plain string, a message's `content` is a list of blocks. Each block has a `type` field that defines what kind of data it holds and how it should be handled.

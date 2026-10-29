@@ -8,6 +8,7 @@ CHAT-RULES.md
 
 # local guardian traces (they hold real tenant data)
 run*.txt
+run*.text
 
 # secrets / local env
 .env

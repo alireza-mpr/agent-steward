@@ -6,6 +6,7 @@ This document is the hands-on reference for the guardian's MCP server: what MCP 
 
 - [1. MCP in short](#1-mcp-in-short)
 - [2. On the wire](#2-on-the-wire)
+  - [Capabilities and listChanged](#capabilities-and-listchanged)
 - [3. The guardian's MCP server](#3-the-guardians-mcp-server)
 - [4. Calling it from your machine](#4-calling-it-from-your-machine)
   - [The MCP Inspector](#the-mcp-inspector)
@@ -38,6 +39,27 @@ There are two eras of the protocol, and our server serves both:
 **`_meta`** is a reserved field for information *about* a message, next to its business data (`params` or `result`). Without a handshake, every request introduces itself in `_meta` (the protocol version, the client's name and version in `clientInfo`, and its capabilities), and every answer names the server in `serverInfo`. The keys start with `io.modelcontextprotocol/`, a prefix reserved for the specification. Two different versions appear: the *protocol* version (`2026-07-28`, the version of MCP itself) and the *server* version (the version of our program). All of it is self-declared, like HTTP's `User-Agent` and `Server` headers, so it helps with logs and debugging but must never decide what a caller may do.
 
 MCP Python SDK 2.x is *dual-era*: the same endpoint answers both kinds of client. The message shapes for tools (definitions, results, the two kinds of error) are in [The MCP Contract](agent-architecture.md#the-mcp-contract).
+
+### Capabilities and listChanged
+
+A modern client's first request is `server/discover`. The server answers with the protocol versions it supports and its **capabilities**: what it offers, and how. Our server answers with the SDK's defaults:
+
+```json
+"capabilities": {
+  "prompts":   { "listChanged": true },
+  "resources": { "listChanged": true, "subscribe": true },
+  "tools":     { "listChanged": true }
+}
+```
+
+| Flag | Meaning |
+|---|---|
+| `listChanged` | The list of tools (or prompts, or resources) can change while a client uses the server. The server then sends a notification, such as `notifications/tools/list_changed`, and the client should ask for the list again. |
+| `subscribe` | A client can subscribe to one resource and is told when its content changes. |
+
+**The risk.** A changing tool list is a known MCP attack, often called a *rug pull*: a server first shows harmless tools, then changes a tool's description or adds a new tool. A client that simply reloads the list on every notification hands the new tools to the model without any review. The industry answer is that the client checks every tool against its own allow-list, and pins the approved tool definitions (for example, by a hash), so a changed definition is refused.
+
+**In the guardian.** The server declares `listChanged: true` only because these are the SDK's defaults: its two tools never change. The harness reads the tool list once, at the start of a run, and never reads it again, so the tools the model sees are fixed for the run. The harness does not check the list against an allow-list of its own, and does not pin the definitions: it trusts its own server, which this project builds and runs inside the Compose network ([D1](agent-architecture.md#architectural-shortcuts-where-the-guardian-differs)). The tool allow-list is enforced by the MCP server; a second check in the harness is not built.
 
 ## 3. The guardian's MCP server
 
@@ -127,4 +149,5 @@ These were observed on 28 October 2026 with MCP Python SDK 2.3.0:
 | A modern request without `Mcp-Method`, or with one that does not match the body | Error `-32020`: "mcp-method header does not match the request body's method" | The server checks that the headers and the body agree |
 | A request with `Host: evil.example:8100` | `421 Misdirected Request` | The DNS rebinding protection works ([C10](security-controls.md#the-mcp-server)) |
 | `tools/call` for a tool that does not exist | A normal result with `isError: true` and "Unknown tool" | The SDK reports an unknown tool as a *tool execution error*, although the specification describes it as a *protocol error* (`-32602`). This matters for the tool allow-list. |
+| The guardian's harness connects (SDK `Client`, mode `auto`), seen with `GUARDIAN_TRACE=full` on 29 October 2026 | Its first request is `server/discover`, then `tools/list`, then one `tools/call` per tool request. Every answer is plain JSON, not an event stream. The client names itself `mcp`, version `0.1.0`, in `clientInfo` | A modern client asks the server what it supports before anything else. `clientInfo` is the SDK's default, so the server's logs cannot tell the harness from any other SDK client (self-declared anyway, D1) |
 | Any call from the Inspector or curl | The MCP server's log shows the caller as `172.18.0.1` | Port publishing hides the real caller behind Docker's gateway, so a network address never proves who is calling (D1) |
