@@ -91,7 +91,7 @@ class ChatTrace:
             else:
                 lines.append(Text(f"[{data['type']} block]", style="dim"))
         usage = getattr(response, "usage", None)
-        subtitle = f"{response.stop_reason}"
+        subtitle = f"{response.model} · {response.stop_reason}"
         if usage:
             subtitle = f"{usage.input_tokens:,} in · {usage.output_tokens:,} out · {subtitle}"
         self.console.print(Panel(Group(*lines) if lines else Text("(empty)"),

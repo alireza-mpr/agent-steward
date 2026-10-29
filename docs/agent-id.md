@@ -14,12 +14,12 @@ This document breaks down how Microsoft Entra Agent ID objects fit together and 
   - [Quick Reference Guide](#quick-reference-guide)
 - [2. Identity vs. Credential (Who you are vs. How you prove it)](#2-identity-vs-credential-who-you-are-vs-how-you-prove-it)
   - [Why a Blueprint Is Needed](#why-a-blueprint-is-needed)
-- [3. The Two-Step Sign-In Dance](#3-the-two-step-sign-in-dance)
+- [3. Getting a Token: the Agent Autonomous App Flow](#3-getting-a-token-the-agent-autonomous-app-flow)
   - [The Requests in Detail](#the-requests-in-detail)
   - [App-Only Tokens and the `.default` Scope](#app-only-tokens-and-the-default-scope)
   - [Why use two requests instead of one?](#why-use-two-requests-instead-of-one)
   - [Clarifying Misconceptions](#clarifying-misconceptions)
-- [4. Scaling: Logical Agents vs. Copies and Sessions](#4-scaling-logical-agents-vs-copies-and-sessions)
+- [4. Scaling: Logical Agents vs. Instances and Sessions](#4-scaling-logical-agents-vs-instances-and-sessions)
   - [Why dynamic, on-the-fly identity creation is an anti-pattern](#why-dynamic-on-the-fly-identity-creation-is-an-anti-pattern)
   - [Hitting the Limits (and how to bypass them)](#hitting-the-limits-and-how-to-bypass-them)
 - [5. Industry Parallels](#5-industry-parallels)
@@ -116,9 +116,9 @@ flowchart TB
 | Link | What They Agree On | Where to Find It |
 |---|---|---|
 | **App ↔ Service Principal** | The `appId` | Portal: The same "Application ID" on both pages. |
-| **Blueprint Principal ↔ Agent Identity** | The blueprint's `appId` (`agentIdentityBlueprintId`) | Token T1 (`sub` / `fmi_path`) and T2 (`xms_par_app_azp`). |
-| **Agent Identity ↔ API's Service Principal** | The role's ID (`appRoleId`) | Portal: The API's "Users and groups" page, and T2's `roles`. |
-| **Agent Identity ↔ The API it calls** | The API's `appId` (asked as `<appId>/.default`) | Token T2's `aud` claim. |
+| **Blueprint Principal ↔ Agent Identity** | The blueprint's `appId` (`agentIdentityBlueprintId`) | Token T1 (`sub` / `fmi_path`) and TR (`xms_par_app_azp`). |
+| **Agent Identity ↔ API's Service Principal** | The role's ID (`appRoleId`) | Portal: The API's "Users and groups" page, and TR's `roles`. |
+| **Agent Identity ↔ The API it calls** | The API's `appId` (asked as `<appId>/.default`) | Token TR's `aud` claim. |
 
 *Note on Inherited Permissions:* Agents can inherit permissions from their blueprint. The critical detail here is that **tokens and the directory view behave differently**. The agent's token (`roles` claim) combines its own roles *plus* inherited ones. However, the standard Entra portal and Graph API only show the agent's direct assignments. (The only exception is Graph Beta, which lists them under `inheritedAppRoleAssignments`).
 
@@ -153,9 +153,9 @@ Without blueprints, every agent would be a classic application, with its own ser
 
 **1. Separation of concerns: the value of credential-less segmentation.** This is where the blueprint model pays off.
 - **The sidecar holds the credential:** In this project, the blueprint's credential lives only in the sidecar (in production, often the hosting platform), and the sidecar runs no AI logic. So a prompt injection cannot trick the agent into leaking a secret it does not have. This works only when the credential stays out of the agent code.
-- **The agent code holds only T2:** The agent code runs the AI logic, which is the part an attacker can reach. It signs in as its agent identity and receives only T2. T2 carries only the roles granted to that one agent identity, for one API (see [the `.default` rule](#app-only-tokens-and-the-default-scope)). So T2 is exactly as narrow as the agent identity's grants.
+- **The agent code holds only TR:** The agent code runs the AI logic, which is the part an attacker can reach. It signs in as its agent identity and receives only TR. TR carries only the roles granted to that one agent identity, for one API (see [the `.default` rule](#app-only-tokens-and-the-default-scope)). So TR is exactly as narrow as the agent identity's grants.
 - **Segmentation costs no credential:** Each agent identity has its own grants, sign-in logs and disable flag, but no credential. So you can give each job its own agent identity without adding a credential. With classic applications, each extra identity is one more application with its own credential to register and rotate.
-- *Limit:* This protects the credential, not the choice of identity. The sidecar lets its caller name the agent identity, so any code that can reach the sidecar can get T2 for any agent identity of that blueprint ([docs/infra.md](infra.md#local-run-the-token-sidecar)).
+- *Limit:* This protects the credential, not the choice of identity. The sidecar lets its caller name the agent identity, so any code that can reach the sidecar can get TR for any agent identity of that blueprint ([docs/infra.md](infra.md#local-run-the-sidecar)).
 
 **2. Directory bloat and quota: fewer objects.** The blueprint is the aggregation layer: it maps many lightweight service principals under one heavyweight application.
 - **Without blueprints:** One application can have at most one service principal in a tenant. So 1,000 agents need 1,000 applications and 1,000 service principals. That is 2,000 directory objects, 1,000 application definitions to maintain, and every object counts against the tenant's directory object quota.
@@ -170,9 +170,9 @@ Without blueprints, every agent would be a classic application, with its own ser
 
 ---
 
-## 3. The Two-Step Sign-In Dance
+## 3. Getting a Token: the Agent Autonomous App Flow
 
-Because the agent has no credential, it gets its access token in two distinct requests. First, the blueprint gets a one-time proof (**T1**), and then the agent identity uses T1 to get its actual access token (**T2**).
+Because the agent has no credential, it gets its access token in two distinct requests. First, the blueprint gets an exchange token (**T1**). Then the agent identity sends a token exchange request with T1 and gets its resource access token (**TR**). These are Microsoft's names: Microsoft Learn calls this the [agent autonomous app OAuth flow](https://learn.microsoft.com/entra/agent-id/agent-autonomous-app-oauth-flow).
 
 ```mermaid
 sequenceDiagram
@@ -184,8 +184,8 @@ sequenceDiagram
     Code->>Entra: Request 1: sign in as the blueprint,<br/>naming the agent identity
     Entra-->>Code: T1, for that one agent identity
     Code->>Entra: Request 2: sign in as the agent identity,<br/>with T1 as proof
-    Entra-->>Code: T2, the agent identity's access token
-    Code->>API: Call the API with T2
+    Entra-->>Code: TR, the agent identity's access token
+    Code->>API: Call the API with TR
 ```
 
 ### The Requests in Detail
@@ -197,18 +197,18 @@ sequenceDiagram
 - **Auth:** The blueprint's secret, certificate, or federated credential (RFC 7523 `client_assertion`).
 *Result:* Entra issues **T1**, a token whose *only* purpose is for the next request. It cannot call APIs.
 
-**Request 2: The Agent Identity gets T2**
+**Request 2: The Agent Identity gets TR**
 - **Client ID:** The agent identity's `appId`.
 - **Grant:** `client_credentials` (autonomous) or `jwt-bearer` (On-Behalf-Of flow).
 - **Auth:** The **T1** token is sent as the `client_assertion`.
 - **Scope:** The API's scope (e.g., `https://graph.microsoft.com/.default`).
-*Result:* Entra verifies T1 came from the correct blueprint and issues **T2**. T2 names the agent identity (`azp`) as the client, and the blueprint (`xms_par_app_azp`) for logging. The agent uses T2 to call the API.
+*Result:* Entra verifies T1 came from the correct blueprint and issues **TR**. TR names the agent identity (`azp`) as the client, and the blueprint (`xms_par_app_azp`) for logging. The agent uses TR to call the API.
 
 ### App-Only Tokens and the `.default` Scope
 App-only tokens represent the agent itself, with no human user involved. Because there is no user to click "Accept" on a consent prompt, permissions must be granted by an admin ahead of time.
 - **No dynamic subsets:** You cannot ask for specific scopes (like `AuditLog.Read.All`) per request. If you try, Entra rejects it with error `AADSTS1002012`: "Client credential flows must have a scope value with /.default suffixed to the resource identifier" (tested in this lab on 27 October 2026, by asking for the Identity API's role `Findings.Submit`).
 - **The `.default` rule:** You must request the API identifier plus `/.default` (e.g., `https://graph.microsoft.com/.default`). This tells Entra to look at every app role an admin has granted this agent *on that API* and bundle them all into the token's `roles` claim. (The `scp` claim is not used here).
-- **The scope narrows the token to one API, not to some of its roles:** A token is for one API: `aud` names that API's application, and `roles` carries the entire set of roles the agent holds on that API, which means the roles assigned to this agent on the API's service principal plus the roles it inherits from its blueprint for that API. App roles are defined on each API's application, so the scope is how the agent picks the API. Tested in this lab: the guardian holds four Graph roles and `Findings.Submit`, yet its T2 for the Identity API carried only `"roles": ["Findings.Submit"]` ([the token](tokens.md#the-claims-masked)).
+- **The scope narrows the token to one API, not to some of its roles:** A token is for one API: `aud` names that API's application, and `roles` carries the entire set of roles the agent holds on that API, which means the roles assigned to this agent on the API's service principal plus the roles it inherits from its blueprint for that API. App roles are defined on each API's application, so the scope is how the agent picks the API. Tested in this lab: the guardian holds four Graph roles and `Findings.Submit`, yet its TR for the Identity API carried only `"roles": ["Findings.Submit"]` ([the token](tokens.md#the-claims-masked)).
 - **The agent cannot narrow itself:** There is no per-request least privilege for app roles. Least privilege lives entirely in the grant.
 - **Different access means different identity:** If one agent needs a narrow token for path A and a wide token for path B, you need two agent identities (or two blueprints), not one agent asking for two scopes. Two blueprints are needed when the wide roles are inheritable permissions on the blueprint, because every agent identity under that blueprint inherits them.
 
@@ -224,15 +224,15 @@ While the agent code holds the blueprint's key and *could* theoretically sign Re
 ### Clarifying Misconceptions
 - **It is NOT RFC 8693 Token Exchange:** Despite the audience name, Request 2 is a standard `client_credentials` (or `jwt-bearer`) request. It does not use the token-exchange grant type.
 - **It is NOT agent creation:** Creating the agent is a separate Graph API call made earlier. Request 2 only signs in an *existing* agent.
-- **It is NOT a cryptographic audit trail:** T1 and T2 are short-lived tokens. The audit logs are kept by Entra, not secured by the tokens themselves.
+- **It is NOT a cryptographic audit trail:** T1 and TR are short-lived tokens. The audit logs are kept by Entra, not secured by the tokens themselves.
 
 ---
 
-## 4. Scaling: Logical Agents vs. Copies and Sessions
+## 4. Scaling: Logical Agents vs. Instances and Sessions
 
 **The Golden Rule:** An agent identity represents one **logical agent** (a specific job with a unique purpose, permissions, and sponsor). It does *not* represent a single running pod of code, nor a single user chat session. 
 
-If your app experiences a traffic spike and spins up 100 pods of your "HR Policy Agent," all 100 pods will use the exact same agent identity, pulling their own T1 and T2 tokens per request. 
+If your app experiences a traffic spike and spins up 100 pods of your "HR Policy Agent," all 100 pods will use the exact same agent identity, pulling their own T1 and TR tokens per request. 
 
 ### Why dynamic, on-the-fly identity creation is an anti-pattern:
 Creating a new agent identity for every session or pod will fail for several reasons:
@@ -259,4 +259,4 @@ If this architecture feels familiar, it's because similar patterns exist in othe
 - **GCP:** A trusted caller with the "Token Creator" role gets access tokens for multiple service accounts (Service Account Impersonation).
 - **AWS:** A single principal uses STS to assume multiple different roles (`AssumeRole`).
 
-The primary difference is that GCP and AWS handle this in a single authorization call ("May caller X get a token for Y?"). Entra, adhering strictly to OAuth token endpoint standards ("Does this client prove itself?"), splits the process into the two-step dance (T1, then T2) outlined above.
+The primary difference is that GCP and AWS handle this in a single authorization call ("May caller X get a token for Y?"). Entra, adhering strictly to OAuth token endpoint standards ("Does this client prove itself?"), splits the process into the two requests (T1, then TR) outlined above.

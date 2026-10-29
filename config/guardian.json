@@ -1,0 +1,8 @@
+{
+  "description": "The guardian harness's settings, read once when a run starts (src/guardian/harness.py, load_settings). Every key is required and unknown keys are refused: a missing or wrong value stops the run, it never falls back to a default. effort: low, medium, high, xhigh or max. max_rounds: 1 to 25. strict_tool_inputs: the API makes every tool input match its schema. refusal_fallback: if the model declines, Anthropic retries on a fallback model it chooses.",
+  "model": "claude-opus-5-5",
+  "effort": "medium",
+  "max_rounds": 10,
+  "strict_tool_inputs": true,
+  "refusal_fallback": true
+}

@@ -14,7 +14,7 @@ def test_the_chat_view_labels_each_tool_result_with_the_tool_that_produced_it():
     tools = [{"name": "get_agent", "input_schema": {"properties": {"app_id": {"type": "string"}}}}]
 
     view.request(1, tools, [{"role": "user", "content": "Run today's check."}])
-    view.response(1, SimpleNamespace(stop_reason="tool_use", usage=None, content=[
+    view.response(1, SimpleNamespace(model="claude-opus-5-5", stop_reason="tool_use", usage=None, content=[
         SimpleNamespace(type="thinking", thinking="I should read the agent."),
         SimpleNamespace(type="tool_use", id="toolu_123", name="get_agent", input={"app_id": "a-1"})]))
     view.request(2, tools, [{"role": "user", "content": "Run today's check."},
@@ -27,3 +27,4 @@ def test_the_chat_view_labels_each_tool_result_with_the_tool_that_produced_it():
     assert "I should read the agent." in shown              # the thinking summary
     assert "get_agent(app_id=a-1)" in shown                 # the tool request
     assert "get_agent failed" in shown and "app_id must be a GUID" in shown   # the result, labelled
+    assert "claude-opus-5-5 · tool_use" in shown            # the model that answered

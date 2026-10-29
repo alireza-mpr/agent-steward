@@ -16,15 +16,19 @@ import socket
 import sys
 import time
 import urllib.parse
+from dataclasses import asdict
+from pathlib import Path
 
 import anthropic
 from mcp import Client
 
-from harness import ModelStopped, RoundLimitReached, Trace, run_agent
+from harness import ModelStopped, RoundLimitReached, SettingsError, Trace, load_settings, run_agent
 from trace_view import ChatTrace
 
 MCP_URL = os.environ.get("MCP_URL", "http://sidecar:8100/mcp")
 TRACE = os.environ.get("GUARDIAN_TRACE", "")   # "1": chat view, "json": full JSON, unset: off
+# The harness's settings: model, effort, round limit and more (config/guardian.json, mounted read-only).
+SETTINGS_PATH = Path(os.environ.get("GUARDIAN_CONFIG_PATH", "/config/guardian.json"))
 
 
 def wait_until_listening(url: str, timeout_seconds: int = 60) -> None:
@@ -42,16 +46,24 @@ def wait_until_listening(url: str, timeout_seconds: int = 60) -> None:
 
 
 async def main() -> int:
+    try:
+        settings = load_settings(SETTINGS_PATH)
+    except SettingsError as error:
+        print(f"Guardian run not started: {error}", file=sys.stderr)
+        return 1
+    # Every run records the settings it used, in every trace mode.
+    print("Guardian settings: " + ", ".join(f"{name}={value}" for name, value in asdict(settings).items()))
+
     wait_until_listening(MCP_URL)
     async with Client(MCP_URL) as mcp_client, anthropic.AsyncAnthropic() as claude:   # the key comes from the environment
         try:
             if TRACE == "json":
-                result = await run_agent(claude, mcp_client, trace=Trace())
+                result = await run_agent(claude, mcp_client, settings, trace=Trace())
             elif TRACE:
                 # The chat view shows every step, so the one-line progress log is left out.
-                result = await run_agent(claude, mcp_client, log=lambda line: None, trace=ChatTrace())
+                result = await run_agent(claude, mcp_client, settings, log=lambda line: None, trace=ChatTrace())
             else:
-                result = await run_agent(claude, mcp_client)
+                result = await run_agent(claude, mcp_client, settings)
         except (ModelStopped, RoundLimitReached) as error:
             print(f"Guardian run stopped: {error}", file=sys.stderr)
             return 1

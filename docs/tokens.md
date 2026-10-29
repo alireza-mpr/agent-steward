@@ -1,23 +1,23 @@
 # Agent tokens: claims and validation
 
-This doc explains why an API must be registered before any token exists for it, what is inside an agent's access token (T2), and what an API must check before it accepts one. For how the agent gets the token, see [How an agent signs in](agent-id.md#3-the-two-step-sign-in-dance). Every claim below was seen in a real token from this lab, and each one says whether Microsoft documents it.
+This doc explains why an API must be registered before any token exists for it, what is inside an agent's resource access token (TR, Microsoft's name for it), and what an API must check before it accepts one. For how the agent gets the token, see [How an agent signs in](agent-id.md#3-getting-a-token-the-agent-autonomous-app-flow). Every claim below was seen in a real token from this lab, and each one says whether Microsoft documents it.
 
 ## Contents
 
 - [Why the API must be registered first](#why-the-api-must-be-registered-first)
 - [See a real token](#see-a-real-token)
-- [The autonomous token, claim by claim](#the-autonomous-token-claim-by-claim)
+- [TR, claim by claim](#tr-claim-by-claim)
   - [Who issued it, for which API, and for how long](#who-issued-it-for-which-api-and-for-how-long)
   - [Who the client is](#who-the-client-is)
   - [The Agent ID claims](#the-agent-id-claims)
   - [What the token allows](#what-the-token-allows)
   - [Internal claims](#internal-claims)
-- [T1 and T2 side by side](#t1-and-t2-side-by-side)
-  - [What changes from T1 to T2](#what-changes-from-t1-to-t2)
+- [T1 and TR side by side](#t1-and-tr-side-by-side)
+  - [What changes from T1 to TR](#what-changes-from-t1-to-tr)
   - [The claims, masked](#the-claims-masked)
   - [Where Entra checks the parent blueprint](#where-entra-checks-the-parent-blueprint)
   - [How a token names the API](#how-a-token-names-the-api)
-  - [What T2 does not show: the blueprint's credential](#what-t2-does-not-show-the-blueprints-credential)
+  - [What TR does not show: the blueprint's credential](#what-tr-does-not-show-the-blueprints-credential)
 - [What an API must check](#what-an-api-must-check)
   - [What kind of caller vs what it may do](#what-kind-of-caller-vs-what-it-may-do)
   - [A real negative case: the blueprint's own token](#a-real-negative-case-the-blueprints-own-token)
@@ -40,19 +40,19 @@ Token lifetime is not one of these reasons in IdentityServer. There it is a clie
 
 ## See a real token
 
-**In one line:** the `token-claims` tool asks the token sidecar for the guardian's token and prints the token's decoded claims.
+**In one line:** the `token-claims` tool asks the sidecar for the guardian's token and prints the token's decoded claims.
 
 ```sh
 docker compose run --rm token-claims graph
 ```
 
-The tool prints the claims, never the token itself, so its output cannot be replayed. The claims hold real tenant and object IDs, so redact them in any screenshot ([example](screenshots/phase2-guardian-token-claims.png)). For the setup, see [Local run: the token sidecar](infra.md#local-run-the-token-sidecar).
+The tool prints the claims, never the token itself, so its output cannot be replayed. The claims hold real tenant and object IDs, so redact them in any screenshot ([example](screenshots/phase2-guardian-token-claims.png)). For the setup, see [Local run: the sidecar](infra.md#local-run-the-sidecar).
 
 Two runs a few minutes apart showed the same `iat` and `exp`. So the sidecar caches the token and reuses it while it is valid. It does not ask Entra on every call.
 
-## The autonomous token, claim by claim
+## TR, claim by claim
 
-**In one line:** this is T2, an app-only access token for Microsoft Graph, issued to the guardian's agent identity `agent-steward-guardian-01`.
+**In one line:** this is TR, an app-only access token for Microsoft Graph, issued to the guardian's agent identity `agent-steward-guardian-01`.
 
 Each claim is marked **documented** (Microsoft Learn describes it) or **observed** (Learn does not describe it, and the note says what this lab saw).
 
@@ -100,9 +100,9 @@ Learn calls some claims "opaque": they are internal to Entra, and resources shou
 - **`xms_pftexp` (observed):** Exactly 24 hours after `exp`.
 - **`xms_ftd`, `xms_rd` and `xms_sess_fct` (observed):** No documented meaning.
 
-## T1 and T2 side by side
+## T1 and TR side by side
 
-**In one line:** T1 is the blueprint's token for one agent, usable only as that agent's proof, and T2 is the agent's own token for an API.
+**In one line:** T1, the exchange token, is the blueprint's token for one agent, usable only as that agent's proof, and TR, the resource access token, is the agent's own token for an API.
 
 The sidecar keeps T1 to itself. To see it, the dev tool [token_exchange.py](../tools/token_exchange.py) makes both requests the same way the sidecar does, and prints both tokens' claims (never the tokens themselves):
 
@@ -112,16 +112,16 @@ The sidecar keeps T1 to itself. To see it, the dev tool [token_exchange.py](../t
 
 It is a dev-only exception: it reads the guardian blueprint's private key from `secrets/`, which in normal runs only the sidecar holds. `--mask` keeps the first and last 4 characters of IDs and opaque values ([screenshot](screenshots/phase2-t1-t2-claims.png)).
 
-### What changes from T1 to T2
+### What changes from T1 to TR
 
-- **The audience (`aud`):** T1's is the token exchange resource that request 1 asked for (`api://AzureADTokenExchange`), so T1 cannot call any API. T2's is the Identity API.
-- **The client (`azp`):** T1's is the blueprint. T2's is the agent identity.
-- **The principal (`oid`):** T1's is the blueprint principal, the blueprint's service principal in this tenant. T2's is the agent identity.
-- **The subject (`sub`):** T1's is an FMI path, `/eid1/c/pub/t/<tenant>/a/<blueprint>/<agent>`. The tenant ID and the blueprint's appId are written as 22 characters of base64url, and the agent's appId as a plain GUID. So T1 names exactly one agent of one blueprint. T2's `sub` is the agent identity.
-- **The actor facets (`xms_act_fct`):** T1's are `9 3`, with no `11`, because the actor is the blueprint. T2's contain `11`, because the actor is an agent identity.
-- **The permissions (`roles`):** T1 has none. T2 has `Findings.Submit`.
-- **The parent (`xms_par_app_azp`):** Only T2 has it. It names the blueprint.
-- **The client authentication (`azpacr`):** `2` in both. In request 1 the blueprint signed with its certificate. In request 2 the agent sent T1 as its assertion. So T2's `2` describes request 2 only (see [What T2 does not show](#what-t2-does-not-show-the-blueprints-credential)).
+- **The audience (`aud`):** T1's is the token exchange resource that request 1 asked for (`api://AzureADTokenExchange`), so T1 cannot call any API. TR's is the Identity API.
+- **The client (`azp`):** T1's is the blueprint. TR's is the agent identity.
+- **The principal (`oid`):** T1's is the blueprint principal, the blueprint's service principal in this tenant. TR's is the agent identity.
+- **The subject (`sub`):** T1's is an FMI path, `/eid1/c/pub/t/<tenant>/a/<blueprint>/<agent>`. The tenant ID and the blueprint's appId are written as 22 characters of base64url, and the agent's appId as a plain GUID. So T1 names exactly one agent of one blueprint. TR's `sub` is the agent identity.
+- **The actor facets (`xms_act_fct`):** T1's are `9 3`, with no `11`, because the actor is the blueprint. TR's contain `11`, because the actor is an agent identity.
+- **The permissions (`roles`):** T1 has none. TR has `Findings.Submit`.
+- **The parent (`xms_par_app_azp`):** Only TR has it. It names the blueprint.
+- **The client authentication (`azpacr`):** `2` in both. In request 1 the blueprint signed with its certificate. In request 2 the agent sent T1 as its assertion. So TR's `2` describes request 2 only (see [What TR does not show](#what-tr-does-not-show-the-blueprints-credential)).
 - **`xms_ficinfo`:** Only T1 has it. It is not documented, and its name suggests federated credential information, which fits T1's use as a federated assertion.
 
 ### The claims, masked
@@ -165,7 +165,7 @@ fb60…9936: the token exchange resource (api://AzureADTokenExchange)
 }
 ```
 
-T2, from request 2 (client: the agent identity, for the Identity API):
+TR, from request 2 (client: the agent identity, for the Identity API):
 
 ```jsonc
 {
@@ -209,19 +209,19 @@ Tested in this lab on 27 October 2026, with the guardian's blueprint and an agen
 
 **In one line:** the token names the API by its app ID. The service principal's object ID only appears in the directory's own records: the sign-in log (`resourceServicePrincipalId`) and the role assignments (`resourceId`).
 
-Checked in this lab on 27 October 2026, for the Identity API and the sign-in event behind T2:
+Checked in this lab on 27 October 2026, for the Identity API and the sign-in event behind TR:
 
 | Where | What identifies the Identity API |
 |---|---|
-| The token (T2) | `aud` = its app ID (the Application ID in the portal) |
+| The token (TR) | `aud` = its app ID (the Application ID in the portal) |
 | Entra's sign-in log | `resourceId` = its app ID, and `resourceServicePrincipalId` = its service principal's object ID |
 | Graph role assignments | `resourceId` = its service principal's object ID |
 
 The client asks for the API by its app ID (`<appId>/.default`), and the app ID is the same in every tenant, while the object ID belongs to one tenant only. Note the asymmetry: the token names its subject, the caller, by object ID (`oid`), but its audience, the API, by app ID (`aud`).
 
-### What T2 does not show: the blueprint's credential
+### What TR does not show: the blueprint's credential
 
-**In one line:** T2 does not say whether the blueprint proved itself with a secret or a certificate, so an API cannot require "certificates only". Only Entra's sign-in log shows it.
+**In one line:** TR does not say whether the blueprint proved itself with a secret or a certificate, so an API cannot require "certificates only". Only Entra's sign-in log shows it.
 
 Tested in this lab on 27 October 2026. A 1-day secret was added to the guardian's blueprint for the test and removed after it.
 
@@ -229,11 +229,11 @@ Tested in this lab on 27 October 2026. A 1-day secret was added to the guardian'
 |---|---|---|
 | Request 1 | T1 issued | T1 issued |
 | T1 `azpacr` | `2` | `1` |
-| T2 `azpacr` | `2` | `2` |
+| TR `azpacr` | `2` | `2` |
 | Sign-in log, request 1 (`clientCredentialType`) | `clientAssertion` | `clientSecret` |
 | Sign-in log, request 2 (`clientCredentialType`) | `federatedIdentityCredential` | `federatedIdentityCredential` |
 
-T2's `azpacr` describes request 2 only. There the client is the agent identity, and its proof is always T1, a signed assertion. Entra records that proof as a federated identity credential. So a rule like "blueprints use certificates, never secrets" must be enforced on the blueprint itself, by the credentials it holds ([how](infra.md#the-blueprints-credential)), or watched in the sign-in log. The Identity API cannot enforce it.
+TR's `azpacr` describes request 2 only. There the client is the agent identity, and its proof is always T1, a signed assertion. Entra records that proof as a federated identity credential. So a rule like "blueprints use certificates, never secrets" must be enforced on the blueprint itself, by the credentials it holds ([how](infra.md#the-blueprints-credential)), or watched in the sign-in log. The Identity API cannot enforce it.
 
 ## What an API must check
 
@@ -257,7 +257,7 @@ This is the check list for the project's Identity API (FR5). The code is [token_
 
 **In one line:** check 5 decides what kind of caller this is, and check 6 decides what it may do. They are two separate decisions.
 
-- **What kind of caller (check 5):** Entra stamps facts about the caller into the token. `xms_act_fct` containing `11` means the client (the actor) is an agent identity. An agent identity can get a token only through its blueprint, with T1 and then T2, so the value also implies that sign-in path. The Identity API enforces this itself: it accepts agents only. A plain app or a blueprint carries no `11` (for example `3 9`), so it is rejected, even if it holds the right role.
+- **What kind of caller (check 5):** Entra stamps facts about the caller into the token. `xms_act_fct` containing `11` means the client (the actor) is an agent identity. An agent identity can get a token only through its blueprint, with T1 and then TR, so the value also implies that sign-in path. The Identity API enforces this itself: it accepts agents only. A plain app or a blueprint carries no `11` (for example `3 9`), so it is rejected, even if it holds the right role.
 - **What it may do (check 6):** The authorization is role-based. `roles` must contain `Findings.Submit`. Which agents hold that role is decided in Entra, as an app role assignment, not in a list of agent IDs inside the API. So it is governed in one place, visible in the portal, and revoked without a deploy.
 - **What is not an authorization decision:** The agent's own ID (`azp`, `oid`) and its blueprint (`xms_par_app_azp`) are only logged. Never authorize on the blueprint: every agent of that blueprint would pass.
 
@@ -267,7 +267,7 @@ Why check 6 alone is not enough: an app role can be assigned to any service prin
 
 ### A real negative case: the blueprint's own token
 
-When the sidecar's agent identity override is off, the sidecar ignores `AgentIdentity` and returns the blueprint's own token instead (see [Local run: the token sidecar](infra.md#local-run-the-token-sidecar)). That token looked almost the same, but:
+When the sidecar's agent identity override is off, the sidecar ignores `AgentIdentity` and returns the blueprint's own token instead (see [Local run: the sidecar](infra.md#local-run-the-sidecar)). That token looked almost the same, but:
 
 - **`app_displayname`:** `agent-steward-guardian`, the blueprint.
 - **`appid`:** The blueprint's appId.

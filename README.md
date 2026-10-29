@@ -35,7 +35,7 @@ flowchart LR
 
 | Agent | Role |
 |---|---|
-| **Guardian** | The only agent with a brain. Reads the registry autonomously; performs privileged fixes via OBO + approval. |
+| **Guardian** | The only agent that uses a model (an LLM). Reads the registry autonomously; performs privileged fixes via OBO + approval. |
 | **Live worker** | A tiny timer loop with its own agent identity. Calls one read-only endpoint every few minutes. Exists to produce real sign-in logs, to be blocked by Conditional Access, and to be killed live in the revocation demo. No LLM. |
 | **Fixture agents (3-4)** | Registry entries with deliberate flaws: one without a sponsor, one with an expiring credential, one over-permissioned, one dormant. They run no code. The guardian finds them. |
 
@@ -74,24 +74,24 @@ Workload identity federation for non-Microsoft agents, token exchange (RFC 8693)
 
 Every control that is in place, with the threat it stops and the evidence that it works, is in the control register: [docs/security-controls.md](docs/security-controls.md). It also lists the controls that are planned or exist only as written design. The main ones in place:
 
-- **No credential in the agent:** the blueprint's certificate lives only in the token sidecar, and the harness that talks to the model cannot reach the sidecar at all (C2 to C4).
+- **No credential in the agent:** the blueprint's certificate lives only in the sidecar, and the harness that talks to the model cannot reach the sidecar at all (C2 to C4).
 - **Zero Trust at the API:** seven token checks, tested with forged and real Entra tokens (C7).
 - **The MCP server checks every call:** inputs are validated, endpoints never come from the model, and findings reach the audit log without passing through the model (C8 to C11).
-- **Limits on the model:** a hard round limit, and a system prompt that treats tool results as data (C12, C13).
+- **Limits on the model:** a hard turn limit, a system prompt that treats tool results as data, and tool inputs that must match their schema (C12, C13, C21).
 - **Governance rules:** orphan, expiring, over-permissioned and dormant agents are found and audited (C14, C15).
 
 ## Repository layout
 
 ```
-config/           Policy: the permissions each agent may hold (agent-permissions.json)
+config/           Policy: the permissions each agent may hold (agent-permissions.json); the guardian harness's settings: model, effort, turn limit (guardian.json)
 setup/            Tenant setup as code: Bicep + Graph PowerShell (blueprint, identities, fixtures)
 src/identity_api/ Identity API (Python / FastAPI): token validation, audit
 src/guardian/     Guardian's harness (Python): the agent loop between Claude and the MCP server
 src/mcp_server/   MCP server (official Python SDK): the guardian's tools, the four rules, Graph reader
 src/worker/       Live worker timer loop (PowerShell)
 tests/            Unit tests, offline (unit/); integration tests with real Entra tokens (integration/); end-to-end test of the guardian (end_to_end/)
-tools/            Dev tools that print token claims, never tokens (token-claims: the guardian's token from the sidecar; token_exchange: T1 and T2 side by side)
-docs/             Reference (entra.md, infra.md, agent-id.md, tokens.md, agent-architecture.md), decision log (decisions.md), control register (security-controls.md), MCP reference (mcp.md), screenshots
+tools/            Dev tools that print token claims, never tokens (token-claims: the guardian's token from the sidecar; token_exchange: T1 and TR side by side)
+docs/             Reference (entra.md, infra.md, agent-id.md, tokens.md, agent-architecture.md, messages-api.md), decision log (decisions.md), control register (security-controls.md), MCP reference (mcp.md), screenshots
 GLOSSARY.md       Ubiquitous language: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP
 THREATMODEL.md    OWASP Agentic Top 10 x MAESTRO
 DEMO.md           Screenshot walkthrough
@@ -104,23 +104,23 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 
 | Req | Status | Evidence |
 |---|---|---|
-| FR1 - Agent identity via blueprint | done | The guardian's agent identity is created from a blueprint by [the setup script](setup/agent-id/Deploy-AgentIdentities.ps1) ([blueprints](docs/screenshots/phase1-agent-blueprints-list.png), [identities](docs/screenshots/phase1-agent-identities-list.png)). The token sidecar gets a real token as this agent identity through its blueprint ([claims](docs/screenshots/phase2-guardian-token-claims.png)): `appid` is the agent identity, `xms_par_app_azp` is the blueprint, and the actor facets contain 11. The guardian now runs under it: it gets every token from the sidecar as this agent identity, and never sees the blueprint's key ([guardian run](docs/screenshots/phase2-guardian-run.png)). |
+| FR1 - Agent identity via blueprint | done | The guardian's agent identity is created from a blueprint by [the setup script](setup/agent-id/Deploy-AgentIdentities.ps1) ([blueprints](docs/screenshots/phase1-agent-blueprints-list.png), [identities](docs/screenshots/phase1-agent-identities-list.png)). The sidecar gets a real token as this agent identity through its blueprint ([claims](docs/screenshots/phase2-guardian-token-claims.png)): `appid` is the agent identity, `xms_par_app_azp` is the blueprint, and the actor facets contain 11. The guardian now runs under it: it gets every token from the sidecar as this agent identity, and never sees the blueprint's key ([guardian run](docs/screenshots/phase2-guardian-run.png)). |
 | FR2 - Owner + sponsor | in progress | Guardian: technical owner and business sponsor are different people ([screenshot](docs/screenshots/phase1-guardian-owner-and-sponsor.png)). The worker's identity comes in Phase 5. |
 | FR3 - Autonomous mode | done | The guardian gets its tokens through its blueprint (client credentials, via the sidecar), reads the tenant's agents from Graph with read-only permissions, applies the four checks (orphan, expiring credential, over-permissioned, dormant), and reports the findings to the Identity API. Since 28 October this runs inside the MCP server's `scan_registry` tool ([code](src/mcp_server), [permissions](setup/bicep/guardian-permissions.bicep), [policy](config/agent-permissions.json)). Unit tests: [tests/unit/mcp_server](tests/unit/mcp_server). End-to-end test of the whole run: [tests/end_to_end](tests/end_to_end/test_guardian_scan.py). Every fixture is flagged for its planned flaw ([screenshot](docs/screenshots/phase2-guardian-run.png)). |
 | FR4 - OBO mode | not started | - |
 | FR5 - Token validation | done | The Identity API checks every token in 7 steps ([docs/tokens.md](docs/tokens.md#what-an-api-must-check), [code](src/identity_api/token_validation.py)). It rejects a caller that is not an agent identity (check 5) or lacks the app role (check 6). Unit tests: [tests/unit/identity_api](tests/unit/identity_api/test_token_validation.py). Integration tests with real Entra tokens: [tests/integration/identity_api](tests/integration/identity_api/test_with_real_tokens.py), where a plain app that holds the role is still rejected as not an agent, and an agent without the role is rejected ([screenshot](docs/screenshots/phase2-integration-tests.png)). |
-| FR6 - MCP allow-list | in progress | The guardian's tools run in their own MCP server, which is the only part that can get tokens ([server](src/mcp_server/server.py)). The guardian's harness runs the agent loop with Claude and reaches the tools over MCP ([harness](src/guardian/harness.py)). Unit tests: [server](tests/unit/mcp_server/test_server.py), [harness](tests/unit/guardian/test_harness.py). End-to-end test from the guardian's network, which also proves that the guardian cannot reach the token sidecar: [tests/end_to_end](tests/end_to_end/test_guardian_scan.py) ([screenshot](docs/screenshots/mcp-end-to-end-tests.png)). One run of the agent loop, traced: [screenshot](docs/screenshots/mcp-guardian-chat-trace.png). The allow-list itself comes next. |
+| FR6 - MCP allow-list | in progress | The guardian's tools run in their own MCP server, which is the only part that can get tokens ([server](src/mcp_server/server.py)). The guardian's harness runs the agent loop with Claude and reaches the tools over MCP ([harness](src/guardian/harness.py)). Unit tests: [server](tests/unit/mcp_server/test_server.py), [harness](tests/unit/guardian/test_harness.py). End-to-end test from the guardian's network, which also proves that the guardian cannot reach the sidecar: [tests/end_to_end](tests/end_to_end/test_guardian_scan.py) ([screenshot](docs/screenshots/mcp-end-to-end-tests.png)). One run of the agent loop, traced: [screenshot](docs/screenshots/mcp-guardian-chat-trace.png). The allow-list itself comes next. |
 | FR7 - Human approval | not started | - |
 | FR8 - Audit | in progress | The Identity API writes one JSON audit line per decision, rejections included, with the FR8 fields: agent object ID, blueprint app ID, mode, delegating user, tool, approver, correlation ID, timestamp and outcome ([code](src/identity_api/main.py)). The lines go to the container log today. Durable storage comes in Phase 4. |
 | FR9 - Conditional Access | not started | - |
-| FR10 - Secrets | in progress | The guardian's blueprint uses a certificate. Only the public half goes to Entra, and the private key stays in `secrets/`, which git ignores ([script](setup/agent-id/Deploy-BlueprintCertificate.ps1), [how it works](docs/infra.md#the-blueprints-credential)). Only the token sidecar container mounts the key, so the guardian's code never sees it ([docker-compose.yml](docker-compose.yml), [local run](docs/infra.md#local-run-the-token-sidecar)). The gitleaks sweep comes in Phase 5. |
+| FR10 - Secrets | in progress | The guardian's blueprint uses a certificate. Only the public half goes to Entra, and the private key stays in `secrets/`, which git ignores ([script](setup/agent-id/Deploy-BlueprintCertificate.ps1), [how it works](docs/infra.md#the-blueprints-credential)). Only the sidecar container mounts the key, so the guardian's code never sees it ([docker-compose.yml](docker-compose.yml), [local run](docs/infra.md#local-run-the-sidecar)). The gitleaks sweep comes in Phase 5. |
 | FR11 - Revocation | not started | - |
 | FR12 - Live worker | not started | - |
 | NFR1 - Least privilege | in progress | The guardian holds only four read-only Graph permissions, each with the check it serves ([guardian-permissions.bicep](setup/bicep/guardian-permissions.bicep)), and the Identity API role `Findings.Submit`. The policy of which agent may hold what is a reviewed file ([config/agent-permissions.json](config/agent-permissions.json)), and the guardian flags any agent that holds more. Permissions per MCP tool come in Phase 4. |
 | NFR2 - Attribution | not started | - |
 | NFR3 - Untrusted content boundary | not started | - |
 | NFR4 - Observability | not started | - |
-| NFR5 - Reproducibility | in progress | Tenant setup as code: [Bicep smoke test](setup/bicep/phase0-smoke.bicep) and [Agent ID setup script](setup/agent-id/Deploy-AgentIdentities.ps1); see [infra.md](docs/infra.md). [docker-compose.yml](docker-compose.yml) runs the token sidecar today ([local run](docs/infra.md#local-run-the-token-sidecar)); the app services join it as they are built. |
+| NFR5 - Reproducibility | in progress | Tenant setup as code: [Bicep smoke test](setup/bicep/phase0-smoke.bicep) and [Agent ID setup script](setup/agent-id/Deploy-AgentIdentities.ps1); see [infra.md](docs/infra.md). [docker-compose.yml](docker-compose.yml) runs the sidecar today ([local run](docs/infra.md#local-run-the-sidecar)); the app services join it as they are built. |
 | NFR6 - Repo hygiene | not started | - |
 | NFR7 - Threat model | not started | - |
 | NFR8 - Tests | in progress | The "offline tests" are unit tests: the token claim checks ([tests/unit/identity_api](tests/unit/identity_api/test_token_validation.py)). The "live test per auth flow" is an integration test with real Entra tokens: the autonomous flow ([tests/integration/identity_api](tests/integration/identity_api/test_with_real_tokens.py)). Unit tests also cover the guardian's rules, its Graph translation and its MCP tools ([tests/unit/mcp_server](tests/unit/mcp_server)) and the harness's agent loop ([tests/unit/guardian](tests/unit/guardian/test_harness.py)), and an end-to-end test calls the real MCP tools ([tests/end_to_end](tests/end_to_end/test_guardian_scan.py)). Tests for the allow-list and the approval gate come in Phase 4, and the OBO integration test in Phase 3. |

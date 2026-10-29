@@ -88,6 +88,11 @@ services:
       - secrets/anthropic.env   # ANTHROPIC_API_KEY, given to this container only
     environment:
       MCP_URL: http://sidecar:8100/mcp
+      GUARDIAN_CONFIG_PATH: /config/guardian.json
+    volumes:
+      # Only its own settings file, read-only: edit it and run again, no rebuild.
+      # Not the whole config folder, so the harness never sees the MCP server's files.
+      - ./config/guardian.json:/config/guardian.json:ro
     networks:
       - agent
     depends_on:

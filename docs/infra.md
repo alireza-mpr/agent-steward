@@ -19,7 +19,7 @@ How this project creates tenant objects as code: Bicep, Azure Resource Manager (
   - [Steps to create a blueprint and its agents](#steps-to-create-a-blueprint-and-its-agents)
   - [The blueprint's credential](#the-blueprints-credential)
   - [Run the Agent ID scripts](#run-the-agent-id-scripts)
-- [Local run: the token sidecar](#local-run-the-token-sidecar)
+- [Local run: the sidecar](#local-run-the-sidecar)
 - [Cost](#cost)
 - [Known issue: Bicep on Apple Silicon](#known-issue-bicep-on-apple-silicon)
 - [Not in scope](#not-in-scope)
@@ -194,7 +194,7 @@ The blueprint's credential proves the blueprint when it asks Entra for T1 (see [
 
 - **Managed identity, as a federated identity credential:** Microsoft's recommendation for production. Nobody creates or rotates anything, because Azure manages the hidden credential. It works only when the code runs on an Azure service. Sent as a `client_assertion`: the managed identity's token.
 - **Certificate (`keyCredentials`):** For local development and testing, or where a managed identity cannot work. Microsoft's [autonomous flow page](https://learn.microsoft.com/en-us/entra/agent-id/agent-autonomous-app-oauth-flow) prefers it over a secret. Sent as a `client_assertion`: a JWT signed with the private key.
-- **Secret (`passwordCredentials`):** For local development and testing only. Entra generates the value and shows it only once. Sent as `client_secret`: the secret itself. Tested in this lab: a secret also gets T1, and T2 does not show which credential the blueprint used ([details](tokens.md#what-t2-does-not-show-the-blueprints-credential)).
+- **Secret (`passwordCredentials`):** For local development and testing only. Entra generates the value and shows it only once. Sent as `client_secret`: the secret itself. Tested in this lab: a secret also gets T1, and TR does not show which credential the blueprint used ([details](tokens.md#what-tr-does-not-show-the-blueprints-credential)).
 
 This project runs locally, not in Azure. So the guardian's blueprint has a certificate, created by [`Deploy-BlueprintCertificate.ps1`](../setup/agent-id/Deploy-BlueprintCertificate.ps1). The expiring fixture has a secret on purpose.
 
@@ -246,9 +246,9 @@ pwsh ./setup/agent-id/Deploy-BlueprintCertificate.ps1 -TenantId <your-domain>.on
 - **`agent-steward-guardian.crt`:** The public certificate, the same half that Entra holds. Not a secret.
 - **`agent-steward-guardian.sidecar.env`:** The PFX password, as the sidecar's environment variable.
 
-## Local run: the token sidecar
+## Local run: the sidecar
 
-The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). The sidecar is the only container that holds the guardian blueprint's private key, and it makes both token requests (T1 and T2) for the guardian. Only the MCP server shares the sidecar's network namespace, so only the guardian's tools can get its tokens. The guardian's harness, which talks to Claude, runs outside it and never sees a key or a token ([Agent architecture](agent-architecture.md#3-the-guardians-design-today)). For how the sidecar compares with the in-process and token broker patterns, see [Credentials and Tokens](agent-architecture.md#6-credentials-and-tokens-how-a-workload-gets-them).
+The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). The sidecar is the only container that holds the guardian blueprint's private key, and it makes both token requests (T1 and TR) for the guardian. Only the MCP server shares the sidecar's network namespace, so only the guardian's tools can get its tokens. The guardian's harness, which talks to Claude, runs outside it and never sees a key or a token ([Agent architecture](agent-architecture.md#3-the-guardians-design-today)). For how the sidecar compares with the in-process and token broker patterns, see [Credentials and Tokens](agent-architecture.md#6-credentials-and-tokens-how-a-workload-gets-them).
 
 **Before the first run.**
 
@@ -268,6 +268,8 @@ docker compose run --rm -e GUARDIAN_TRACE=1 guardian   # the same, showing every
 docker compose run --rm integration-tests   # integration tests: real Entra tokens against the Identity API
 docker compose run --rm end-to-end-tests    # end-to-end test: the real MCP tools from the guardian's network, no model
 ```
+
+The guardian reads its settings (model, effort, turn limit, strict tool inputs, refusal fallback) from [config/guardian.json](../config/guardian.json) when a run starts. Edit the file and run again, no rebuild. A missing or wrong value stops the run with a clear message. What each setting does: [The Model Settings](agent-architecture.md#the-model-settings).
 
 `token-claims` prints the decoded claims, never the token itself ([example](screenshots/phase2-guardian-token-claims.png)). The claims hold real tenant and object IDs, so redact them in any screenshot. For what each claim means, see [Agent tokens](tokens.md).
 

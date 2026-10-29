@@ -1,4 +1,4 @@
-# MCP: the guardian's tool server
+# MCP: the guardian's MCP server
 
 This document is the hands-on reference for the guardian's MCP server: what MCP is, what travels on the wire, what our server offers, and how to call and inspect it. For where the MCP server sits in the agent's design and why it is the only part that can get tokens, see [Agent architecture](agent-architecture.md). For the security controls it enforces, see [Security controls](security-controls.md#the-mcp-server).
 
@@ -45,7 +45,7 @@ MCP Python SDK 2.x is *dual-era*: the same endpoint answers both kinds of client
 |---|---|
 | Code | [src/mcp_server/server.py](../src/mcp_server/server.py), built with the official MCP Python SDK 2.3.0 (`MCPServer`) |
 | Server name and version | `agent-steward-mcp-server`, version `1.0.0`, sent in every answer's `_meta` as `serverInfo` |
-| Endpoint | `http://sidecar:8100/mcp` inside Compose. It has no network name of its own, because it shares the sidecar's network namespace ([infra.md](infra.md#local-run-the-token-sidecar)). |
+| Endpoint | `http://sidecar:8100/mcp` inside Compose. It has no network name of its own, because it shares the sidecar's network namespace ([infra.md](infra.md#local-run-the-sidecar)). |
 | Accepted names (`Host` header) | `sidecar:8100` only, as protection against DNS rebinding. The Inspector override adds `localhost:8100` and `127.0.0.1:8100`. |
 | `scan_registry()` | Runs the four registry rules on Graph data, sends the findings to the Identity API's audit log itself ([ADR-001](decisions.md#adr-001-the-mcp-server-sends-the-findings-to-the-identity-api-never-the-model)), and returns the findings with the audit's correlation ID. Not read-only: every call writes to the audit log. |
 | `get_agent(app_id)` | Returns one agent identity's name, blueprint and description. Read-only. It refuses any `app_id` that is not a GUID, before it calls Graph. |

@@ -1,5 +1,5 @@
 {
-  "description": "The permissions each agent may hold, by display name. An agent not listed may hold nothing. Each permission names its API: a role name means nothing without it. The guardian flags anything else as over-permissioned (src/guardian/rules.py).",
+  "description": "The permissions each agent may hold, by display name. An agent not listed may hold nothing. Each permission names its API: a role name means nothing without it. The guardian flags anything else as over-permissioned (src/mcp_server/rules.py).",
   "agents": {
     "agent-steward-guardian-01": [
       "Microsoft Graph/AgentIdentity.Read.All",
