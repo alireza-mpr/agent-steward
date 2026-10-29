@@ -177,29 +177,29 @@ Without blueprints, every agent would be a classic application, with its own ser
 >
 > *Microsoft Learn, [Plan your agent identity architecture](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture), Step 3.*
 
-**Why:** The blueprint holds the credential for all of its agent identities. Any code that holds that credential can name any of them in `fmi_path` and get T1 for it. So a stolen blueprint credential exposes every agent identity under that blueprint: the blueprint is the blast radius. Microsoft calls the number of blueprints "a security boundary decision".
+**Why:** The blueprint holds the credential for all of its agent identities. Any code that holds that credential can name any of them in `fmi_path` and get T1 for it. So a stolen blueprint credential exposes every agent identity under that blueprint: the blueprint is the blast radius. Microsoft calls the number of blueprints "a security boundary decision" ([source](https://learn.microsoft.com/en-us/entra/agent-id/agent-service-principals#impersonation-model)).
 
-**What decides it:**
+**What decides it** ([Microsoft's table](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture#step-3-decide-how-many-agent-identity-blueprints)):
 - **Same trust boundary, one blueprint:** The agents share a runtime, secrets, file system and network. A credential rotation or a compromise affects all of them together.
 - **Different trust boundaries, separate blueprints:** The agents run in separate environments, runtimes or isolation domains. Their credentials must be isolated, so that a compromise cannot spread to peer agents.
 
-Microsoft also says a trust boundary "is an application threat-modeling decision, not one that Microsoft Entra Agent ID defines for you." So drawing the boundary is the team's job. Entra does not do it for you.
+Microsoft also says a trust boundary "is an application threat-modeling decision, not one that Microsoft Entra Agent ID defines for you" ([source](https://learn.microsoft.com/en-us/entra/agent-id/concept-agent-id-design-patterns#trust-boundary)). So drawing the boundary is the team's job. Entra does not do it for you.
 
-**Not reasons for another blueprint** (Microsoft's list):
+**Not reasons for another blueprint** ([Microsoft's list](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture#step-3-decide-how-many-agent-identity-blueprints)):
 - **Blocking one agent:** Disable that agent identity, or target it with a Conditional Access policy.
 - **Separate audit logs:** Each agent identity already has its own sign-in and audit log entries.
 - **Scale-out or replicas:** Many instances of the same agent share one blueprint, and one agent identity ([section 4](#4-scaling-logical-agents-vs-instances-and-sessions)).
 - **Memory or context separation:** Filter a shared data store by session ID instead.
 
 **Applied to harnesses and their managed identities:**
-- **Replicas of one harness:** They share one user-assigned managed identity, so the blueprint needs only one federated identity credential. Only a user-assigned managed identity can be a federated identity credential.
-- **Different harnesses (other code, team or platform):** Each one gets its own blueprint. Never add another team's managed identity to your blueprint as a federated identity credential: that harness could then get T1 for every agent identity under your blueprint.
-- **Two regions, same agent:** It is still one agent in one trust boundary, so both regions can share the blueprint. If each region has its own user-assigned managed identity, add each one as a federated identity credential. A blueprint holds at most 20.
-- **Dev and prod:** Separate environments are separate trust boundaries, so they get separate blueprints. Otherwise a dev harness could sign in as a prod agent identity.
+- **Replicas of one harness:** They share one user-assigned managed identity ([source](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/managed-identity-best-practice-recommendations#choosing-system-or-user-assigned-managed-identities)), so the blueprint needs only one federated identity credential. Only a user-assigned managed identity can be a federated identity credential ([source](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity)).
+- **Different harnesses (other code, team or platform):** Each one gets its own blueprint. Never add another team's managed identity to your blueprint as a federated identity credential: that harness could then get T1 for every agent identity under your blueprint, because a blueprint can impersonate all of its agent identities ([source](https://learn.microsoft.com/entra/agent-id/agent-autonomous-app-oauth-flow)).
+- **Two regions, same agent:** It is still one agent in one trust boundary, so both regions can share the blueprint. If each region has its own user-assigned managed identity, add each one as a federated identity credential. A blueprint holds at most 20 ([source](https://learn.microsoft.com/en-us/graph/api/federatedidentitycredential-post?view=graph-rest-beta)).
+- **Dev and prod:** Separate environments are separate trust boundaries ([source](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture#step-3-decide-how-many-agent-identity-blueprints)), so they get separate blueprints. Otherwise a dev harness could sign in as a prod agent identity.
 
 **In this project:** The guardian has its own blueprint, and only that blueprint holds the guardian's certificate ([details](infra.md#the-blueprints-credential)). The fixture agents run no code, and they sit on two other blueprints ([`Deploy-Fixtures.ps1`](../setup/agent-id/Deploy-Fixtures.ps1)). So the guardian's certificate cannot get a token for any fixture agent.
 
-Sources (Microsoft Learn, checked 29 October 2026): [Plan your agent identity architecture](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture), [Agent ID design patterns](https://learn.microsoft.com/en-us/entra/agent-id/concept-agent-id-design-patterns), [Agent identities, service principals, and applications](https://learn.microsoft.com/en-us/entra/agent-id/agent-service-principals), [Configure an application to trust a managed identity](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity) (user-assigned only), and [Create federatedIdentityCredential](https://learn.microsoft.com/en-us/graph/api/federatedidentitycredential-post?view=graph-rest-beta) (Graph beta: at most 20 per blueprint).
+Sources (Microsoft Learn, checked 29 October 2026): [Plan your agent identity architecture](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture), [Agent ID design patterns](https://learn.microsoft.com/en-us/entra/agent-id/concept-agent-id-design-patterns), [Agent identities, service principals, and applications](https://learn.microsoft.com/en-us/entra/agent-id/agent-service-principals), [Configure an application to trust a managed identity](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity) (user-assigned only), [Managed identity best practice recommendations](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/managed-identity-best-practice-recommendations), and [Create federatedIdentityCredential](https://learn.microsoft.com/en-us/graph/api/federatedidentitycredential-post?view=graph-rest-beta) (Graph beta: at most 20 per blueprint).
 
 ---
 
@@ -271,7 +271,7 @@ While the agent code holds the blueprint's key and *could* theoretically sign Re
 >
 > *Microsoft Learn, [Plan your agent identity architecture](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture), Steps 3 and 4 (checked 29 October 2026).*
 
-**Default (Microsoft's recommended starting point): use one agent identity per logical agent.** A logical agent is a specific job with a unique purpose, permissions, and sponsor. An agent identity does *not* represent a single running pod of code, nor a single user chat session. 
+**Default (Microsoft's recommended starting point): use one agent identity per logical agent** ([source](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture#step-4-decide-how-many-agent-identities-per-blueprint)). A logical agent is a specific job with a unique purpose, permissions, and sponsor. An agent identity does *not* represent a single running pod of code, nor a single user chat session. 
 
 If your app experiences a traffic spike and spins up 100 pods of your "HR Policy Agent," all 100 pods will use the exact same agent identity and the same blueprint, pulling their own T1 and TR tokens per request. They also share one user-assigned managed identity, so the blueprint needs only one federated identity credential for all of them ([one blueprint per trust boundary](#default-one-blueprint-per-trust-boundary-microsofts-recommended-starting-point)).
 
