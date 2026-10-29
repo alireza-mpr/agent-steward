@@ -14,13 +14,14 @@ This document breaks down how Microsoft Entra Agent ID objects fit together and 
   - [Quick Reference Guide](#quick-reference-guide)
 - [2. Identity vs. Credential (Who you are vs. How you prove it)](#2-identity-vs-credential-who-you-are-vs-how-you-prove-it)
   - [Why a Blueprint Is Needed](#why-a-blueprint-is-needed)
+  - [Default: One Blueprint per Trust Boundary (Microsoft's Recommended Starting Point)](#default-one-blueprint-per-trust-boundary-microsofts-recommended-starting-point)
 - [3. Getting a Token: the Agent Autonomous App Flow](#3-getting-a-token-the-agent-autonomous-app-flow)
   - [The Requests in Detail](#the-requests-in-detail)
   - [App-Only Tokens and the `.default` Scope](#app-only-tokens-and-the-default-scope)
   - [Why use two requests instead of one?](#why-use-two-requests-instead-of-one)
   - [Clarifying Misconceptions](#clarifying-misconceptions)
 - [4. Scaling: Logical Agents vs. Instances and Sessions](#4-scaling-logical-agents-vs-instances-and-sessions)
-  - [Why dynamic, on-the-fly identity creation is an anti-pattern](#why-dynamic-on-the-fly-identity-creation-is-an-anti-pattern)
+  - [Why an agent identity per pod or per session is an anti-pattern](#why-an-agent-identity-per-pod-or-per-session-is-an-anti-pattern)
   - [Hitting the Limits (and how to bypass them)](#hitting-the-limits-and-how-to-bypass-them)
 - [5. Industry Parallels](#5-industry-parallels)
 
@@ -166,7 +167,39 @@ Without blueprints, every agent would be a classic application, with its own ser
 - **With blueprints:** You manage and rotate one credential per blueprint. It works for all of the blueprint's agent identities, and only for them, because Entra checks the parent at request 2 ([docs/tokens.md](tokens.md#where-entra-checks-the-parent-blueprint)). Creating a new agent is one Graph call, with no credential to create, deliver or rotate. A pod only needs its agent identity's `appId`, which is not a secret.
 - **Central control:** Rotating the blueprint's credential, or a Conditional Access policy that targets the blueprint, covers all of its agent identities at once.
 - **The 250 limit:** A blueprint can have at most 250 agent identities when a non-Microsoft platform creates them with app-only permissions (see [Hitting the Limits](#hitting-the-limits-and-how-to-bypass-them)). So 1,000 such agents need 4 blueprints: 4 credentials, not 1,000.
-- *Trade-off:* One credential for many agents means a larger blast radius. A stolen blueprint credential exposes all of its agent identities (see the *Note on Blast Radius* in section 3).
+- *Trade-off:* One credential for many agents means a larger blast radius. A stolen blueprint credential exposes all of its agent identities (see the *Note on Blast Radius* in section 3). This is why the number of blueprints is a security decision: see [one blueprint per trust boundary](#default-one-blueprint-per-trust-boundary-microsofts-recommended-starting-point).
+
+### Default: One Blueprint per Trust Boundary (Microsoft's Recommended Starting Point)
+
+> **Default: use one blueprint per trust boundary.**
+>
+> A trust boundary is the shared risk surface where a single compromise is assumed to affect the entire perimeter. Agents that share a runtime, secrets, file system, and network share a trust boundary and can share a blueprint.
+>
+> *Microsoft Learn, [Plan your agent identity architecture](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture), Step 3.*
+
+**Why:** The blueprint holds the credential for all of its agent identities. Any code that holds that credential can name any of them in `fmi_path` and get T1 for it. So a stolen blueprint credential exposes every agent identity under that blueprint: the blueprint is the blast radius. Microsoft calls the number of blueprints "a security boundary decision".
+
+**What decides it:**
+- **Same trust boundary, one blueprint:** The agents share a runtime, secrets, file system and network. A credential rotation or a compromise affects all of them together.
+- **Different trust boundaries, separate blueprints:** The agents run in separate environments, runtimes or isolation domains. Their credentials must be isolated, so that a compromise cannot spread to peer agents.
+
+Microsoft also says a trust boundary "is an application threat-modeling decision, not one that Microsoft Entra Agent ID defines for you." So drawing the boundary is the team's job. Entra does not do it for you.
+
+**Not reasons for another blueprint** (Microsoft's list):
+- **Blocking one agent:** Disable that agent identity, or target it with a Conditional Access policy.
+- **Separate audit logs:** Each agent identity already has its own sign-in and audit log entries.
+- **Scale-out or replicas:** Many instances of the same agent share one blueprint, and one agent identity ([section 4](#4-scaling-logical-agents-vs-instances-and-sessions)).
+- **Memory or context separation:** Filter a shared data store by session ID instead.
+
+**Applied to harnesses and their managed identities:**
+- **Replicas of one harness:** They share one user-assigned managed identity, so the blueprint needs only one federated identity credential. Only a user-assigned managed identity can be a federated identity credential.
+- **Different harnesses (other code, team or platform):** Each one gets its own blueprint. Never add another team's managed identity to your blueprint as a federated identity credential: that harness could then get T1 for every agent identity under your blueprint.
+- **Two regions, same agent:** It is still one agent in one trust boundary, so both regions can share the blueprint. If each region has its own user-assigned managed identity, add each one as a federated identity credential. A blueprint holds at most 20.
+- **Dev and prod:** Separate environments are separate trust boundaries, so they get separate blueprints. Otherwise a dev harness could sign in as a prod agent identity.
+
+**In this project:** The guardian has its own blueprint, and only that blueprint holds the guardian's certificate ([details](infra.md#the-blueprints-credential)). The fixture agents run no code, and they sit on two other blueprints ([`Deploy-Fixtures.ps1`](../setup/agent-id/Deploy-Fixtures.ps1)). So the guardian's certificate cannot get a token for any fixture agent.
+
+Sources (Microsoft Learn, checked 29 October 2026): [Plan your agent identity architecture](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture), [Agent ID design patterns](https://learn.microsoft.com/en-us/entra/agent-id/concept-agent-id-design-patterns), [Agent identities, service principals, and applications](https://learn.microsoft.com/en-us/entra/agent-id/agent-service-principals), [Configure an application to trust a managed identity](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity) (user-assigned only), and [Create federatedIdentityCredential](https://learn.microsoft.com/en-us/graph/api/federatedidentitycredential-post?view=graph-rest-beta) (Graph beta: at most 20 per blueprint).
 
 ---
 
@@ -230,16 +263,27 @@ While the agent code holds the blueprint's key and *could* theoretically sign Re
 
 ## 4. Scaling: Logical Agents vs. Instances and Sessions
 
-**The Golden Rule:** An agent identity represents one **logical agent** (a specific job with a unique purpose, permissions, and sponsor). It does *not* represent a single running pod of code, nor a single user chat session. 
+> **Replicas do not need more blueprints or more agent identities.**
+>
+> "Scale-out or replicas: Running multiple instances of the same agent doesn't require multiple blueprints."
+>
+> "Horizontal scale-out: Running replicas or instances of the same agent code doesn't require separate identities. Scale-out is a runtime concern, not an identity concern."
+>
+> *Microsoft Learn, [Plan your agent identity architecture](https://learn.microsoft.com/en-us/entra/agent-id/how-to-plan-agent-identity-architecture), Steps 3 and 4 (checked 29 October 2026).*
 
-If your app experiences a traffic spike and spins up 100 pods of your "HR Policy Agent," all 100 pods will use the exact same agent identity, pulling their own T1 and TR tokens per request. 
+**Default (Microsoft's recommended starting point): use one agent identity per logical agent.** A logical agent is a specific job with a unique purpose, permissions, and sponsor. An agent identity does *not* represent a single running pod of code, nor a single user chat session. 
 
-### Why dynamic, on-the-fly identity creation is an anti-pattern:
-Creating a new agent identity for every session or pod will fail for several reasons:
+If your app experiences a traffic spike and spins up 100 pods of your "HR Policy Agent," all 100 pods will use the exact same agent identity and the same blueprint, pulling their own T1 and TR tokens per request. They also share one user-assigned managed identity, so the blueprint needs only one federated identity credential for all of them ([one blueprint per trust boundary](#default-one-blueprint-per-trust-boundary-microsofts-recommended-starting-point)).
+
+### Why an agent identity per pod or per session is an anti-pattern
+Creating a new agent identity for every pod or session will fail for several reasons:
+- **No benefit:** Microsoft says a separate agent identity per replica "adds directory objects and management overhead without any audit, access control, or accountability benefit" ([Agent ID design patterns](https://learn.microsoft.com/en-us/entra/agent-id/concept-agent-id-design-patterns#scale-out-replicas-dont-need-separate-agent-identities)).
 - **Rate Limits & Quotas:** Graph API will throttle you (429 errors), and deleted identities count against your tenant quota for 30 days.
 - **Replication Lag:** Entra takes time to sync new objects. Trying to use an identity the second it's created often results in "Object not found" errors.
 - **Security Risks:** Assigning permissions programmatically on the fly requires highly dangerous roles like `AppRoleAssignment.ReadWrite.All`, turning your identity-generator into a massive security vulnerability.
 - **Orphans:** Abandoned sessions leave behind unused identities that clutter the directory.
+
+**The exception: ephemeral agent identities.** Microsoft supports one narrow case of creating identities at runtime. An orchestrator creates a temporary agent identity for one specific task, gives it permissions inherited from the blueprint, and deletes it when the session ends. This limits the blast radius to the length of the task. The cost is extra latency, because the identity is created at runtime. It is not meant for high volume: Microsoft warns against one agent identity per meeting, per document or per object. Source: [Agent ID design patterns](https://learn.microsoft.com/en-us/entra/agent-id/concept-agent-id-design-patterns) (checked 29 October 2026).
 
 ### Hitting the Limits (and how to bypass them)
 For non-Microsoft platforms using app-only permissions, Entra limits you to **250 agent identities per blueprint**. 
