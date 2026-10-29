@@ -68,8 +68,8 @@ TOOL_FAILED = CallToolResult.model_validate({"content": [{"type": "text", "text"
                                              "isError": True})
 
 
-def run(claude, mcp_server, settings=SETTINGS, log=lambda line: None):
-    return asyncio.run(harness.run_agent(claude, mcp_server, settings, log=log))
+def run(claude, mcp_server, settings=SETTINGS):
+    return asyncio.run(harness.run_agent(claude, mcp_server, settings))
 
 
 # --- The agent loop ---
@@ -129,13 +129,29 @@ def test_the_refusal_fallback_is_asked_for_only_when_the_settings_turn_it_on():
     assert "fallbacks" not in without.requests[0] and "betas" not in without.requests[0]
 
 
-def test_the_log_names_the_model_that_answered_not_the_model_that_was_asked():
+def test_the_log_names_the_model_that_answered_not_the_model_that_was_asked(caplog):
     claude = ScriptedClaude(answer("end_turn", text("Done."), model="claude-fallback-model"))
-    lines = []
 
-    run(claude, FakeMcpServer({}), log=lines.append)
+    with caplog.at_level("INFO", logger="guardian"):
+        run(claude, FakeMcpServer({}))
 
-    assert any("claude-fallback-model stopped with end_turn" in line for line in lines)
+    assert ("guardian.model", "round 1: claude-fallback-model stopped with end_turn") in \
+        [(record.name, record.getMessage()) for record in caplog.records]
+
+
+def test_model_steps_and_mcp_steps_go_to_their_own_loggers(caplog):
+    claude = ScriptedClaude(answer("tool_use", tool_use("toolu_1", "scan_registry", {})),
+                            answer("end_turn", text("No findings.")))
+
+    with caplog.at_level("INFO", logger="guardian"):
+        run(claude, FakeMcpServer({"scan_registry": SCAN_OK}))
+
+    assert [(record.name, record.getMessage()) for record in caplog.records] == [
+        ("guardian.mcp", "tools/list: scan_registry"),
+        ("guardian.model", "round 1: claude-opus-5-5 stopped with tool_use, asks for scan_registry"),
+        ("guardian.mcp", "round 1: tools/call scan_registry({}) succeeded"),
+        ("guardian.model", "round 2: claude-opus-5-5 stopped with end_turn"),
+    ]
 
 
 def test_a_failed_tool_goes_back_to_the_model_as_an_error_it_can_read():
@@ -179,7 +195,7 @@ def test_the_trace_is_off_by_default_and_the_model_is_not_asked_for_thinking_sum
 def test_with_show_thinking_the_model_is_asked_for_thinking_summaries():
     claude = ScriptedClaude(answer("end_turn", text("Done.")))
 
-    asyncio.run(harness.run_agent(claude, FakeMcpServer({}), SETTINGS, log=lambda line: None, show_thinking=True))
+    asyncio.run(harness.run_agent(claude, FakeMcpServer({}), SETTINGS, show_thinking=True))
 
     assert claude.requests[0]["thinking"] == {"type": "adaptive", "display": "summarized"}
 
@@ -190,7 +206,7 @@ def test_the_json_trace_shows_the_prompt_the_tool_requests_and_the_results_sent_
     lines = []
 
     asyncio.run(harness.run_agent(claude, FakeMcpServer({"scan_registry": SCAN_OK}), SETTINGS,
-                                  log=lambda line: None, trace=harness.Trace(lines.append)))
+                                  trace=harness.Trace(lines.append)))
 
     trace = "\n".join(lines)
     assert harness.SYSTEM_PROMPT.splitlines()[0] in trace
@@ -204,7 +220,7 @@ def test_the_json_trace_keeps_the_mcp_conversation_apart_from_the_model_conversa
     lines = []
 
     asyncio.run(harness.run_agent(claude, FakeMcpServer({"scan_registry": SCAN_OK}), SETTINGS,
-                                  log=lambda line: None, trace=harness.Trace(lines.append, mcp_endpoint="POST /mcp")))
+                                  trace=harness.Trace(lines.append, mcp_endpoint="POST /mcp")))
 
     headings = [line.strip() for line in lines if line.strip().startswith("=====")]
     assert headings == ["===== Start: harness -> MCP server (POST /mcp) =====", "===== Start: MCP server -> harness =====",

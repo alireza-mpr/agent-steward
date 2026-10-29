@@ -4,6 +4,9 @@ Claude decides which tools to ask for; the MCP server runs them. docker compose 
 guardian once, and docker compose run --rm guardian runs it again. The container holds only the
 Anthropic API key (secrets/anthropic.env) and cannot reach the token sidecar.
 
+Every line the harness prints starts with a tag that says what it is about: [harness] for the
+harness itself, [model] and [mcp] for its two peers.
+
 To see every message between the harness and its two peers, the model and the MCP server,
 each conversation in its own sections:
     docker compose run --rm -e GUARDIAN_TRACE=1 guardian       # as a chat, in colour, shortened
@@ -14,6 +17,7 @@ and redact it in any screenshot.
 """
 
 import asyncio
+import logging
 import os
 import socket
 import sys
@@ -27,7 +31,8 @@ import httpx2
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
-from harness import BodyLog, ModelStopped, RoundLimitReached, SettingsError, Trace, load_settings, run_agent
+from harness import (BodyLog, ModelStopped, RoundLimitReached, SettingsError, Trace, load_settings, run_agent,
+                     setup_logging)
 from trace_view import ChatTrace
 
 MCP_URL = os.environ.get("MCP_URL", "http://sidecar:8100/mcp")
@@ -35,6 +40,8 @@ MCP_URL = os.environ.get("MCP_URL", "http://sidecar:8100/mcp")
 TRACE = os.environ.get("GUARDIAN_TRACE", "")
 # The harness's settings: model, effort, round limit and more (config/guardian.json, mounted read-only).
 SETTINGS_PATH = Path(os.environ.get("GUARDIAN_CONFIG_PATH", "/config/guardian.json"))
+
+log = logging.getLogger("guardian.harness")
 
 
 def wait_until_listening(url: str, timeout_seconds: int = 60) -> None:
@@ -52,13 +59,14 @@ def wait_until_listening(url: str, timeout_seconds: int = 60) -> None:
 
 
 async def main() -> int:
+    setup_logging(TRACE)
     try:
         settings = load_settings(SETTINGS_PATH)
     except SettingsError as error:
-        print(f"Guardian run not started: {error}", file=sys.stderr)
+        log.error(f"run not started: {error}")
         return 1
     # Every run records the settings it used, in every trace mode.
-    print("Guardian settings: " + ", ".join(f"{name}={value}" for name, value in asdict(settings).items()))
+    log.info("settings: " + ", ".join(f"{name}={value}" for name, value in asdict(settings).items()))
 
     wait_until_listening(MCP_URL)
     # full: two body logs, one in each SDK's HTTP client, so each sees every body exactly as sent:
@@ -73,33 +81,30 @@ async def main() -> int:
     async with mcp_http, Client(streamable_http_client(MCP_URL, http_client=mcp_http)) as mcp_client, \
             anthropic.AsyncAnthropic(http_client=model_http) as claude:   # the key comes from the environment
         try:
-            # Every trace shows each step in its own section, so the one-line progress log is left out.
-            quiet = lambda line: None   # noqa: E731
             if full:
-                result = await run_agent(claude, mcp_client, settings, log=quiet, show_thinking=True)
+                result = await run_agent(claude, mcp_client, settings, show_thinking=True)
             elif TRACE == "json":
-                result = await run_agent(claude, mcp_client, settings, log=quiet,
+                result = await run_agent(claude, mcp_client, settings,
                                          trace=Trace(mcp_endpoint=mcp_endpoint), show_thinking=True)
             elif TRACE:
-                result = await run_agent(claude, mcp_client, settings, log=quiet,
+                result = await run_agent(claude, mcp_client, settings,
                                          trace=ChatTrace(mcp_endpoint=mcp_endpoint), show_thinking=True)
             else:
                 result = await run_agent(claude, mcp_client, settings)
         except (ModelStopped, RoundLimitReached) as error:
-            print(f"Guardian run stopped: {error}", file=sys.stderr)
+            log.error(f"run stopped: {error}")
             return 1
         except anthropic.APIStatusError as error:   # for example a bad key, no credit, or a rate limit
-            print(f"Guardian run stopped: the model provider answered {error.status_code}: {error.message}",
-                  file=sys.stderr)
+            log.error(f"run stopped: the model provider answered {error.status_code}: {error.message}")
             return 1
         except anthropic.APIConnectionError as error:
-            print(f"Guardian run stopped: the model provider could not be reached: {error}", file=sys.stderr)
+            log.error(f"run stopped: the model provider could not be reached: {error}")
             return 1
 
     if TRACE in ("", "json", "full"):   # the chat view has already shown the report
-        print(f"\nThe guardian's report ({result.rounds} model calls):\n\n{result.report}")
+        log.info(f"report ({result.rounds} model calls):\n\n{result.report}\n")
     for correlation_id in result.correlation_ids:
-        print(f"\nAudit correlation ID from scan_registry: {correlation_id}")
+        log.info(f"audit correlation ID, from scan_registry: {correlation_id}")
     return 0
 
 

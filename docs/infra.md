@@ -273,6 +273,8 @@ docker compose run --rm end-to-end-tests    # end-to-end test: the real MCP tool
 
 The guardian reads its settings (model, effort, turn limit, strict tool inputs, refusal fallback) from [config/guardian.json](../config/guardian.json) when a run starts. Edit the file and run again, no rebuild. A missing or wrong value stops the run with a clear message. What each setting does: [The Model Settings](agent-architecture.md#the-model-settings).
 
+Every line the guardian prints starts with a tag that says what it is about: `[harness]` for the harness itself (settings, report, audit correlation ID, errors), `[model]` for a model call, and `[mcp]` for a call to the MCP server. Errors go to stderr. In a trace mode, the trace shows every model and MCP step in its own sections, so only the `[harness]` lines are printed.
+
 `token-claims` prints the decoded claims, never the token itself ([example](screenshots/phase2-guardian-token-claims.png)). The claims hold real tenant and object IDs, so redact them in any screenshot. For what each claim means, see [Agent tokens](tokens.md).
 
 **Three settings that matter.**

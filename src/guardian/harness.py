@@ -7,10 +7,43 @@ namespace, so it can never get an Entra token (docs/agent-architecture.md).
 """
 
 import json
+import logging
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# One logger per source, so every progress line says what it is about. setup_logging prints the
+# last part of the name as a tag: [model] and [mcp] for the two peers, [harness] for the harness itself.
+MODEL_LOG = logging.getLogger("guardian.model")
+MCP_LOG = logging.getLogger("guardian.mcp")
+
+
+def add_tag(record: logging.LogRecord) -> bool:
+    """The tag is the last part of the logger's name: guardian.model -> [model]."""
+    record.tag = f"[{record.name.rpartition('.')[2]}]"
+    return True
+
+
+def setup_logging(trace: str) -> None:
+    """Tagged lines, errors to stderr. In a trace mode the trace already shows every model and MCP
+    step in its own section, so only the [harness] lines are printed."""
+    formatter = logging.Formatter("%(tag)-9s %(message)s")
+    to_stdout = logging.StreamHandler(sys.stdout)
+    to_stdout.addFilter(lambda record: record.levelno < logging.WARNING)
+    to_stderr = logging.StreamHandler(sys.stderr)
+    to_stderr.setLevel(logging.WARNING)
+    for handler in (to_stdout, to_stderr):
+        handler.addFilter(add_tag)
+        handler.setFormatter(formatter)
+    guardian = logging.getLogger("guardian")
+    guardian.handlers = [to_stdout, to_stderr]
+    guardian.setLevel(logging.INFO)
+    guardian.propagate = False
+    for peer in ("guardian.model", "guardian.mcp"):
+        logging.getLogger(peer).setLevel(logging.WARNING if trace else logging.NOTSET)
+
 
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 # The highest round limit the settings file may set, so a typo such as 1000 cannot remove the limit.
@@ -252,19 +285,20 @@ class BodyLog:
         return {"request": [self.request], "response": [self.response]}
 
 
-async def run_agent(claude: Any, mcp_client: Any, settings: HarnessSettings, log: Callable[[str], None] = print,
-                    trace: Any = None, show_thinking: bool = False) -> RunResult:
+async def run_agent(claude: Any, mcp_client: Any, settings: HarnessSettings, trace: Any = None,
+                    show_thinking: bool = False) -> RunResult:
     """One run of the agent loop: the task, then model call and tool calls until the report.
 
-    With a trace (Trace, or the chat view), every message to and from the model and the MCP server
-    is shown, each conversation in its own sections.
+    Each step goes to the progress log, one line per step: model steps to guardian.model, MCP
+    steps to guardian.mcp. With a trace (Trace, or the chat view), every message to and from the
+    model and the MCP server is also shown, each conversation in its own sections.
     With show_thinking, the model returns a readable summary of its thinking.
     """
     listed = (await mcp_client.list_tools()).tools
     if trace:
         trace.mcp_tools_listed(listed)
     tools = [to_claude_tool(tool, settings.strict_tool_inputs) for tool in listed]
-    log(f"Tools from the MCP server: {', '.join(tool['name'] for tool in tools)}")
+    MCP_LOG.info(f"tools/list: {', '.join(tool['name'] for tool in tools)}")
     messages: list[dict] = [{"role": "user", "content": TASK}]
     result = RunResult()
 
@@ -276,8 +310,8 @@ async def run_agent(claude: Any, mcp_client: Any, settings: HarnessSettings, log
             trace.response(round_number, response)
         requests = [block for block in response.content if block.type == "tool_use"]
         # The model that answered: not always settings.model, when a refusal fallback ran.
-        log(f"Round {round_number}: {response.model} stopped with {response.stop_reason}"
-            + (f" and asked for {', '.join(request.name for request in requests)}" if requests else ""))
+        MODEL_LOG.info(f"round {round_number}: {response.model} stopped with {response.stop_reason}"
+                       + (f", asks for {', '.join(request.name for request in requests)}" if requests else ""))
 
         if response.stop_reason == "end_turn":
             result.report = "\n".join(block.text for block in response.content if block.type == "text")
@@ -297,8 +331,8 @@ async def run_agent(claude: Any, mcp_client: Any, settings: HarnessSettings, log
             outcome = await mcp_client.call_tool(request.name, request.input)
             if trace:
                 trace.mcp_result(round_number, request.name, outcome)
-            log(f"Round {round_number}: {request.name}({json.dumps(request.input)}) "
-                f"{'failed' if outcome.is_error else 'succeeded'}")
+            MCP_LOG.info(f"round {round_number}: tools/call {request.name}({json.dumps(request.input)}) "
+                         f"{'failed' if outcome.is_error else 'succeeded'}")
             if not outcome.is_error and isinstance(outcome.structured_content, dict) \
                     and "correlation_id" in outcome.structured_content:
                 result.correlation_ids.append(outcome.structured_content["correlation_id"])
