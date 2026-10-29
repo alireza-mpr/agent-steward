@@ -23,7 +23,7 @@ The details of each part are in their own documents:
 
 * [1. The Anatomy of an Agent (The Four Parts)](#1-the-anatomy-of-an-agent-the-four-parts)
 * [2. The Enterprise Reference Design](#2-the-enterprise-reference-design)
-  * [Three Architectural Pillars](#three-architectural-pillars)
+  * [Four Architectural Pillars](#four-architectural-pillars)
   * [Zero Trust: Who Checks Whom?](#zero-trust-who-checks-whom)
 * [3. The Guardian's Design Today](#3-the-guardians-design-today)
   * [Architectural Shortcuts (Where the Guardian Differs)](#architectural-shortcuts-where-the-guardian-differs)
@@ -38,7 +38,7 @@ An AI agent is much more than just a Large Language Model (LLM). It is a logical
 
 1. **The Harness (the agent harness):** This is the code that runs the agent loop. Anthropic defines it as "the loop that calls Claude and routes Claude's tool calls to the relevant infrastructure". It is the only bridge between the model and the MCP server: it sends the model the tool definitions and the tool results, and it forwards the model's tool calls to the MCP server. Because it sits in the middle, the harness controls what the model sees, so a compromised harness could change or fake a tool result. In Model Context Protocol (MCP) terms, the harness plays the **host** role, because it holds the MCP client that connects to the MCP server. It does much more than speak MCP, though.
 2. **The Model (the LLM):** It runs at the model provider (for example, Anthropic or Google) and never talks to the MCP server directly. It only sees what the harness sends it: the system prompt, the task, the tool definitions, and the tool results. From that context, it decides the next step and *asks* for a tool call. It holds nothing: no credentials and no tokens.
-3. **The Tools (on the MCP Server):** The MCP server is a separate component, outside the harness. In an enterprise setup, a single MCP server can serve many different agents. It only acts when called by the harness, and it enforces its own security checks (such as per-agent allow-lists and human approval gates). Inside the MCP server, the tools call downstream APIs like Microsoft Graph. Those downstream APIs are **not** tools; they are independent resource servers in their own trust boundaries that validate the token of whatever calls them.
+3. **The Tools (on the MCP Server):** The MCP server is a separate component, outside the harness. In an enterprise setup, a single MCP server can serve many different agents. It only acts when called by the harness, and it enforces its own security checks (such as a role-to-tool mapping, which decides which agent may use which tool, and human approval gates). Inside the MCP server, the tools call downstream APIs like Microsoft Graph. Those downstream APIs are **not** tools; they are independent resource servers in their own trust boundaries that validate the token of whatever calls them.
 4. **The Identity (The Agent Identity in Entra):** This defines *who* the agent is, while its assigned roles dictate what its tokens are allowed to do. Because it is a directory record living inside Entra's trust boundary rather than a running piece of code, it has no credential of its own. Another component must sign in on its behalf: in our enterprise reference design, the **harness** signs in; in the Guardian's local design, the **MCP server** signs in (via the sidecar).
 
 **The Takeaway:** An agent is the combination of all four parts working together. The harness coordinates, the model decides, the tools act, and the identity authorizes. The model never touches the MCP server or sees a token. In Microsoft Entra Agent ID, the agent identity represents this entire four-part system—the LLM itself has no identity.
@@ -71,7 +71,10 @@ flowchart TB
     end
 
     subgraph GATEWAY["Tools"]
-        MCP["<b>MCP server</b> (shared)<br/>has its own identity<br/>checks the agent's token<br/>allow-list per agent<br/>approval gate, audit<br/><i>tools: send_email,<br/>save_record</i>"]
+        direction LR
+        MCP["<b>MCP server</b> (shared)<br/>has its own identity<br/>checks the agent's token<br/>approval gate, audit<br/><i>tools: send_email,<br/>save_record</i>"]
+        MAP["<b>Role-to-tool mapping</b><br/>kept by the server's team, in git<br/>Tools.Email → send_email<br/>Tools.Records → save_record<br/>checked on every tools/list<br/>and every tools/call"]
+        MCP -- "enforces" --- MAP
     end
 
     subgraph RESOURCES["Resource APIs: each checks the token (audience, roles)"]
@@ -80,7 +83,7 @@ flowchart TB
     end
 
     subgraph IDP["Identity provider"]
-        ENTRA["<b>Entra ID</b><br/>blueprint, agent identities<br/>Conditional Access<br/>sign-in logs"]
+        ENTRA["<b>Entra ID</b><br/>blueprint, agent identities<br/>role assignments<br/>(which agent holds which role)<br/>Conditional Access<br/>sign-in logs"]
     end
 
     subgraph OBS["Observability"]
@@ -93,30 +96,41 @@ flowchart TB
     HARNESS -- "workload identity federation: token 1<br/>for a short-lived provider token,<br/>then prompts, tools, results" --> MODEL
     MODEL -- "tool calls" --> HARNESS
     HARNESS -- "request 1: token 2 as the blueprint's<br/>credential, for T1<br/>request 2: T1, for TR (the agent identity)" --> ENTRA
-    HARNESS -- "MCP + Bearer TR<br/>(agent identity,<br/>audience: the MCP server)" --> MCP
-    MCP -- "OBO when a user is present,<br/>else its own token" --> ENTRA
-    MCP -- "send_email:<br/>token for the Email API" --> EMAIL
-    MCP -- "save_record:<br/>token for the Records API" --> RECORDS
-    MCP -- "asks for approval" --> USER
+    %% These links attach to the Tools box, not to the MCP node: Mermaid keeps the box's
+    %% "direction LR" (the two boxes side by side) only when no node inside it links outside.
+    HARNESS -- "MCP + Bearer TR<br/>(agent identity,<br/>audience: the MCP server,<br/>roles: the agent's tool roles)" --> GATEWAY
+    GATEWAY -- "OBO when a user is present,<br/>else its own token" --> ENTRA
+    GATEWAY -- "send_email:<br/>token for the Email API" --> EMAIL
+    GATEWAY -- "save_record:<br/>token for the Records API" --> RECORDS
+    GATEWAY -- "asks for approval" --> USER
     HARNESS -. "model calls, tool calls,<br/>turns" .-> LOGS
-    MCP -. "tool calls, refusals,<br/>approvals" .-> LOGS
+    GATEWAY -. "tool calls, refusals,<br/>approvals" .-> LOGS
     RESOURCES -.-> LOGS
     ENTRA -. "sign-in logs" .-> LOGS
 ```
 
-### Three Architectural Pillars
+### Four Architectural Pillars
 
-To understand why the enterprise diagram is wired this way, look closely at three core mechanics:
+To understand why the enterprise diagram is wired this way, look closely at four core mechanics:
 
 1. **Tools Are Not APIs:** A *tool* is simply a function exposed to the model by the MCP server (defined by a name, description, and input format). An *API* is a backend resource server registered in Entra with its own app roles (like `Mail.Send` or `Records.Write`). When a tool runs, the MCP server's internal code fetches a token and calls the API. The model only ever sees the tool; it is completely blind to the underlying API and token. The MCP protocol itself knows nothing about APIs—that connection exists purely inside the tool's code and configuration (the API URL and token audience; see [How a tool reaches its API](mcp.md#3-how-a-tool-reaches-its-api)). While Entra app roles dictate what the MCP server is *allowed* to call, a tool can intentionally restrict privileges further in code (for example, a `send_email` tool can hardcode the recipient address, even if the underlying `Mail.Send` API role allows emailing anyone).
 2. **The Harness Signs In, Not the MCP Server:** It is the harness's job to prove who the agent is. It authenticates as the agent identity, with an Azure managed identity as the blueprint's credential so no keys sit on disk, and requests a token scoped specifically for the MCP server (`audience`: MCP server). Only the MCP server accepts that token: no other API does. The same managed identity also authenticates the harness to the model provider, so the harness holds no static secret at all (see [How the Harness Authenticates](authentication.md#1-how-the-harness-authenticates)).
-3. **The MCP Server Uses Its Own Token for Downstream APIs:** How the MCP server calls backend APIs depends on the mode:
+3. **The MCP Server Maps Roles to Tools:** The MCP server decides which tools each agent may use. The decision has two halves, stored in two places:
+   * *Which agent holds which role (stored in Entra):* The MCP server's app registration defines app roles, for example `Tools.Email` and `Tools.Records`. An admin assigns them to each agent identity. They reach the MCP server in the `roles` claim of the agent's token (TR).
+   * *Which role opens which tool (stored with the MCP server):* The team that owns the MCP server keeps a **role-to-tool mapping** with the server's code, in git, and changes it through code review. A tool that no role opens is open to no one.
+
+   The MCP server checks the mapping on every request, in two places:
+   * **`tools/list`:** It returns only the tools that the agent's roles open, so the model never sees the others. The MCP spec allows this: the list "MAY vary by the authorization presented on the request" ([MCP spec, Tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools), checked 30 October 2026).
+   * **`tools/call`:** It checks again before the tool runs, because a caller can name a tool it was never shown. So hiding a tool is not enough on its own. A refused call goes to the audit log.
+
+   **Two kinds of roles.** `Tools.Email` is a role that the *agent* holds on the *MCP server*: it opens the `send_email` tool. `Mail.Send` is a role that the *MCP server* holds on the *Email API*: it lets the tool's code call that API. In this design, the agent never holds `Mail.Send`.
+4. **The MCP Server Uses Its Own Token for Downstream APIs:** How the MCP server calls backend APIs depends on the mode:
    * *With a human user (Delegated):* It uses the On-Behalf-Of (OBO) flow, meaning the downstream token carries the identity of both the human user and the calling service.
    * *Without a human user (Autonomous):* Entra's OBO flow cannot be used here because OBO strictly requires a human user in the incoming token. Instead, the MCP server authenticates using its own app token and records which agent requested the action in its audit logs. *(Note: RFC 8693 token exchange can carry the caller's identity into the new token, in an `act` (actor) claim ([RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). Microsoft documents no RFC 8693 flow for this case. Its documented flow for a downstream call is OBO, which uses the `jwt-bearer` grant and "only works for user principals" ([On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). Entra's token endpoint does recognize the RFC 8693 grant type, but no Microsoft page says what it issues for it (both checked 29 October 2026).)*
 
    **No token passthrough.** The MCP server never forwards the token it received to a downstream API. The MCP spec forbids this and calls it "token passthrough". There are three reasons:
    * The token's audience is the MCP server, so a downstream API must refuse it.
-   * An MCP server that accepted a token meant for another API would let callers use that token at the API directly, which skips its allow-list and approval gate.
+   * An MCP server that accepted a token meant for another API would let callers use that token at the API directly, which skips its role-to-tool mapping and approval gate.
    * The API's logs would show the original caller, not who really made the call.
 
    So each hop gets its own token, with its own audience. Source: [MCP Security Best Practices](https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices.md) (checked 28 October 2026).
@@ -129,7 +143,7 @@ By forcing every boundary to verify the component calling it, a single tricked o
 |---|---|
 | **Model** | **The system prompt only:** Relies on prompts telling it to treat tool results as passive data rather than executable instructions. *Because this is the weakest security boundary, no downstream component is allowed to trust it.* |
 | **Harness** | **The model's tool calls:** Enforces the turn limit and treats all returned tool results as untrusted data before passing them back to the model. |
-| **MCP Server** | **The Harness's calls:** Validates the incoming bearer token (audience and agent claims), checks the per-agent tool allow-list, and triggers human approval gates for privileged tools. |
+| **MCP Server** | **The Harness's calls:** Validates the incoming bearer token (audience and agent claims), checks the agent's roles against the role-to-tool mapping on every `tools/list` and `tools/call`, and triggers human approval gates for privileged tools. |
 | **Resource APIs** | **The MCP Server's token:** Validates cryptographic signatures, token audience, and assigned app roles. |
 | **Entra ID** | **Every sign-in:** Validates the blueprint credential, verifies the parent blueprint relationship, and enforces Conditional Access policies. |
 
