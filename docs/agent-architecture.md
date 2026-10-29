@@ -66,6 +66,7 @@ flowchart TB
 
     subgraph RUNTIME["Agent runtime"]
         HARNESS["<b>Harness</b> (MCP host)<br/>agent loop, turn limit<br/>client credential: a managed identity<br/>(no static secret)"]
+        MI["<b>Azure managed identity endpoint</b><br/>local to the machine, no secret"]
     end
 
     subgraph GATEWAY["Tools"]
@@ -86,9 +87,11 @@ flowchart TB
     end
 
     USER -- "task, with the user's token" --> HARNESS
-    HARNESS -- "prompts, tools, results<br/>auth: workload identity federation<br/>(short-lived model provider token)" --> MODEL
+    HARNESS -- "token 1 (audience: the Claude API's app)<br/>token 2 (audience: api://AzureADTokenExchange)" --> MI
+    MI -- "gets each token<br/>for the managed identity" --> ENTRA
+    HARNESS -- "workload identity federation: token 1<br/>for a short-lived provider token,<br/>then prompts, tools, results" --> MODEL
     MODEL -- "tool calls" --> HARNESS
-    HARNESS -- "OAuth: managed identity token as the<br/>blueprint's credential (T1), then TR<br/>for the agent identity" --> ENTRA
+    HARNESS -- "request 1: token 2 as the blueprint's<br/>credential, for T1<br/>request 2: T1, for TR (the agent identity)" --> ENTRA
     HARNESS -- "MCP + Bearer TR<br/>(agent identity,<br/>audience: the MCP server)" --> MCP
     MCP -- "OBO when a user is present,<br/>else its own token" --> ENTRA
     MCP -- "send_email:<br/>token for the Email API" --> EMAIL
@@ -105,7 +108,7 @@ flowchart TB
 To understand why the enterprise diagram is wired this way, look closely at three core mechanics:
 
 1. **Tools Are Not APIs:** A *tool* is simply a function exposed to the model by the MCP server (defined by a name, description, and input format). An *API* is a backend resource server registered in Entra with its own app roles (like `Mail.Send` or `Records.Write`). When a tool runs, the MCP server's internal code fetches a token and calls the API. The model only ever sees the tool; it is completely blind to the underlying API and token. The MCP protocol itself knows nothing about APIs—that connection exists purely inside the tool's code and configuration (the API URL and token audience; see [How a tool reaches its API](mcp.md#3-how-a-tool-reaches-its-api)). While Entra app roles dictate what the MCP server is *allowed* to call, a tool can intentionally restrict privileges further in code (for example, a `send_email` tool can hardcode the recipient address, even if the underlying `Mail.Send` API role allows emailing anyone).
-2. **The Harness Signs In, Not the MCP Server:** It is the harness's job to prove who the agent is. It authenticates as the agent identity, with an Azure managed identity as the blueprint's credential so no keys sit on disk, and requests a token scoped specifically for the MCP server (`audience`: MCP server). Only the MCP server accepts that token: no other API does. The same managed identity also signs the harness in to the model provider, so the harness holds no static secret at all (see [How the Harness Authenticates](authentication.md#1-how-the-harness-authenticates)).
+2. **The Harness Signs In, Not the MCP Server:** It is the harness's job to prove who the agent is. It authenticates as the agent identity, with an Azure managed identity as the blueprint's credential so no keys sit on disk, and requests a token scoped specifically for the MCP server (`audience`: MCP server). Only the MCP server accepts that token: no other API does. The same managed identity also authenticates the harness to the model provider, so the harness holds no static secret at all (see [How the Harness Authenticates](authentication.md#1-how-the-harness-authenticates)).
 3. **The MCP Server Uses Its Own Token for Downstream APIs:** How the MCP server calls backend APIs depends on the mode:
    * *With a human user (Delegated):* It uses the On-Behalf-Of (OBO) flow, meaning the downstream token carries the identity of both the human user and the calling service.
    * *Without a human user (Autonomous):* Entra's OBO flow cannot be used here because OBO strictly requires a human user in the incoming token. Instead, the MCP server authenticates using its own app token and records which agent requested the action in its audit logs. *(Note: RFC 8693 token exchange can carry the caller's identity into the new token, in an `act` (actor) claim ([RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). Microsoft documents no RFC 8693 flow for this case. Its documented flow for a downstream call is OBO, which uses the `jwt-bearer` grant and "only works for user principals" ([On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). Entra's token endpoint does recognize the RFC 8693 grant type, but no Microsoft page says what it issues for it (both checked 29 October 2026).)*
@@ -184,7 +187,7 @@ flowchart TB
 | **D1** | The harness sends a bearer token to the MCP server, which validates it. | **No token:** The MCP server relies on Docker network isolation, trusting that only the Guardian container can reach it. | Project timebox. | Any code that manages to reach the MCP server's network port can invoke allow-listed tools. |
 | **D2** | The MCP server has its own Entra identity and serves multiple agents. | **Shared Identity:** The MCP server serves *only* the Guardian and fetches tokens using the Guardian's identity (it acts as the Guardian itself). | Keeping one identity and one sidecar is simpler, and ensures no Entra token ever reaches the harness. | The MCP server cannot be shared with other agents. If compromised, it can request tokens for *any* agent identity under the blueprint (since the sidecar lets callers specify which agent identity they want). |
 | **D3** | The blueprint authenticates via an Azure Managed Identity (zero keys on disk). | **Certificate File:** A certificate file is mounted exclusively into the sidecar container ([details](infra.md#the-blueprints-credential)). | The demo runs locally in Docker, not in Azure. | If the certificate file is stolen from disk, every agent identity tied to the blueprint is exposed. |
-| **D4** | No static model key: the harness signs in to the model provider with workload identity federation (or, failing that, reads a key from a cloud vault). | **API Key File:** An Anthropic service account API key in `secrets/anthropic.env` (the folder is excluded via `.gitignore`), given only to the guardian container. | Local demo environment, with no managed identity to federate. | The Anthropic API key sits unencrypted on the host disk. |
+| **D4** | No static model key: the harness authenticates to the model provider with workload identity federation (or, failing that, reads a key from a cloud vault). | **API Key File:** An Anthropic service account API key in `secrets/anthropic.env` (the folder is excluded via `.gitignore`), given only to the guardian container. | Local demo environment, with no managed identity to federate. | The Anthropic API key sits unencrypted on the host disk. |
 | **D5** | Supports Delegated mode with OBO when a human user is present. | **Autonomous Mode Only:** OBO exists strictly as written documentation. | Project timebox. | No human user ever appears in the token chain. |
 | **D6** | Audit logs and distributed traces ship to a central SIEM/sink. | **Local Logs:** Audit lines and traces are written locally. One trace ID across the Guardian, the MCP server and the Identity API is planned (FR8). | Project timebox. | All audit logs reside on the same single machine. |
 
