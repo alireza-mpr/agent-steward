@@ -4,11 +4,13 @@ This document breaks down the anatomy of an AI agent into four distinct parts, o
 
 The details of each part are in their own documents:
 
-* [The harness](harness.md): the agent loop, why the model stopped, the model settings, and how to see a run.
-* [Authentication](authentication.md): how each part proves who it is, and how a workload gets its credential and its tokens.
-* [MCP](mcp.md): the MCP protocol, how a tool reaches its API, and the guardian's MCP server.
-* [The Messages API](messages-api.md): how any harness talks to a model.
-* [Security controls](security-controls.md): every control in place, with its evidence.
+| Document | What it covers |
+|---|---|
+| [The harness](harness.md) | The agent loop, why the model stopped, the model settings, and how to see a run |
+| [Authentication](authentication.md) | How each part proves who it is, and how a workload gets its credential and its tokens |
+| [MCP](mcp.md) | The MCP protocol, how a tool reaches its API, and the guardian's MCP server |
+| [The Messages API](messages-api.md) | How any harness talks to a model |
+| [Security controls](security-controls.md) | Every control in place, with its evidence |
 
 > **Current Implementation Status: Partly Built**
 > * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with two tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent), and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an end-to-end test proves it.
@@ -106,9 +108,14 @@ To understand why the enterprise diagram is wired this way, look closely at thre
 2. **The Harness Signs In, Not the MCP Server:** It is the harness's job to prove who the agent is. It authenticates as the agent identity, with an Azure managed identity as the blueprint's credential so no keys sit on disk, and requests a token scoped specifically for the MCP server (`audience`: MCP server). Only the MCP server accepts that token: no other API does. The same managed identity also signs the harness in to the model provider, so the harness holds no static secret at all (see [How the Harness Authenticates](authentication.md#1-how-the-harness-authenticates)).
 3. **The MCP Server Uses Its Own Token for Downstream APIs:** How the MCP server calls backend APIs depends on the mode:
    * *With a human user (Delegated):* It uses the On-Behalf-Of (OBO) flow, meaning the downstream token carries the identity of both the human user and the calling service.
-   * *Without a human user (Autonomous):* Entra's OBO flow cannot be used here because OBO strictly requires a human user in the incoming token. Instead, the MCP server authenticates using its own app token and records which agent requested the action in its audit logs. *(Note: While a standard RFC 8693 token exchange could theoretically preserve the agent's identity in the downstream token, Entra does not support it for this scenario).*
+   * *Without a human user (Autonomous):* Entra's OBO flow cannot be used here because OBO strictly requires a human user in the incoming token. Instead, the MCP server authenticates using its own app token and records which agent requested the action in its audit logs. *(Note: RFC 8693 token exchange can carry the caller's identity into the new token, in an `act` (actor) claim ([RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). Microsoft documents no RFC 8693 flow for this case. Its documented flow for a downstream call is OBO, which uses the `jwt-bearer` grant and "only works for user principals" ([On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). Entra's token endpoint does recognize the RFC 8693 grant type, but no Microsoft page says what it issues for it (both checked 29 October 2026).)*
 
-   **No token passthrough.** The MCP server never forwards the token it received to a downstream API. The MCP spec forbids this and calls it "token passthrough". There are three reasons. The token's audience is the MCP server, so a downstream API must refuse it. An MCP server that accepted a token meant for another API would let callers use that token at the API directly, which skips its allow-list and approval gate. And the API's logs would show the original caller, not who really made the call. So each hop gets its own token, with its own audience. Source: [MCP Security Best Practices](https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices.md) (checked 28 October 2026).
+   **No token passthrough.** The MCP server never forwards the token it received to a downstream API. The MCP spec forbids this and calls it "token passthrough". There are three reasons:
+   * The token's audience is the MCP server, so a downstream API must refuse it.
+   * An MCP server that accepted a token meant for another API would let callers use that token at the API directly, which skips its allow-list and approval gate.
+   * The API's logs would show the original caller, not who really made the call.
+
+   So each hop gets its own token, with its own audience. Source: [MCP Security Best Practices](https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices.md) (checked 28 October 2026).
 
 ### Zero Trust: Who Checks Whom?
 
