@@ -91,7 +91,7 @@ src/mcp_server/   MCP server (official Python SDK): the guardian's tools, the fo
 src/worker/       Live worker timer loop (PowerShell)
 tests/            Unit tests, offline (unit/); integration tests with real Entra tokens (integration/); end-to-end test of the guardian (end_to_end/)
 tools/            Dev tools that print token claims, never tokens (token-claims: the guardian's token from the sidecar; token_exchange: T1 and TR side by side)
-docs/             Reference (entra.md, infra.md, agent-id.md, tokens.md, agent-architecture.md, authentication.md, messages-api.md), harness reference (harness.md), MCP reference (mcp.md), decision log (decisions.md), control register (security-controls.md), screenshots
+docs/             Reference (entra.md, infra.md, agent-id.md, tokens.md, agent-architecture.md, authentication.md, jwt-bearer-and-token-exchange.md, messages-api.md), harness reference (harness.md), MCP reference (mcp.md), decision log (decisions.md), control register (security-controls.md), screenshots
 GLOSSARY.md       Ubiquitous language: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP
 THREATMODEL.md    OWASP Agentic Top 10 x MAESTRO
 DEMO.md           Screenshot walkthrough
