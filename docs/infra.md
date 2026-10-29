@@ -248,7 +248,7 @@ pwsh ./setup/agent-id/Deploy-BlueprintCertificate.ps1 -TenantId <your-domain>.on
 
 ## Local run: the sidecar
 
-The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). The sidecar is the only container that holds the guardian blueprint's private key, and it makes both token requests (T1 and TR) for the guardian. Only the MCP server shares the sidecar's network namespace, so only the guardian's tools can get its tokens. The guardian's harness, which talks to Claude, runs outside it and never sees a key or a token ([Agent architecture](agent-architecture.md#3-the-guardians-design-today)). For how the sidecar compares with the in-process and token broker patterns, see [Credentials and Tokens](agent-architecture.md#6-credentials-and-tokens-how-a-workload-gets-them).
+The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). The sidecar is the only container that holds the guardian blueprint's private key, and it makes both token requests (T1 and TR) for the guardian. Only the MCP server shares the sidecar's network namespace, so only the guardian's tools can get its tokens. The guardian's harness, which talks to Claude, runs outside it and never sees a key or a token ([Agent architecture](agent-architecture.md#3-the-guardians-design-today)). For how the sidecar compares with the in-process and token broker patterns, see [Credentials and Tokens](authentication.md#3-credentials-and-tokens-how-a-workload-gets-them).
 
 **Before the first run.**
 
@@ -271,9 +271,7 @@ docker compose run --rm integration-tests   # integration tests: real Entra toke
 docker compose run --rm end-to-end-tests    # end-to-end test: the real MCP tools from the guardian's network, no model
 ```
 
-The guardian reads its settings (model, effort, turn limit, strict tool inputs, refusal fallback) from [config/guardian.json](../config/guardian.json) when a run starts. Edit the file and run again, no rebuild. A missing or wrong value stops the run with a clear message. What each setting does: [The Model Settings](agent-architecture.md#the-model-settings).
-
-Every line the guardian prints starts with a tag that says what it is about: `[harness]` for the harness itself (settings, report, audit correlation ID, errors), `[model]` for a model call, and `[mcp]` for a call to the MCP server. Errors go to stderr. In a trace mode, the trace shows every model and MCP step in its own sections, so only the `[harness]` lines are printed.
+What the guardian prints, what each trace mode shows, and its settings file ([config/guardian.json](../config/guardian.json)) are described in [The harness](harness.md).
 
 `token-claims` prints the decoded claims, never the token itself ([example](screenshots/phase2-guardian-token-claims.png)). The claims hold real tenant and object IDs, so redact them in any screenshot. For what each claim means, see [Agent tokens](tokens.md).
 

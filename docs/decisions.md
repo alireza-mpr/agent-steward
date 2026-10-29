@@ -26,7 +26,7 @@ For the architecture these decisions belong to, see [Agent architecture](agent-a
 **Why:**
 
 1. **The model is the part most exposed to attack.** A prompt injection, for example a planted instruction in an agent's description, can steer what the model asks for. In option A every finding passes through the model as a tool input, so a tricked model could drop a finding, change it, or invent one before it reaches the audit log.
-2. **The harness is not trusted for evidence either.** The harness controls what the model sees and could change or fake a tool result ([Agent architecture](agent-architecture.md#5-blast-radius-what-happens-if-one-part-is-compromised)). With option B, neither the harness nor the model is on the path from the rules to the audit log.
+2. **The harness is not trusted for evidence either.** The harness controls what the model sees and could change or fake a tool result ([Agent architecture](agent-architecture.md#4-blast-radius-what-happens-if-one-part-is-compromised)). With option B, neither the harness nor the model is on the path from the rules to the audit log.
 3. **Evidence stays inside one trust boundary.** In option B the findings go straight from the code that computed them to the Identity API, inside the MCP server, which is also the only part that holds the agent's token. So the audit log is proof of what the rules found, and the model's report is only a summary of it.
 4. **No write path that the model fills in.** In option A the tool would write whatever the model passes, signed with the agent's identity. A tool that writes audit data must not take that data from the model.
 

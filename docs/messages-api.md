@@ -6,7 +6,7 @@ When building an AI agent, two separate systems work together:
 
 **Terms.** "Harness" is Anthropic's word. The MCP specification calls the same program the **host**. Avoid "orchestrator" for it: an orchestrator usually means a model or component that coordinates *several* agents (the orchestrator-workers pattern).
 
-This guide explains how the harness and the model communicate using Anthropic's Messages API (and its Python SDK). While the examples here use Anthropic's naming conventions, almost all modern LLM APIs follow the same architecture. The guide describes the industry pattern. Where this project's guardian differs, a short **In the guardian** note says so. For the guardian's own loop, see [The Agent Loop in Action](agent-architecture.md#4-the-agent-loop-in-action).
+This guide explains how the harness and the model communicate using Anthropic's Messages API (and its Python SDK). While the examples here use Anthropic's naming conventions, almost all modern LLM APIs follow the same architecture. The guide describes the industry pattern. Where this project's guardian differs, a short **In the guardian** note says so. For the guardian's own loop, see [The harness](harness.md).
 
 ## Contents
 
@@ -32,7 +32,36 @@ This Agentic Loop follows a strict five-step execution sequence:
 4. **Action Execution (Tool Invocation):** The harness parses the structured request and runs the tool: as a function in its own process, or by calling the tool server (`tools/call`).
 5. **Observation Feedback:** The harness appends the tool results back into the conversation history and sends the updated thread back to the model.
 
-**In the guardian:** the tools live only on an MCP server, in another container. The harness can only *ask* the server to run them, and only the server can get Entra tokens.
+**One round in JSON.** Steps 2, 3 and 5 are calls to the model. The shapes below are simplified: a real response also carries an `id`, the `model` that answered and the token `usage`, and on newer models a `thinking` block before the tool call.
+
+```jsonc
+// Step 2 (Tool Binding): Harness -> Model. The system prompt, the tools, and the conversation so far.
+{ "model": "claude-opus-5-5",
+  "max_tokens": 16000,
+  "system": "You are a weather assistant...",
+  "tools": [{ "name": "get_weather", "description": "The current weather in one city.",
+              "input_schema": { "type": "object",
+                                "properties": { "city": { "type": "string" } },
+                                "required": ["city"] } }],
+  "messages": [{ "role": "user", "content": "Do I need an umbrella in Paris today?" }] }
+
+// Step 3 (Action Selection): Model -> Harness. The model asks for a tool. Nothing has run yet.
+{ "role": "assistant",
+  "stop_reason": "tool_use",
+  "content": [{ "type": "tool_use", "id": "toolu_01", "name": "get_weather", "input": { "city": "Paris" } }] }
+
+// Step 5 (Observation Feedback): Harness -> Model. The whole conversation again, with the result at the end.
+{ "model": "claude-opus-5-5",
+  "max_tokens": 16000,
+  "system": "You are a weather assistant...",
+  "tools": [ ... the same tools ... ],
+  "messages": [
+    { "role": "user", "content": "Do I need an umbrella in Paris today?" },
+    { "role": "assistant", "content": [{ "type": "tool_use", "id": "toolu_01", "name": "get_weather", "input": { "city": "Paris" } }] },
+    { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "toolu_01", "content": "Rain, 12 °C" }] } ] }
+```
+
+**In the guardian:** the tools live only on an MCP server, in another container. The harness can only *ask* the server to run them, and only the server can get Entra tokens. To see the guardian's exact bodies, run it with `GUARDIAN_TRACE=full` ([Seeing a Run](harness.md#4-seeing-a-run-tags-and-traces)).
 
 ## 2. Conversation Roles: Who Is Speaking?
 
@@ -79,6 +108,8 @@ Before your harness looks at the content blocks in a response, it must check `st
 * **`pause_turn`:** A tool that the provider runs, such as web search, paused. Send the conversation again to continue.
 * **`stop_sequence`:** The model wrote a text that the harness set as a stop marker.
 * **Any other value, including one the API adds later:** Stop. Do not treat the text as a final answer (fail closed).
+
+**In the guardian:** only `tool_use` continues the loop and only `end_turn` gives a report. What the harness does with each value: [Why the Model Stopped](harness.md#2-why-the-model-stopped-stop_reason).
 
 ## 5. The Golden Rules: How the Harness Processes a Response
 
