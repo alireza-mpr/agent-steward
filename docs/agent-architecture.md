@@ -15,6 +15,7 @@ This document breaks down the anatomy of an AI agent into four distinct parts, o
   * [Three Architectural Pillars](#three-architectural-pillars)
   * [How the Harness Authenticates](#how-the-harness-authenticates)
   * [Zero Trust: Who Checks Whom?](#zero-trust-who-checks-whom)
+  * [How Each Caller Proves Who It Is](#how-each-caller-proves-who-it-is)
   * [Under the Hood: How a Tool Reaches Its API](#under-the-hood-how-a-tool-reaches-its-api)
   * [The MCP Contract](#the-mcp-contract)
 * [3. The Guardian's Design Today](#3-the-guardians-design-today)
@@ -160,6 +161,27 @@ By forcing every boundary to verify the component calling it, a single tricked o
 | **MCP Server** | **The Harness's calls:** Validates the incoming bearer token (audience and agent claims), checks the per-agent tool allow-list, and triggers human approval gates for privileged tools. |
 | **Resource APIs** | **The MCP Server's token:** Validates cryptographic signatures, token audience, and assigned app roles. |
 | **Entra ID** | **Every sign-in:** Validates the blueprint credential, verifies the parent blueprint relationship, and enforces Conditional Access policies. |
+
+### How Each Caller Proves Who It Is
+
+Each link has three parts. The **authentication method** is how the caller proves who it is. The **credential** is what it sends as proof. The **trust relationship** is what an admin set up in advance, so the receiver knows which credential to accept. Where several methods exist, the first one is the recommended choice for production. Where the choice depends on the mode, the bullets are labelled by mode. Every link also runs over TLS. TLS proves the other direction: the server certificate shows the caller that it reached the right service.
+
+| # | Link (caller → receiver) | Authentication Method | Credentials | Trust Relationship |
+|---|---|---|---|---|
+| 1 | Harness → Azure managed identity endpoint | Managed identity: the platform vouches for the machine | None. Only code on that machine can reach the local endpoint. | An admin assigns a user-assigned managed identity to the machine |
+| 2 | End user → Harness (delegated mode only) | OpenID Connect sign-in in a client app (authorization code flow with PKCE), then an OAuth bearer token. The blueprint cannot run the sign-in itself. | The user's access token (Tc). At sign-in, the user proves who they are to Entra ID, ideally with phishing-resistant MFA such as a passkey. | The blueprint exposes a scope, so Tc's audience is the blueprint. The harness checks signature, audience and `scp`. |
+| 3 | Harness → Model provider | • Workload identity federation<br/>• API key | • A managed identity token (issued by Entra ID), exchanged for a short-lived provider token<br/>• A static API key, read from a vault | • A service account, a federation issuer and a federation rule in the Claude Console<br/>• The key, created for a service account in the Claude Console |
+| 4 | Harness → Entra ID (request 1: blueprint gets T1) | OAuth 2.0 client credentials grant, with:<br/>• A federated identity credential (managed identity as its source)<br/>• A certificate<br/>• A client secret (testing only) | • The managed identity token, as `client_assertion`<br/>• A JWT signed with the certificate's private key, as `client_assertion` (RFC 7523)<br/>• The secret | • A federated identity credential on the blueprint (issuer, subject, audience `api://AzureADTokenExchange`)<br/>• The certificate's public key, uploaded to the blueprint<br/>• The secret, registered on the blueprint |
+| 5 | Harness → Entra ID (request 2: agent identity gets TR) | • **Autonomous:** OAuth 2.0 client credentials grant<br/>• **Delegated:** On-Behalf-Of (`jwt-bearer` grant) | • T1, as `client_assertion`<br/>• T1, as `client_assertion`, plus the user's token (Tc), as `assertion` | • The parent link from the agent identity to its blueprint, plus app roles granted by an admin<br/>• The same parent link, plus delegated permissions an admin consented to on the blueprint (inheritable permissions). Entra also checks that Tc was issued for the blueprint.<br/>Conditional Access runs at this sign-in in both modes. |
+| 6 | Harness → MCP server | • OAuth bearer token (the MCP authorization spec)<br/>• API key<br/>• Network isolation only (no authentication) | • TR, as `Authorization: Bearer TR`<br/>• A key in a request header<br/>• None | • Entra's public signing keys, plus an app role assignment for the agent identity on the MCP server's app ([checks](tokens.md#what-an-api-must-check))<br/>• A key the MCP server issued and stores<br/>• None: any code that reaches the port is trusted |
+| 7 | MCP server → Entra ID | • **Autonomous:** OAuth 2.0 client credentials grant<br/>• **Delegated:** On-Behalf-Of (`jwt-bearer` grant) | • A managed identity token, as the `client_assertion` of the MCP server's own app registration<br/>• The same, plus the incoming token that carries the user, as `assertion` | • A federated identity credential on the MCP server's app registration that trusts its managed identity, plus app roles on each API<br/>• The same, plus consented delegated permissions. Entra also checks that the incoming token was issued for the MCP server. |
+| 8 | MCP server → Resource API | OAuth bearer token, new for this API (no token passthrough) | An access token whose audience is this API, never the token the MCP server received | Entra's public signing keys, plus an app role assignment (or delegated permission) for the MCP server on this API. The API checks `aud` and `roles` (or `scp` and the user, with OBO). |
+| 9 | End user → MCP server (approval gate) | OpenID Connect sign-in at approval time. This is one common design: no spec defines it. | The approver's access token | An admin assigns the approver role. The MCP server checks the token and the role. |
+| 10 | Model → Harness (tool calls)<br/>MCP server → Harness (tool results) | None. This is content, not a caller. | None. TLS only proves which service sent it. | None. The harness treats it as untrusted data. |
+
+**Where the Guardian differs:** It runs locally, so row 1 does not exist. Row 3 uses an API key file (**D4**). The harness never talks to Entra ID: the sidecar runs requests 1 and 2 for the MCP server, as the Guardian's agent identity, with a certificate file (**D2**, **D3**). Row 6 has no token, only network isolation (**D1**). Row 2 and the delegated bullets in rows 5 and 7 are not built (**D5**). Row 9, the approval gate, is planned. See [Architectural Shortcuts](#architectural-shortcuts-where-the-guardian-differs).
+
+Sources: [Agent autonomous app OAuth flow](https://learn.microsoft.com/entra/agent-id/agent-autonomous-app-oauth-flow) and [Agent OAuth flows: On-behalf-of flow](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow) (checked 29 October 2026).
 
 ### Under the Hood: How a Tool Reaches Its API
 
@@ -491,7 +513,7 @@ Applied to each credential the agent needs:
 |---|---|---|
 | The blueprint's credential | A certificate file, mounted only into the sidecar (**D3**) | A managed identity, as the blueprint's federated identity credential |
 | The model provider's credential | An API key in a file, given only to the Guardian's container (**D4**) | Workload identity federation: no key |
-| The MCP server's own identity | None: it acts as the Guardian (**D2**) | A managed identity of its own |
+| The MCP server's own identity | None: it acts as the Guardian (**D2**) | Its own app registration, with a managed identity as its federated identity credential |
 
 ### Layer 2: Who Gets the Tokens
 
