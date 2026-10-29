@@ -2,22 +2,37 @@
 
 When building an AI agent, two separate systems work together:
 1. **The Model:** The AI itself (such as Claude), hosted on the provider's servers.
-2. **The Harness (Orchestrator):** The application code you write to run the agent, manage its conversation history, and execute its tools. While the language model provides reasoning, the harness acts as the orchestrator - the central control system handling memory, error recovery, and control flow. An agent is defined as: **Agent = LLM + Tools + Orchestrator**. Even a single-agent system requires this orchestrator to run the execution loop.
+2. **The Harness:** The application code you write to run the agent, manage its conversation history, and execute its tools. While the language model provides reasoning, the harness is the control system: it handles memory, error recovery, and control flow. In short: **Agent = model + tools + harness**. Even a single-agent system needs a harness to run the loop.
 
-This guide explains how the harness and the model communicate using Anthropic's Messages API (and its Python SDK). While the examples here use Anthropic's naming conventions, almost all modern LLM APIs follow this exact same architecture.
+**Terms.** "Harness" is Anthropic's word. The MCP specification calls the same program the **host**. Avoid "orchestrator" for it: an orchestrator usually means a model or component that coordinates *several* agents (the orchestrator-workers pattern).
 
-*(To see how our specific guardian agent implements these concepts, see The Agent Loop in Action.)*
+This guide explains how the harness and the model communicate using Anthropic's Messages API (and its Python SDK). While the examples here use Anthropic's naming conventions, almost all modern LLM APIs follow the same architecture. The guide describes the industry pattern. Where this project's guardian differs, a short **In the guardian** note says so. For the guardian's own loop, see [The Agent Loop in Action](agent-architecture.md#4-the-agent-loop-in-action).
+
+## Contents
+
+- [1. The Big Picture: A Stateless Conversation Loop](#1-the-big-picture-a-stateless-conversation-loop)
+- [2. Conversation Roles: Who Is Speaking?](#2-conversation-roles-who-is-speaking)
+- [3. Inside a Message: Content Blocks](#3-inside-a-message-content-blocks)
+- [4. Extraction & Checking Why the Model Stopped: `stop_reason`](#4-extraction--checking-why-the-model-stopped-stop_reason)
+- [5. The Golden Rules: How the Harness Processes a Response](#5-the-golden-rules-how-the-harness-processes-a-response)
+- [6. Under the Hood: How Text Becomes JSON & Syntax Structure](#6-under-the-hood-how-text-becomes-json--syntax-structure)
+- [7. A Person or a Program: What the Model Knows](#7-a-person-or-a-program-what-the-model-knows)
+- [8. Python SDK Note: Standard vs. Beta Types](#8-python-sdk-note-standard-vs-beta-types)
+
+---
 
 ## 1. The Big Picture: A Stateless Conversation Loop
 
 At its core, talking to a model requires a single HTTP request: `POST /v1/messages`. The model has no memory between requests. Once it sends you an answer, it forgets everything. Because of this, your harness is responsible for keeping track of the conversation. Every time your harness calls the API, it must send the entire conversation history from the very beginning, along with the system instructions, configuration settings, and available tools.
 
 This Agentic Loop follows a strict five-step execution sequence:
-1. **Tool Discovery:** The harness queries the framework to retrieve the JSON schemas defining available tools.
+1. **Tool Discovery:** The harness collects the JSON schemas of the available tools. They are defined in the harness's own code, or listed by a tool server, such as an MCP server (`tools/list`).
 2. **Tool Binding (Context Provisioning):** The harness injects the tool schemas into the API request alongside the user's prompt.
 3. **Action Selection (Function Calling):** The model pauses text generation and outputs a structured payload containing the exact tool name and arguments.
-4. **Action Execution (Tool Invocation):** The harness parses the structured request and executes the local code.
+4. **Action Execution (Tool Invocation):** The harness parses the structured request and runs the tool: as a function in its own process, or by calling the tool server (`tools/call`).
 5. **Observation Feedback:** The harness appends the tool results back into the conversation history and sends the updated thread back to the model.
+
+**In the guardian:** the tools live only on an MCP server, in another container. The harness can only *ask* the server to run them, and only the server can get Entra tokens.
 
 ## 2. Conversation Roles: Who Is Speaking?
 
@@ -25,7 +40,7 @@ Every message in the `messages` list is tagged with a `role`. This tells the API
 
 * **`user`:** The outside world (either a human or your harness program). A human's question, the initial task description from the harness, or the results of a tool that just ran.
 * **`assistant`:** The AI model itself. The model's previous responses, which your harness sends back unchanged to maintain history.
-* **`system`:** The application operator. Mid-conversation instructions injected during a long run.
+* **`system`:** The application operator. Mid-conversation instructions injected during a long run. Only some newer models accept it. The operator's main instructions go in the top-level `system` field, which is not a message.
 
 **Key Mental Models for Roles:**
 * **"User" does not mean "Human":** The model never actually knows whether it is talking to a human being or an automated computer program - and it doesn't need to. In the API's vocabulary, `user` simply means "input coming from outside the model."
@@ -54,7 +69,10 @@ Before your harness looks at the content blocks in a response, it must check `st
 * **`end_turn`:** The model has completely finished its task. Extract the `text` blocks - this is the model's final answer.
 * **`max_tokens`:** The response hit the token limit and was cut off mid-sentence.
 * **`refusal`:** The model declined to fulfill the request.
-* **`model_context_window_exceeded`:** The total conversation history has grown too large for the model's maximum memory limit.
+* **`model_context_window_exceeded`:** The total conversation history has grown too large for the model's context window (the most text it can read at once).
+* **`pause_turn`:** A tool that the provider runs, such as web search, paused. Send the conversation again to continue.
+* **`stop_sequence`:** The model wrote a text that the harness set as a stop marker.
+* **Any other value, including one the API adds later:** Stop. Do not treat the text as a final answer (fail closed).
 
 ## 5. The Golden Rules: How the Harness Processes a Response
 
@@ -63,27 +81,38 @@ Before your harness looks at the content blocks in a response, it must check `st
 * **Treat `tool_use` blocks as untrusted requests:** Validate that the tool `name` is on an approved allow-list and verify `input` parameters are safe before executing code.
 * **Match every `tool_use` with a `tool_result`:** If the model requests three tools, your harness must return three `tool_result` blocks bundled inside a single `user` message.
 * **Preserve the model's history without editing it:** Include all blocks - including `thinking` blocks - completely unchanged.
+* **Limit the loop:** Set a hard cap on model calls per run (often called `max_turns`), so a model that never finishes cannot run forever.
 
 ## 6. Under the Hood: How Text Becomes JSON & Syntax Structure
 
 How does a language model know the exact syntax and structure to output for a JSON `tool_use`?
 
 1. **The JSON Schema Blueprint:** The API request contains detailed tool schemas that act as rigid formatting templates defining expected variables.
-2. **Under-the-Hood Instructions:** Provider APIs translate your schemas into strict system commands secretly injected into the model's prompt.
-3. **Function-Calling Fine-Tuning:** Models are explicitly trained on millions of examples to instinctively switch from conversational text to structured JSON when evaluating a schema.
+2. **Under-the-Hood Instructions:** Provider APIs turn your schemas into text inside the prompt the model reads. The exact format is not public.
+3. **Function-Calling Fine-Tuning:** Models are trained on many examples of that format, so they learn when and how to write a tool call instead of plain text.
 4. **Server Parsing:** As the model generates tokens, the provider's server intercepts special markers and packages the output into clean JSON content blocks before sending the HTTP response.
 5. **Constrained Decoding (`strict: true`):** If you set `strict: true` on a tool definition, the provider's server actively restricts token generation, guaranteeing that `tool_use.input` matches your JSON schema 100% of the time.
 
-## 7. Testing Environments: Desktop Apps vs. API Agents
+## 7. A Person or a Program: What the Model Knows
 
-Pasting agent instructions or tool schemas into a consumer desktop application (like ChatGPT or Claude) will not replicate an agentic workflow because:
+How does the model know it is talking to a program through an API, and not to a person in a chat app?
 
-* **Role Confusion:** Desktop apps treat all inputs as `user` prompts, overriding strict `system` rules.
-* **Invisible Prompts:** Providers inject default hidden system prompts that conflict with your custom instructions.
-* **Missing Orchestrator:** Desktop apps lack the local harness to catch a structured payload and execute code. Instead of pausing, they hallucinate outputs.
-* **Fixed Randomness (Temperature):** Desktop apps use higher temperatures for conversational creativity, whereas API agents often run deterministically at a temperature of 0.
+* **It does not know, and it does not need to.** It always sees the same shape: a system prompt, then `user` and `assistant` turns. Nothing in that shape says "a person" or "a program".
+* **It learns its situation from the content:** the system prompt (for example, "write a report for the administrator"), the tools it is offered, and the tool results it gets back.
+* **A chat app is also a harness.** A desktop or web chat app calls the same kind of API, with its own system prompt and its own tools, and shows the answers to a person. The model never talks to a person directly. There is always a program in between.
+
+**So a chat app is not a test bed for an agent:**
+
+* **Your instructions arrive as a `user` message.** Text pasted into a chat is a user turn, not the system prompt, and the app's own system prompt still comes first.
+* **Your tools do not exist there.** The app offers only its own tools. If you paste a tool schema, the model can describe a call or invent a result, but nothing runs it.
+* **The app chooses its own settings,** such as the model and how deeply it thinks.
+
+**Randomness is not the difference.** Answers vary in a chat app and through the API alike. Newer models, such as Claude Opus 5.5, do not accept a `temperature` setting at all. On older models, `temperature: 0` made answers less varied, but never guaranteed the same answer twice. So an agent is designed to be safe with *any* answer the model gives, and its code is tested with a fake model that always answers the same way.
 
 ## 8. Python SDK Note: Standard vs. Beta Types
 
 * The standard method (`client.messages.create`) returns a `Message` object containing standard blocks (`TextBlock`, `ToolUseBlock`, etc.).
 * The beta method (`client.beta.messages.create`) returns a `BetaMessage` object containing beta blocks (`BetaTextBlock`, `BetaToolUseBlock`, etc.), unlocking extra fields for experimental server features.
+* Both send the same request to the same URL (`POST /v1/messages`). The beta method adds an `anthropic-beta` header that turns the beta features on, so the JSON on the wire has the same shape.
+
+**In the guardian:** the harness uses the beta method, because the refusal fallback is still a beta feature.
