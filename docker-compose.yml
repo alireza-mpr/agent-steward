@@ -139,6 +139,28 @@ services:
     depends_on:
       - mcp-server
 
+  # Model eval (NFR3): runs the guardian's harness with Claude against the prompt injection planted
+  # in a fixture's description, several times, and checks how the model behaves. Built from the
+  # guardian's image, because only its containers get the model key. On the guardian's network,
+  # so it cannot reach the sidecar either. Runs only on demand (profile "tools"): docker compose run --rm model-eval
+  model-eval:
+    build: src/guardian
+    profiles: ["tools"]
+    env_file:
+      - secrets/anthropic.env   # ANTHROPIC_API_KEY
+    environment:
+      MCP_URL: http://sidecar:8100/mcp
+      GUARDIAN_CONFIG_PATH: /config/guardian.json
+      PYTHONPATH: /app          # the harness, from the guardian's image
+    volumes:
+      - ./config/guardian.json:/config/guardian.json:ro
+      - ./tests/model_eval:/eval:ro
+    command: ["python", "/eval/eval_prompt_injection.py"]
+    networks:
+      - agent
+    depends_on:
+      - mcp-server
+
   # Dev tool: asks the sidecar for a token as the guardian and prints the token's claims.
   # It never prints the token itself. Runs only on demand (profile "tools").
   token-claims:
