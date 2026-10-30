@@ -31,8 +31,8 @@ import httpx2
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
-from harness import (BodyLog, ModelStopped, RoundLimitReached, SettingsError, Trace, load_settings, run_agent,
-                     setup_logging)
+from harness import (BodyLog, ModelStopped, RoundLimitReached, SettingsError, ToolCallRejected, Trace,
+                     load_settings, run_agent, setup_logging)
 from trace_view import ChatTrace
 
 MCP_URL = os.environ.get("MCP_URL", "http://sidecar:8100/mcp")
@@ -91,7 +91,7 @@ async def main() -> int:
                                          trace=ChatTrace(mcp_endpoint=mcp_endpoint), show_thinking=True)
             else:
                 result = await run_agent(claude, mcp_client, settings)
-        except (ModelStopped, RoundLimitReached) as error:
+        except (ModelStopped, RoundLimitReached, ToolCallRejected) as error:
             log.error(f"run stopped: {error}")
             return 1
         except anthropic.APIStatusError as error:   # for example a bad key, no credit, or a rate limit

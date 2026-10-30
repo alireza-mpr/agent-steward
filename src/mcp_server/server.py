@@ -6,27 +6,33 @@ and the guardian's harness does not (docs/agent-architecture.md). The harness re
 http://sidecar:8100/mcp and never sees a token.
 """
 
+import asyncio
 import json
 import os
 import re
+import sys
 import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
+from mcp import MCPError
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import INVALID_PARAMS, ToolAnnotations
 
+from allow_list import AllowListError, load_allow_list
 from graph_reader import AgentDetails, GraphClient, fetch_agent_details, fetch_agents, fetch_blueprints, fetch_last_sign_ins
 from rules import Finding, load_permission_policy, run_all_rules
 
 SIDECAR_URL = os.environ.get("SIDECAR_URL", "http://127.0.0.1:5000")
 API_URL = os.environ.get("API_URL", "http://api:8000")
 POLICY_PATH = Path(os.environ.get("POLICY_PATH", "/config/agent-permissions.json"))
+ALLOW_LIST_PATH = Path(os.environ.get("ALLOW_LIST_PATH", "/config/tool-allow-list.json"))
 MCP_PORT = int(os.environ.get("MCP_PORT", "8100"))
 # The Host headers the server accepts (DNS rebinding protection): the name the harness uses.
 MCP_ALLOWED_HOSTS = os.environ.get("MCP_ALLOWED_HOSTS", "sidecar:8100").split(",")
@@ -81,7 +87,42 @@ def scan() -> ScanResult:
 SERVER_NAME = "agent-steward-mcp-server"
 SERVER_VERSION = "1.0.0"
 
-mcp = MCPServer(SERVER_NAME, version=SERVER_VERSION)
+
+def audit(**fields) -> None:
+    """Write one audit line on stdout, like the Identity API's (FR8). Never pass a token in here."""
+    record = {"timestamp": datetime.now(timezone.utc).isoformat(), **fields}
+    print(json.dumps(record), file=sys.stdout, flush=True)
+
+
+class AllowListedServer(MCPServer):
+    """The SDK's server with the tool allow-list in front of tools/list and tools/call (FR6).
+
+    The list is the same for every caller, because the server does not know who calls it (D1).
+    It starts empty, so the server offers and runs nothing until the list is loaded.
+    """
+
+    allowed_tools: frozenset[str] = frozenset()
+
+    async def registered_tool_names(self) -> set[str]:
+        """Every tool in the code, on the allow-list or not."""
+        return {tool.name for tool in await super().list_tools()}
+
+    async def list_tools(self):
+        return [tool for tool in await super().list_tools() if tool.name in self.allowed_tools]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context=None):
+        if name not in self.allowed_tools:
+            # The name comes from the caller: shortened, and json.dumps escapes line breaks.
+            audit(event="tool_call", tool=name[:128], decision="refused", reason="not on the allow-list")
+            # The MCP spec answers an unknown tool with a protocol error. A tool that exists but
+            # is not allowed gets the same answer, so a caller cannot find out which tools exist.
+            raise MCPError(INVALID_PARAMS, f"Unknown tool: {name}")
+        # Only the tool name: the argument values are the caller's data.
+        audit(event="tool_call", tool=name, decision="allowed")
+        return await super().call_tool(name, arguments, context)
+
+
+mcp = AllowListedServer(SERVER_NAME, version=SERVER_VERSION)
 
 
 # Not read-only: it writes the findings to the Identity API's audit log itself, so they never
@@ -109,6 +150,11 @@ def get_agent(app_id: str) -> AgentDetails:
 
 
 if __name__ == "__main__":
+    try:
+        mcp.allowed_tools = load_allow_list(ALLOW_LIST_PATH, asyncio.run(mcp.registered_tool_names()))
+    except AllowListError as error:
+        sys.exit(f"The MCP server did not start: {error}")
+    audit(event="allow_list_loaded", allowed_tools=sorted(mcp.allowed_tools))
     # 0.0.0.0, because the harness calls from another container. The port is reachable on the
     # compose network, not from the host (docs/agent-architecture.md, D1).
     mcp.run(transport="streamable-http", host="0.0.0.0", port=MCP_PORT,

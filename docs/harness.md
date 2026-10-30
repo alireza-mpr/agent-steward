@@ -22,10 +22,10 @@ The foundational security principle of this loop is that **the model never acts*
 
 ### Step-by-Step: How One Run Works
 
-1. **Tool Discovery:** The harness asks the MCP server for its tools (`tools/list`), once per run. With the tool allow-list (planned, FR6), the server will return *only* the tools on the Guardian's allow-list.
+1. **Tool Discovery:** The harness asks the MCP server for its tools (`tools/list`), once per run. The server returns *only* the tools on its allow-list (FR6, [config/tool-allow-list.json](../config/tool-allow-list.json)).
 2. **Model Request:** The harness sends Claude the system prompt (its role and rules), the first user message (the task), and the tool definitions.
 3. **Tool Call:** Claude evaluates the task and replies with a tool call (a `tool_use` block)—for example, asking to run `scan_registry`. At this stage, nothing has actually executed.
-4. **Tool Execution:** The harness forwards the tool call to the MCP server (`tools/call`). The MCP server requests a TR token from the sidecar, calls Microsoft Graph or the Identity API, and packages the result. With the allow-list (planned), a tool that is not on it will be refused, and the refusal logged.
+4. **Tool Execution:** The harness forwards the tool call to the MCP server (`tools/call`). The MCP server requests a TR token from the sidecar, calls Microsoft Graph or the Identity API, and packages the result. A tool that is not on the allow-list is refused before it runs, with the MCP spec's protocol error `-32602` ("Unknown tool"), and the refusal is logged. The harness then stops the run (fail closed), because the model was never shown that tool.
 5. **Tool Result:** Because Claude is completely stateless between API calls, the harness sends a fresh request containing the *entire conversation history* plus the new `tool_result`.
 6. **Next Turn or Final Answer:** Claude either asks for another tool call (repeating Steps 3–5) or outputs its final report (`end_turn`). As a safety net, the harness enforces a turn limit (`max_rounds`, C12) and stops the loop if Claude does not send `end_turn` in time.
 
@@ -40,13 +40,13 @@ sequenceDiagram
     participant R as Graph /<br/>Identity API
 
     G->>M: tools/list
-    M-->>G: the tools (allow-listed only: planned)
+    M-->>G: the tools on the allow-list
     G->>C: system prompt + task + tools
     loop until end_turn, or the turn limit
         C-->>G: tool_use: run a tool with this input
         G->>M: tools/call
-        alt tool not on the allow-list (planned)
-            M-->>G: refused, and logged
+        alt tool not on the allow-list
+            M-->>G: error -32602 (Unknown tool), logged.<br/>The harness stops the run.
         else tool allowed
             opt privileged tool (planned)
                 M->>M: wait for a human's approval

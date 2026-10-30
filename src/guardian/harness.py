@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from mcp import MCPError
+
 # One logger per source, so every progress line says what it is about. setup_logging prints the
 # last part of the name as a tag: [model] and [mcp] for the two peers, [harness] for the harness itself.
 MODEL_LOG = logging.getLogger("guardian.model")
@@ -112,6 +114,11 @@ class ModelStopped(Exception):
 
 class RoundLimitReached(Exception):
     """The model was still asking for tools when the round limit was reached."""
+
+
+class ToolCallRejected(Exception):
+    """The MCP server answered a tool call with a protocol error, for example -32602 for a tool that
+    is not on its allow-list. The tool did not run."""
 
 
 @dataclass
@@ -328,7 +335,16 @@ async def run_agent(claude: Any, mcp_client: Any, settings: HarnessSettings, tra
         for request in requests:
             if trace:
                 trace.mcp_call(round_number, request.name, request.input)
-            outcome = await mcp_client.call_tool(request.name, request.input)
+            try:
+                outcome = await mcp_client.call_tool(request.name, request.input)
+            except MCPError as error:
+                # The model was never shown a tool the server rejects, so asking for one means
+                # something is wrong. Fail closed: the run stops, and the model gets no chance to
+                # try another way around.
+                MCP_LOG.info(f"round {round_number}: tools/call {request.name}({json.dumps(request.input)}) "
+                             f"rejected: {error.message} ({error.code})")
+                raise ToolCallRejected(f"the MCP server rejected tools/call {request.name} in round "
+                                       f"{round_number}: {error.message} ({error.code})") from None
             if trace:
                 trace.mcp_result(round_number, request.name, outcome)
             MCP_LOG.info(f"round {round_number}: tools/call {request.name}({json.dumps(request.input)}) "

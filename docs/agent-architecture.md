@@ -14,8 +14,8 @@ The details of each part are in their own documents:
 | [Security controls](security-controls.md) | Every control in place, with its evidence |
 
 > **Current Implementation Status: Partly Built**
-> * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with two tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent), and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an end-to-end test proves it.
-> * **Not built yet:** The tool allow-list, the human approval gate, and the correlation-ID scaffold. 
+> * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with two tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent) and its tool allow-list, and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an end-to-end test proves it.
+> * **Not built yet:** The human approval gate, and the correlation-ID scaffold. 
 > 
 > *(See the README's [Delivery status](../README.md#delivery-status) for live progress tracking).*
 
@@ -166,7 +166,7 @@ flowchart TB
             HARNESS["<b>Harness</b> (MCP host)<br/>agent loop, turn limit<br/>no identity, no token<br/>D4: model API key from a file"]
         end
         subgraph NS["sidecar's network namespace"]
-            MCP["<b>MCP server</b><br/>serves only the guardian<br/>D2: no identity of its own<br/>allow-list (planned)<br/>approval gate (planned)"]
+            MCP["<b>MCP server</b><br/>serves only the guardian<br/>D2: no identity of its own<br/>tool allow-list (the same<br/>for every caller, D1)<br/>approval gate (planned)"]
             SIDECAR["<b>Sidecar</b><br/>(Entra ID Auth SDK)<br/>loopback only<br/>D3: certificate file<br/>caller names the agent identity"]
         end
         subgraph ACONT["api container"]
@@ -199,7 +199,7 @@ flowchart TB
 
 | ID | Enterprise Reference Design | The Guardian Today | Why We Took the Shortcut | Risk Accepted |
 |---|---|---|---|---|
-| **D1** | The harness sends a bearer token to the MCP server, which validates it. | **No token:** The MCP server relies on Docker network isolation, trusting that only the Guardian container can reach it. | Project timebox. | Any code that manages to reach the MCP server's network port can invoke allow-listed tools. |
+| **D1** | The harness sends a bearer token to the MCP server, which validates it. | **No token:** The MCP server relies on Docker network isolation, trusting that only the Guardian container can reach it. Because it does not know who calls it, its tool allow-list is one list for every caller, not a role-to-tool mapping per agent. | Project timebox. | Any code that manages to reach the MCP server's network port can invoke allow-listed tools. |
 | **D2** | The MCP server has its own Entra identity and serves multiple agents. | **Shared Identity:** The MCP server serves *only* the Guardian and fetches tokens using the Guardian's identity (it acts as the Guardian itself). | Keeping one identity and one sidecar is simpler, and ensures no Entra token ever reaches the harness. | The MCP server cannot be shared with other agents. If compromised, it can request tokens for *any* agent identity under the blueprint (since the sidecar lets callers specify which agent identity they want). |
 | **D3** | The blueprint authenticates via an Azure Managed Identity (zero keys on disk). | **Certificate File:** A certificate file is mounted exclusively into the sidecar container ([details](infra.md#the-blueprints-credential)). | The demo runs locally in Docker, not in Azure. | If the certificate file is stolen from disk, every agent identity tied to the blueprint is exposed. |
 | **D4** | No static model key: the harness authenticates to the model provider with workload identity federation (or, failing that, reads a key from a cloud vault). | **API Key File:** An Anthropic service account API key in `secrets/anthropic.env` (the folder is excluded via `.gitignore`), given only to the guardian container. | Local demo environment, with no managed identity to federate. | The Anthropic API key sits unencrypted on the host disk. |
@@ -229,7 +229,7 @@ To verify our security posture, here is exactly what each container holds and wh
 We separate the agent into distinct trust boundaries specifically to contain the blast radius when something goes wrong. Here is how the Guardian's architecture holds up if individual components fail:
 
 * **Scenario 1: The Model Is Tricked (Prompt Injection)**
-  * *Impact:* Minimal (this is the primary failure mode the architecture is built to handle). The model can only *ask* the harness to invoke tools. The MCP server's checks (its input checks today; the allow-list and the human approval gate are planned) and the harness's turn limit all remain strictly enforced, and the model never sees an Entra token.
+  * *Impact:* Minimal (this is the primary failure mode the architecture is built to handle). The model can only *ask* the harness to invoke tools. The MCP server's checks (the tool allow-list and its input checks today; the human approval gate is planned) and the harness's turn limit all remain strictly enforced, and the model never sees an Entra token.
 * **Scenario 2: The Harness is Compromised**
   * *Impact:* Moderate. Because the harness mediates all communication with the model, it can manipulate the tool list, alter or fabricate tool results, invoke any allow-listed tool, and burn through the local Anthropic API key. However, **it still cannot obtain an Entra token**, and it cannot bypass the tool allow-list or approval gates because those checks are enforced inside the MCP server. 
   * *Crucial Audit Rule:* Because a compromised harness can lie to the model, **the LLM's final report is never proof of what actually happened—only the Identity API's audit log is.**

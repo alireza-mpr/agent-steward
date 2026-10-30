@@ -11,7 +11,8 @@ from types import SimpleNamespace
 import anthropic
 import httpx2
 import pytest
-from mcp.types import CallToolResult, Tool
+from mcp import MCPError
+from mcp.types import INVALID_PARAMS, CallToolResult, Tool
 
 import harness
 
@@ -59,13 +60,15 @@ class FakeMcpServer:
 
     async def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
+        if isinstance(self.results[name], MCPError):
+            raise self.results[name]   # a protocol error, as the MCP client raises it
         return self.results[name]
 
 
 SCAN_OK = CallToolResult.model_validate({"content": [], "isError": False, "structuredContent": {
     "findings": [], "accepted": 0, "correlation_id": "c-1"}})
-TOOL_FAILED = CallToolResult.model_validate({"content": [{"type": "text", "text": "Unknown tool: delete_everything"}],
-                                             "isError": True})
+TOOL_FAILED = CallToolResult.model_validate({"content": [{"type": "text", "text": "app_id must be an agent "
+                                                         "identity's app ID (a GUID)"}], "isError": True})
 
 
 def run(claude, mcp_server, settings=SETTINGS):
@@ -155,14 +158,25 @@ def test_model_steps_and_mcp_steps_go_to_their_own_loggers(caplog):
 
 
 def test_a_failed_tool_goes_back_to_the_model_as_an_error_it_can_read():
-    claude = ScriptedClaude(answer("tool_use", tool_use("toolu_1", "delete_everything", {})),
+    claude = ScriptedClaude(answer("tool_use", tool_use("toolu_1", "get_agent", {"app_id": "not-a-guid"})),
                             answer("end_turn", text("I could not do that.")))
 
-    run(claude, FakeMcpServer({"delete_everything": TOOL_FAILED}))
+    run(claude, FakeMcpServer({"get_agent": TOOL_FAILED}))
 
     [tool_result] = claude.requests[1]["messages"][-1]["content"]
     assert tool_result["is_error"] is True
-    assert "Unknown tool" in tool_result["content"]
+    assert "GUID" in tool_result["content"]
+
+
+def test_a_tool_call_the_mcp_server_rejects_stops_the_run_and_never_goes_back_to_the_model():
+    # For example a tool that is not on the MCP server's allow-list: a protocol error, not a result.
+    claude = ScriptedClaude(answer("tool_use", tool_use("toolu_1", "disable_agent", {"app_id": "x"})))
+    mcp_server = FakeMcpServer({"disable_agent": MCPError(INVALID_PARAMS, "Unknown tool: disable_agent")})
+
+    with pytest.raises(harness.ToolCallRejected, match=r"disable_agent in round 1: Unknown tool: disable_agent \(-32602\)"):
+        run(claude, mcp_server)
+
+    assert len(claude.requests) == 1   # the model was not asked again
 
 
 def test_the_loop_stops_at_the_round_limit_from_the_settings():

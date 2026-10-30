@@ -67,13 +67,14 @@ services:
       API_URL: http://api:8000
       GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
       POLICY_PATH: /config/agent-permissions.json
+      ALLOW_LIST_PATH: /config/tool-allow-list.json
       MCP_PORT: "8100"
       # The names the server may be reached BY (the Host header), not who may call it. The
       # guardian calls http://sidecar:8100/mcp, because the MCP server has no name of its own
       # in the sidecar's namespace. Protects against DNS rebinding, not against callers (D1).
       MCP_ALLOWED_HOSTS: sidecar:8100
     volumes:
-      - ./config:/config:ro   # the permission policy: edit it and run again, no rebuild
+      - ./config:/config:ro   # the permission policy and the tool allow-list: edit, then restart, no rebuild
     depends_on:
       - sidecar
       - api
