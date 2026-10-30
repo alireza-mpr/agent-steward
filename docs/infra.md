@@ -90,7 +90,7 @@ The first deploy also made Entra create a service principal for Microsoft's "Mic
 | [`setup/bicep/bicepconfig.json`](../setup/bicep/bicepconfig.json) | Loads the Graph extension (`v1.0` types, version `1.0.0`, pinned) under the alias `microsoftGraphV1` |
 | [`setup/bicep/phase0-smoke.bicep`](../setup/bicep/phase0-smoke.bicep) | Phase 0 smoke test: one security group. Proves the toolchain works end to end. Safe to delete. |
 | [`setup/bicep/identity-api.bicep`](../setup/bicep/identity-api.bicep) | The Identity API's app registration (app role `Findings.Submit`, v2 tokens, the agent claims as optional claims, an owner), its service principal, and the role assigned to the guardian's agent identity (FR3, FR5) |
-| [`setup/bicep/guardian-permissions.bicep`](../setup/bicep/guardian-permissions.bicep) | The guardian's read-only Microsoft Graph permissions, one app role assignment each: `AgentIdentity.Read.All`, `AgentIdentityBlueprint.Read.All`, `Application.Read.All`, `AuditLog.Read.All` (FR3, NFR1) |
+| [`setup/bicep/guardian-permissions.bicep`](../setup/bicep/guardian-permissions.bicep) | The guardian's Microsoft Graph permissions, one app role assignment each: read-only `AgentIdentity.Read.All`, `AgentIdentityBlueprint.Read.All`, `Application.Read.All`, `AuditLog.Read.All` (FR3, NFR1), and the one write, `AgentIdentity.EnableDisable.All`, for the approval-gated `disable_agent` tool (FR7) |
 | [`setup/agent-id/AgentIdHelpers.ps1`](../setup/agent-id/AgentIdHelpers.ps1) | Shared helpers: Graph calls, permission scopes, and one safe-to-rerun `Set-*` function per object type |
 | [`setup/agent-id/Deploy-AgentIdentities.ps1`](../setup/agent-id/Deploy-AgentIdentities.ps1) | Creates the project's blueprints, blueprint principals and agent identities, plus a stand-in sponsor user |
 | [`setup/agent-id/Deploy-Fixtures.ps1`](../setup/agent-id/Deploy-Fixtures.ps1) | Creates the fixture agents with deliberate governance flaws (FR3) |
@@ -129,7 +129,7 @@ az deployment group create --resource-group rg-agent-steward \
 
 It prints the API's app ID. Put it in `.env` as `IDENTITY_API_APP_ID`.
 
-Grant the guardian its read-only Graph permissions:
+Grant the guardian its Graph permissions:
 
 ```sh
 az deployment group create --resource-group rg-agent-steward \
@@ -138,7 +138,7 @@ az deployment group create --resource-group rg-agent-steward \
   --query properties.provisioningState -o tsv
 ```
 
-The sidecar caches tokens, so restart it (`docker compose restart sidecar`) to get a token with the new roles.
+The sidecar caches tokens, so restart it (`docker compose restart sidecar`) to get a token with the new roles. Then restart the MCP server too (`docker compose restart mcp-server`): it lives in the sidecar's network namespace, so it loses its network when the sidecar restarts (seen 30 October 2026: every MCP call failed to connect until the MCP server restarted).
 
 If the app was deleted in the last 30 days, the deploy fails with an error about `owners`. The cause is that the deleted app still holds its unique name. So first restore it (`POST /directory/deletedItems/{id}/restore`), or delete it for good (`DELETE /directory/deletedItems/{id}`).
 

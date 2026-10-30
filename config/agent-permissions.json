@@ -6,6 +6,7 @@
       "Microsoft Graph/AgentIdentityBlueprint.Read.All",
       "Microsoft Graph/Application.Read.All",
       "Microsoft Graph/AuditLog.Read.All",
+      "Microsoft Graph/AgentIdentity.EnableDisable.All",
       "agent-steward-identity-api/Findings.Submit"
     ]
   }

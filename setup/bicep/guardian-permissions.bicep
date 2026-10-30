@@ -1,4 +1,5 @@
-// The guardian's Microsoft Graph permissions (FR3, NFR1): read-only, one app role
+// The guardian's Microsoft Graph permissions (FR3, FR7, NFR1): four read-only ones, and one
+// write permission that only disable_agent uses, behind the human approval gate. One app role
 // assignment per permission, on Microsoft Graph's service principal.
 //
 // Deploy (signed in with `az login`, lab subscription selected):
@@ -21,6 +22,9 @@ var graphPermissions = [
   'AgentIdentityBlueprint.Read.All'   // blueprints and their credentials: the expiring check
   'Application.Read.All'              // app role assignments: the over-permissioned check
   'AuditLog.Read.All'                 // the sign-in log: the dormant check
+  // The only write: enable or disable agent identities (accountEnabled). Used only by the
+  // disable_agent tool, after a human approves (FR7).
+  'AgentIdentity.EnableDisable.All'
 ]
 
 // Microsoft Graph's appId is a public constant, the same in every tenant.
