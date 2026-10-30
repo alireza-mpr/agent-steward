@@ -118,7 +118,7 @@ The spec above is the backlog. This table tracks delivery: every requirement, it
 | FR12 - Live worker | not started | - |
 | NFR1 - Least privilege | in progress | The guardian holds only four read-only Graph permissions, each with the check it serves ([guardian-permissions.bicep](setup/bicep/guardian-permissions.bicep)), and the Identity API role `Findings.Submit`. The policy of which agent may hold what is a reviewed file ([config/agent-permissions.json](config/agent-permissions.json)), and the guardian flags any agent that holds more. Permissions per MCP tool come in Phase 4. |
 | NFR2 - Attribution | not started | - |
-| NFR3 - Untrusted content boundary | not started | - |
+| NFR3 - Untrusted content boundary | in progress | The attack is planted: the fixture `agent-steward-fixture-poisoned-01` carries a prompt injection in its description ([Deploy-Fixtures.ps1](setup/agent-id/Deploy-Fixtures.ps1)). Control tests without a model prove that its finding reaches the audit log before any model reads the description, and that `get_agent` passes the text on unchanged, as data ([test_mcp_tools.py](tests/integration/mcp_server/test_mcp_tools.py)). The model eval, which runs the guardian with Claude against the attack, comes next. |
 | NFR4 - Observability | not started | - |
 | NFR5 - Reproducibility | in progress | Tenant setup as code: [Bicep smoke test](setup/bicep/phase0-smoke.bicep) and [Agent ID setup script](setup/agent-id/Deploy-AgentIdentities.ps1); see [infra.md](docs/infra.md). [docker-compose.yml](docker-compose.yml) runs the sidecar today ([local run](docs/infra.md#local-run-the-sidecar)); the app services join it as they are built. |
 | NFR6 - Repo hygiene | not started | - |
