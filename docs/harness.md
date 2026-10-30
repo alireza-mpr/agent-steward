@@ -72,6 +72,8 @@ The JSON of one round, in its general form, is in [The Messages API](messages-ap
 
 Every answer from the model says why it stopped, in `BetaMessage.stop_reason`. The harness reads it first, before any content block ([harness.py](../src/guardian/harness.py), `run_agent`). The general meaning of each value is in [The Messages API](messages-api.md#4-extraction--checking-why-the-model-stopped-stop_reason).
 
+For error handling in general (retries, tool errors, timeouts), see [Error Handling](agent-architecture.md#error-handling-when-a-call-fails).
+
 The harness fails closed: only `tool_use` continues the loop, and only `end_turn` counts as a finished report. Every other value stops the run with an error that names the value, and no report. That includes values the API may add later.
 
 | `stop_reason` | Meaning | What the guardian's harness does |

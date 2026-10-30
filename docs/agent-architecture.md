@@ -25,6 +25,7 @@ The details of each part are in their own documents:
 * [2. The Enterprise Reference Design](#2-the-enterprise-reference-design)
   * [Four Architectural Pillars](#four-architectural-pillars)
   * [Zero Trust: Who Checks Whom?](#zero-trust-who-checks-whom)
+  * [Error Handling: When a Call Fails](#error-handling-when-a-call-fails)
 * [3. The Guardian's Design Today](#3-the-guardians-design-today)
   * [Architectural Shortcuts (Where the Guardian Differs)](#architectural-shortcuts-where-the-guardian-differs)
   * [Component Inventory: Who Holds What?](#component-inventory-who-holds-what)
@@ -148,6 +149,75 @@ By forcing every boundary to verify the component calling it, a single tricked o
 | **Entra ID** | **Every sign-in:** Validates the blueprint credential, verifies the parent blueprint relationship, and enforces Conditional Access policies. |
 
 How each caller proves who it is, link by link, is in [Authentication](authentication.md#2-how-each-caller-proves-who-it-is).
+
+### Error Handling: When a Call Fails
+
+One agent run makes many calls across boundaries. The harness calls the model provider and the MCP server, and each tool calls its downstream APIs. Any of these calls can fail. Error handling decides, for each failure, what happens next. This section gives the general practice for an enterprise agent, with its sources (all checked 30 October 2026).
+
+**The rule: three answers.** Every failure gets one of three answers:
+
+1. **Retry:** the failure is temporary, and the call is safe to repeat. The caller waits and tries again, a limited number of times. Examples: a rate limit (429), an overloaded service (503), a lost connection.
+2. **Back to the model:** the model can fix the failure itself. The tool returns an error result, and the harness sends it to the model in a `tool_result` with `is_error: true`. The model then corrects its input or tries another way. Example: a date in the wrong format.
+3. **Stop the run (fail closed):** the failure is permanent, the model cannot fix it, or it may be a sign of an attack. The run ends without a result, the reason goes to the audit log, and a human or a workflow decides what comes next. Examples: a bad API key, a tool the agent may not use, a cut-off model answer.
+
+**Who handles it: the layer nearest to the failure.** Each layer retries only its own calls. The harness (through the model provider's SDK) retries the model call, and the MCP server retries its call to a downstream API. When the retries run out, the failure moves up one layer as an error.
+
+#### Where a Call Fails, and What to Do
+
+| Where it fails | Example | What to do |
+|---|---|---|
+| Model provider: a temporary error | 429 `rate_limit_error`, 500 `api_error`, 529 `overloaded_error`, a lost connection | Retry, then stop. Anthropic's SDKs already retry these "with exponential backoff, twice by default, honoring the `retry-after` header when present" ([Claude API errors](https://platform.claude.com/docs/en/api/errors)). |
+| Model provider: a permanent error | 400 invalid request, 401 bad key, 403 no permission | Stop. The same request gets the same answer. At Anthropic, one 429 belongs here too: a 429 for a spent monthly cap has no `retry-after` and "keeps failing until access resumes". |
+| The model's answer | `stop_reason` is `max_tokens`, `refusal`, or a value the harness does not know | Stop. A cut-off or refused answer is not a result ([Why the model stopped](messages-api.md#4-extraction--checking-why-the-model-stopped-stop_reason)). |
+| The agent loop | The turn limit, the token budget or the time limit is reached | Stop. Limits stop a run that would never end, and its cost. OWASP calls this risk Unbounded Consumption ([LLM10:2025](https://genai.owasp.org/llmrisk/llm102025-unbounded-consumption/)). |
+| MCP: a protocol error | `-32602` "Unknown tool", a malformed request | Stop, in an agent that runs alone and reads untrusted content. See [Protocol Errors and Tool Execution Errors](#protocol-errors-and-tool-execution-errors). |
+| MCP: a tool execution error | Bad input, a broken business rule | Back to the model, with a short message that says what to fix. The turn limit caps the attempts. |
+| Inside a tool: a downstream API is throttled or down | Microsoft Graph returns 429 with `Retry-After`, or 503 | The MCP server retries. It waits the `Retry-After` seconds, or backs off when there is none ([Graph throttling guidance](https://learn.microsoft.com/graph/throttling)). If the call still fails, the tool returns a tool execution error. |
+| A token is refused, by the MCP server or a downstream API | 401 or 403 | On a 401, the token may have expired or been revoked: get a new token once and retry. If the 401 carries a claims challenge (`error="insufficient_claims"`, from Entra's Continuous Access Evaluation), put those claims in the token request ([CAE-enabled APIs](https://learn.microsoft.com/entra/identity-platform/app-resilience-continuous-access-evaluation)). On a 403, or a second 401: no retry. Stop the run, or return a tool execution error, and give an operator the details: a permission problem is not something the model can fix. |
+| A tool call times out | No answer within the time limit | Cancel the request. The outcome is now unknown: the tool may have run. See [Safe Retries](#safe-retries). |
+| The MCP server or the network is down | Connection refused | Retry the connection a few times, then stop. If it keeps failing, a [circuit breaker](#circuit-breaker) stops the calls for a while. |
+
+**Every call needs a timeout.** The MCP spec says implementations "SHOULD establish timeouts for all sent requests", and "SHOULD always enforce a maximum timeout", even while progress notifications arrive. On Streamable HTTP, closing the response stream cancels the request ([MCP spec, Cancellation](https://modelcontextprotocol.io/specification/2026-07-28/basic/utilities/cancellation)).
+
+#### Protocol Errors and Tool Execution Errors
+
+The MCP spec (2026-07-28) defines two kinds of tool errors, and it treats them differently ([MCP spec, Tools, Error Handling](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)):
+
+* **Tool execution errors** (a normal result with `isError: true`): "Clients **SHOULD** provide tool execution errors to language models to enable self-correction."
+* **Protocol errors** (a JSON-RPC error, such as `-32602`): "Clients **MAY** provide protocol errors to language models, though these are less likely to result in successful recovery."
+
+So for a protocol error, the spec leaves the choice to the client. How to choose:
+
+* **Stop the run** when the agent runs alone, can change things, and reads untrusted content. A request for a tool that `tools/list` never showed is more likely an injection than a mistake the model can fix. If the error went back, the model could try again, or try other tool names.
+* **Send it to the model** when a stopped run is costly and the risk is low. An example is an interactive assistant whose tool list can change during a session (`notifications/tools/list_changed`). There, "Unknown tool" helps the model switch to the current tool.
+
+#### Safe Retries
+
+A retry helps only when it is done with care. Five rules:
+
+* **Back off, with jitter:** each wait is longer than the last (exponential backoff). Jitter "adds some amount of randomness to the backoff to spread the retries around in time", so many clients do not retry at the same moment.
+* **Honor `Retry-After`:** when the server says how long to wait, wait that long.
+* **Cap the attempts:** after a few tries, the failure moves up one layer.
+* **Retry at one layer only:** retries multiply across layers. In AWS's example, five layers that each retry independently raise the load on the bottom layer 243 times. So AWS's practice is "to retry at a single point in the stack" ([Timeouts, retries, and backoff with jitter](https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter)).
+* **Retry a write only when it is idempotent:** an idempotent operation "can be retransmitted or retried with no additional side effects" ([Making retries safe with idempotent APIs](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/)). Reads are safe. A write is not: when a `send_email` call times out, nobody knows if the email went out. So the caller sends a unique idempotency key with each write and keeps it on every retry. The server records the key together with the work, and answers a repeat with the first result. Without a key, the caller must first check the current state, and only then decide.
+
+For an agent, the last rule has one more step. A write with an unknown outcome should not go back to the model as a plain error, because the model may simply call the tool again. The MCP server resolves the outcome first, or says clearly that it is unknown.
+
+#### Circuit Breaker
+
+When a downstream service keeps failing, more retries make it worse. A circuit breaker counts recent failures. After a threshold, it fails every call at once for a while (open). Then it lets a few calls through as a test (half-open), and goes back to normal when they succeed (closed) ([Circuit Breaker pattern](https://learn.microsoft.com/azure/architecture/patterns/circuit-breaker)). For an agent, an open circuit means a clear tool execution error ("Graph is unavailable"), so the model stops asking for that tool, or a stopped run.
+
+#### Error Text Is Untrusted Content
+
+An error message from a downstream API reaches the model inside a tool result. So it is untrusted content, like any other tool result, and it can carry a prompt injection. Anthropic warns that tool results "often carry content from sources outside your control" ([Handle tool calls](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls)). An error message can also leak internal details, such as stack traces, internal URLs or tokens ([CWE-209](https://cwe.mitre.org/data/definitions/209.html), "Generation of Error Message Containing Sensitive Information"). The MCP spec says servers MUST "sanitize tool outputs". So the MCP server gives the model a short, fixed error message, and writes the full details only to its own log.
+
+#### Long Runs: Checkpoints
+
+A run that takes minutes or hours, or waits for a human approval, should not start over after a crash. A durable execution engine saves each finished step and resumes from the last one. Examples are [Azure Durable Functions](https://learn.microsoft.com/azure/durable-task/durable-functions/durable-functions-overview), whose runtime "manages state, checkpoints, retries, and recovery", and [Temporal](https://docs.temporal.io/). Each model call and each tool call becomes one step, with its own retry policy. Together with idempotency keys, a resumed run does not repeat a side effect.
+
+#### Log Every Failure
+
+Each failure writes one audit line with the run's correlation ID, the layer, the error code, and the answer chosen: retry, back to the model, or stop. Then an operator can follow one failed run across the harness, the MCP server and the identity provider's sign-in logs. The MCP spec asks clients to "log tool usage for audit purposes".
 
 ---
 

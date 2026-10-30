@@ -72,6 +72,8 @@ The MCP specification (version 2026-07-28) defines the messages for tools, and t
 * **Two distinct error types:**
   1. *Protocol errors:* Standard JSON-RPC errors (such as code `-32602` when requesting an unknown tool).
   2. *Tool execution errors:* Returned as a normal tool result with `isError: true` and a plain-text explanation. This allows the LLM to read what went wrong, fix its arguments, and retry the call.
+
+  What a client does with each kind, and with other failures in an agent run: [Error Handling](agent-architecture.md#error-handling-when-a-call-fails).
 * **Security rules:** The specification says MCP servers **must** validate all tool inputs, implement proper access controls, rate-limit tool calls, and sanitize tool outputs. Clients **should** ask for confirmation on sensitive operations, validate tool results before passing them to the model, and log tool usage for audit. This is why the Guardian's MCP server checks every input before using it: for example, `get_agent` checks that its `app_id` input is a GUID before it builds a Graph URL, so a tricked model cannot point the call at a different Graph path ([C8](security-controls.md#the-mcp-server)).
 
 ## 3. How a tool reaches its API
