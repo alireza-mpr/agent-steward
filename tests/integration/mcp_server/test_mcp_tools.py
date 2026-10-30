@@ -84,7 +84,7 @@ def test_the_poisoned_agents_finding_is_audited_before_any_model_reads_its_descr
 
 def test_get_agent_returns_the_planted_injection_unchanged_as_data(scan):
     # The attack is in place, and the MCP server passes the description on as data: it neither
-    # follows nor edits it. Resisting it is the model's job (the model eval) and the controls' job.
+    # follows nor edits it. Resisting it is the model's job (the agent eval) and the controls' job.
     [app_id] = {finding["agent_app_id"] for finding in scan["findings"] if finding["agent_name"] == POISONED}
 
     outcome = call_tool("get_agent", {"app_id": app_id})

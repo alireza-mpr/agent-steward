@@ -254,7 +254,7 @@ The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.mi
 
 1. **Certificate:** Run `Deploy-BlueprintCertificate.ps1` (see [Run the Agent ID scripts](#run-the-agent-id-scripts)). The sidecar mounts the PFX file as a Compose secret and reads its password from the `.sidecar.env` file.
 2. **IDs:** Copy `.env.example` to `.env` and fill in the tenant ID and the two app IDs. These are identifiers, not secrets, but git ignores `.env` so the real values stay out of the repo.
-3. **Model key:** Put an Anthropic API key in `secrets/anthropic.env` as `ANTHROPIC_API_KEY=<key>`. Git ignores the folder, and only the containers built from the guardian's image get the file: the guardian and its model eval.
+3. **Model key:** Put an Anthropic API key in `secrets/anthropic.env` as `ANTHROPIC_API_KEY=<key>`. Git ignores the folder, and only the containers built from the guardian's image get the file: the guardian and its agent eval.
 4. **Apple Silicon:** Microsoft publishes the sidecar for `linux/amd64` only. Turn on Docker Desktop's Rosetta emulation (Settings > General). Under the older QEMU emulation, the sidecar fails with 500 errors after its first request.
 
 **Run it.**
@@ -269,7 +269,7 @@ docker compose run --rm -e GUARDIAN_TRACE=json guardian   # the same, as JSON: e
 docker compose run --rm -e GUARDIAN_TRACE=full guardian > run.txt   # the exact request and response bodies, model and MCP server apart, in full (run*.txt: git ignores it)
 docker compose run --rm integration-tests   # integration tests: real Entra tokens against the Identity API
 docker compose run --rm mcp-integration-tests   # MCP integration tests: the real MCP tools from the guardian's network, no model
-docker compose run --rm model-eval              # model eval (NFR3): 3 guardian runs with Claude against a planted prompt injection
+docker compose run --rm agent-eval              # agent eval (NFR3): 3 guardian runs with Claude against a planted prompt injection
 ```
 
 What the guardian prints, what each trace mode shows, and its settings file ([config/guardian.json](../config/guardian.json)) are described in [The harness](harness.md).

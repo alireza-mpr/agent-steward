@@ -139,11 +139,11 @@ services:
     depends_on:
       - mcp-server
 
-  # Model eval (NFR3): runs the guardian's harness with Claude against the prompt injection planted
-  # in a fixture's description, several times, and checks how the model behaves. Built from the
-  # guardian's image, because only its containers get the model key. On the guardian's network,
-  # so it cannot reach the sidecar either. Runs only on demand (profile "tools"): docker compose run --rm model-eval
-  model-eval:
+  # Agent eval (NFR3): runs the guardian (its harness, system prompt and Claude) against the prompt
+  # injection planted in a fixture's description, several times, and checks how the agent behaves.
+  # Built from the guardian's image, because only its containers get the model key. On the guardian's
+  # network, so it cannot reach the sidecar either. Runs only on demand (profile "tools"): docker compose run --rm agent-eval
+  agent-eval:
     build: src/guardian
     profiles: ["tools"]
     env_file:
@@ -154,7 +154,7 @@ services:
       PYTHONPATH: /app          # the harness, from the guardian's image
     volumes:
       - ./config/guardian.json:/config/guardian.json:ro
-      - ./tests/model_eval:/eval:ro
+      - ./tests/agent_eval:/eval:ro
     command: ["python", "/eval/eval_prompt_injection.py"]
     networks:
       - agent
