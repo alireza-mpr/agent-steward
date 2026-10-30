@@ -118,14 +118,15 @@ services:
       TEST_CLIENT_APP_ID: ${TEST_CLIENT_APP_ID:-}
     volumes:
       - ./tests/integration:/tests:ro
+    command: ["pytest", "-v", "-m", "integration", "-p", "no:cacheprovider", "/tests/identity_api"]
     depends_on:
       - sidecar
       - api
 
-  # End-to-end test (FR3, FR6): calls the real MCP server from where the guardian sits, so the
-  # tools run against the tenant and the Identity API, and checks that the sidecar is out of reach.
-  # No model is involved. Runs only on demand (profile "tools"): docker compose run --rm end-to-end-tests
-  end-to-end-tests:
+  # MCP integration tests (FR3, FR6): call the real MCP server from where the guardian sits, so the
+  # tools run against the tenant and the Identity API, and check that the sidecar is out of reach.
+  # No harness and no model. Runs only on demand (profile "tools"): docker compose run --rm mcp-integration-tests
+  mcp-integration-tests:
     build: tests/integration   # the same small pytest image
     profiles: ["tools"]
     environment:
@@ -133,8 +134,8 @@ services:
     networks:
       - agent   # the guardian's network, outside the sidecar's namespace
     volumes:
-      - ./tests/end_to_end:/tests:ro
-    command: ["pytest", "-v", "-m", "end_to_end", "-p", "no:cacheprovider", "/tests"]
+      - ./tests/integration:/tests:ro
+    command: ["pytest", "-v", "-m", "integration", "-p", "no:cacheprovider", "/tests/mcp_server"]
     depends_on:
       - mcp-server
 

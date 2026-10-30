@@ -14,7 +14,7 @@ The details of each part are in their own documents:
 | [Security controls](security-controls.md) | Every control in place, with its evidence |
 
 > **Current Implementation Status: Partly Built**
-> * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with two tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent) and its tool allow-list, and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an end-to-end test proves it.
+> * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with two tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent) and its tool allow-list, and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an MCP integration test proves it.
 > * **Not built yet:** The human approval gate, and the correlation-ID scaffold. 
 > 
 > *(See the README's [Delivery status](../README.md#delivery-status) for live progress tracking).*

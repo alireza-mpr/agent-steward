@@ -1,6 +1,6 @@
 FROM python:3.13-slim
 
-RUN pip install --no-cache-dir pytest==9.1.1 mcp==2.3.0   # mcp: the end-to-end test is an MCP client
+RUN pip install --no-cache-dir pytest==9.1.1 mcp==2.3.0   # mcp: the MCP integration tests are an MCP client
 WORKDIR /tests
 
 USER nobody

@@ -268,7 +268,7 @@ docker compose run --rm -e GUARDIAN_TRACE=1 guardian   # the same, showing every
 docker compose run --rm -e GUARDIAN_TRACE=json guardian   # the same, as JSON: each model message once, no settings
 docker compose run --rm -e GUARDIAN_TRACE=full guardian > run.txt   # the exact request and response bodies, model and MCP server apart, in full (run*.txt: git ignores it)
 docker compose run --rm integration-tests   # integration tests: real Entra tokens against the Identity API
-docker compose run --rm end-to-end-tests    # end-to-end test: the real MCP tools from the guardian's network, no model
+docker compose run --rm mcp-integration-tests   # MCP integration tests: the real MCP tools from the guardian's network, no model
 ```
 
 What the guardian prints, what each trace mode shows, and its settings file ([config/guardian.json](../config/guardian.json)) are described in [The harness](harness.md).
@@ -277,7 +277,7 @@ What the guardian prints, what each trace mode shows, and its settings file ([co
 
 **Three settings that matter.**
 
-- **Loopback only:** Since version 1.1, the sidecar refuses any caller that is not on loopback (403). So it listens on `127.0.0.1`, and its callers join its network namespace (`network_mode: service:sidecar`), like containers in one Kubernetes pod: the MCP server, the integration tests and `token-claims`. No other container, and not the host, can ask it for the guardian's tokens. The end-to-end test proves this for the guardian's container.
+- **Loopback only:** Since version 1.1, the sidecar refuses any caller that is not on loopback (403). So it listens on `127.0.0.1`, and its callers join its network namespace (`network_mode: service:sidecar`), like containers in one Kubernetes pod: the MCP server, the integration tests and `token-claims`. No other container, and not the host, can ask it for the guardian's tokens. The MCP integration test proves this for the guardian's container.
 - **Agent identity override:** `Sidecar__AllowOverrides__GetAuthorizationHeaderUnauthenticated` must be `true`. When it is off, the sidecar ignores the `AgentIdentity` parameter and silently returns the blueprint's own token instead. The Identity API's agent check will reject such a token, because its actor facets (`xms_act_fct`) do not contain 11.
 - **Pinned image:** The image is pinned by digest, so a changed image cannot slip in.
 

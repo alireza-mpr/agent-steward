@@ -1,10 +1,11 @@
-"""End-to-end test of the guardian's tools (FR3, FR6): the real MCP server with its tool allow-list,
-the real Graph, the real rules and the running Identity API. No model is involved: the test calls
-the tool the model would ask for, from the guardian's own network.
+"""MCP integration tests of the guardian's tools (FR3, FR6): the real MCP server with its tool
+allow-list, the real Graph, the real rules and the running Identity API. No harness and no model:
+the test is the MCP client, and calls the tool the model would ask for, from the guardian's own
+network. (End-to-end, in this project, means the whole chain with the model.)
 
 Runs inside docker compose, on the guardian's network (outside the sidecar's namespace):
     docker compose up -d sidecar api mcp-server
-    docker compose run --rm end-to-end-tests
+    docker compose run --rm mcp-integration-tests
 """
 
 import asyncio
@@ -14,7 +15,7 @@ import socket
 import pytest
 from mcp import Client, MCPError
 
-pytestmark = pytest.mark.end_to_end
+pytestmark = pytest.mark.integration
 
 MCP_URL = os.environ.get("MCP_URL", "http://sidecar:8100/mcp")
 
