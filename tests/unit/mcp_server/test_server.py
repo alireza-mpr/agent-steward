@@ -6,6 +6,7 @@ No network: Graph and the Identity API are replaced where a test needs them.
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -333,6 +334,42 @@ def test_a_second_request_for_an_agent_gets_its_own_message(disable_setup, capsy
     assert outcome.is_error and "already waiting" in outcome.content[0].text
     assert disabled == []
     assert {"event": "disable_refused", "agent": AGENT.app_id, "reason": "already_waiting"} in audit_lines(capsys)
+
+
+def cancel_while_running(coroutine):
+    """Start the coroutine, let it reach its wait, then cancel it, as a caller that leaves does."""
+    async def run():
+        task = asyncio.create_task(coroutine)
+        await real_sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    asyncio.run(run())
+
+
+REQUEST = DisableRequest("request-1", AGENT.app_id, "pending")
+real_sleep = asyncio.sleep
+
+
+def test_a_caller_that_leaves_during_the_wait_is_on_record(capsys):
+    cancel_while_running(server.wait_for_approval(FakeApprovals("pending"), REQUEST, "correlation-1"))
+
+    [line] = [line for line in audit_lines(capsys) if line["event"] == "disable_abandoned"]
+    assert line == {"event": "disable_abandoned", "agent": AGENT.app_id, "request_id": "request-1",
+                    "correlation_id": "correlation-1", "stage": "waiting for approval"}
+
+
+def test_a_caller_that_leaves_during_the_write_is_on_record_with_the_approver(monkeypatch, capsys):
+    def slow_write(graph, app_id):
+        time.sleep(0.2)
+        return True
+    monkeypatch.setattr(server, "disable_agent_identity", slow_write)
+    approved = DisableRequest("request-1", AGENT.app_id, "approved", "approver-oid", "An Approver")
+
+    cancel_while_running(server.write_disable(None, approved, "correlation-1"))
+
+    [line] = [line for line in audit_lines(capsys) if line["event"] == "disable_abandoned"]
+    assert (line["stage"], line["approver_id"]) == ("writing", "approver-oid")
 
 
 def test_disable_agent_reports_and_audits_a_failed_write_after_an_approval(disable_setup, monkeypatch, capsys):

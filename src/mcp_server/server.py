@@ -244,6 +244,11 @@ async def wait_for_approval(service: IdentityApiApprovals, request: DisableReque
     except ApprovalError as error:
         audit_request("disable_decision", request, correlation_id, decision=error.reason)
         return None, error.reason
+    except asyncio.CancelledError:
+        # The caller left, for example the run was stopped. Nobody will act on this request now, even
+        # if a person still approves it at the Identity API, so the record must say why nothing follows.
+        audit_request("disable_abandoned", request, correlation_id, stage="waiting for approval")
+        raise
     audit_request("disable_decision", request, correlation_id, decision="approved",
                   approver_id=approved.decided_by_id, approver_name=approved.decided_by_name)
     return approved, None
@@ -258,6 +263,10 @@ async def write_disable(graph: GraphClient, approved: DisableRequest, correlatio
     except SERVICE_ERRORS:
         audit_request("disable_failed", approved, correlation_id, **approver)
         return None
+    except asyncio.CancelledError:
+        # The write runs in its own thread and may still finish, so the outcome is unknown: check the tenant.
+        audit_request("disable_abandoned", approved, correlation_id, stage="writing", **approver)
+        raise
     audit_request("agent_disabled", approved, correlation_id, confirmed=confirmed, **approver)
     return confirmed
 
