@@ -7,7 +7,8 @@
       "Microsoft Graph/Application.Read.All",
       "Microsoft Graph/AuditLog.Read.All",
       "Microsoft Graph/AgentIdentity.EnableDisable.All",
-      "agent-steward-identity-api/Findings.Submit"
+      "agent-steward-identity-api/Findings.Submit",
+      "agent-steward-identity-api/AgentDisable.Request"
     ]
   }
 }
