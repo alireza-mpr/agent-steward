@@ -175,7 +175,7 @@ def test_a_refused_decision_is_audited_as_a_rejected_request(client, capsys):
     decide(client, request_id, headers=guardian())
 
     [line] = audit_lines(capsys, "request_rejected")
-    assert (line["status"], line["reason"]) == (403, "approver: no user in the token")
+    assert (line["status"], line["reason"]) == (403, "approver: idtyp claim is not user")
 
 
 # The rules inside the routes

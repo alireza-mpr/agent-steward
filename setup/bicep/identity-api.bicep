@@ -81,7 +81,9 @@ resource identityApi 'Microsoft.Graph/applications@v1.0' = {
   // (docs/tokens.md). Without them, the API's agent check rejects every agent.
   optionalClaims: {
     accessToken: [
-      { name: 'idtyp' }             // app or user: tells the autonomous and OBO modes apart
+      // app or user. By default Entra emits it only for app-only tokens, and the approver check
+      // needs it on a person's token too.
+      { name: 'idtyp', additionalProperties: ['include_user_token'] }
       { name: 'xms_act_fct' }       // actor facets: contains 11 when the client is an agent identity
       { name: 'xms_sub_fct' }       // subject facets: 13 marks an agent's user account
       { name: 'xms_par_app_azp' }   // the agent's blueprint, for the audit log

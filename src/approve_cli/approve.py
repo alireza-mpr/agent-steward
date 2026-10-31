@@ -32,7 +32,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 POLL_EVERY_SECONDS = 5
-REDIRECT_URI = "http://localhost"   # registered on the client app (setup/bicep/agent-disable-approvers.bicep)
+# Registered on the client app without a port (setup/bicep/agent-disable-approvers.bicep): Entra ignores
+# the port of a localhost redirect URI. A port nothing listens on, so no local program gets the address.
+REDIRECT_URI = "http://localhost:18400"
 
 
 class SignInError(Exception):
@@ -167,6 +169,14 @@ def sign_in(tenant_id: str, client_id: str, api_app_id: str, read: Callable[[str
     return result["access_token"]
 
 
+def refusal_text(error: urllib.error.HTTPError) -> str:
+    """The status and the API's own reason, such as a missing role, shown as plain text."""
+    try:
+        return f"HTTP {error.code}: {plain(json.load(error)['detail'])}"
+    except (OSError, ValueError, KeyError, TypeError):
+        return f"HTTP {error.code}"
+
+
 def main() -> int:
     try:
         token = sign_in(os.environ["TENANT_ID"], os.environ["AGENT_DISABLE_CLI_APP_ID"],
@@ -185,7 +195,7 @@ def main() -> int:
     except KeyboardInterrupt:
         return 0
     except urllib.error.HTTPError as error:
-        print(f"The Identity API refused the call: HTTP {error.code}. Are you in the approvers group?", file=sys.stderr)
+        print(f"The Identity API refused the call: {refusal_text(error)}", file=sys.stderr)
         return 1
     except (OSError, ValueError) as error:
         print(f"The Identity API gave no usable answer: {type(error).__name__}", file=sys.stderr)

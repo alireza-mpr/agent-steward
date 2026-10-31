@@ -117,6 +117,21 @@ def test_any_other_refusal_stops_the_review():
         review(FakeApi(REQUEST, decide_error=forbidden), set(), typed("approve"), lambda line: None)
 
 
+def refused(code, body):
+    return urllib.error.HTTPError("http://api", code, "refused", {}, io.BytesIO(body))
+
+
+def test_a_refusal_shows_the_apis_reason():
+    body = b'{"detail": "permission: missing app role AgentDisable.Approve"}'
+
+    assert approve.refusal_text(refused(403, body)) == "HTTP 403: permission: missing app role AgentDisable.Approve"
+
+
+@pytest.mark.parametrize("body", [b"", b"not json", b"[]", b"{}"])
+def test_a_refusal_with_no_usable_reason_shows_the_status(body):
+    assert approve.refusal_text(refused(502, body)) == "HTTP 502"
+
+
 # The contract
 
 def test_parse_pending_reads_the_list():
@@ -139,7 +154,7 @@ def test_parse_pending_refuses_anything_else(body):
 # Sign-in
 
 FLOW = {"auth_uri": "https://login.example/authorize?state=abc", "state": "abc"}
-LANDED = "http://localhost/?code=the-code&state=abc&session_state=s"
+LANDED = "http://localhost:18400/?code=the-code&state=abc&session_state=s"
 
 
 class FakeMsalApp:
@@ -172,7 +187,7 @@ def test_sign_in_shows_the_address_and_redeems_what_the_person_pastes(monkeypatc
     lines = []
 
     assert sign_in(typed(LANDED), lines) == "token"
-    assert app.started == {"scopes": ["api-app/.default"], "redirect_uri": "http://localhost", "prompt": "select_account"}
+    assert app.started == {"scopes": ["api-app/.default"], "redirect_uri": "http://localhost:18400", "prompt": "select_account"}
     assert FLOW["auth_uri"] in lines[0]
     # The flow goes back to MSAL with the pasted values, so it checks the state and sends the PKCE verifier.
     assert app.redeemed == (FLOW, {"code": "the-code", "state": "abc", "session_state": "s"}, ["api-app/.default"])
@@ -185,7 +200,8 @@ def test_the_pasted_address_may_have_spaces_around_it(monkeypatch):
 
 
 @pytest.mark.parametrize("pasted", ["https://evil.example/?code=x&state=abc", "http://localhost.evil.example/?code=x",
-                                    "https://localhost/?code=x", "the-code", ""])
+                                    "https://localhost:18400/?code=x", "http://localhost/?code=x", "http://localhost:80/?code=x",
+                                    "the-code", ""])
 def test_an_address_that_is_not_the_redirect_is_refused_before_msal_sees_it(pasted, monkeypatch):
     app = FakeMsalApp({"access_token": "token"})
     use_msal(monkeypatch, app)
@@ -206,7 +222,7 @@ def test_a_refused_sign_in_gives_no_token(monkeypatch):
     use_msal(monkeypatch, FakeMsalApp({"error": "access_denied"}))
 
     with pytest.raises(approve.SignInError, match="access_denied"):
-        sign_in(typed("http://localhost/?error=access_denied&state=abc"))
+        sign_in(typed("http://localhost:18400/?error=access_denied&state=abc"))
 
 
 def test_no_paste_gives_no_token(monkeypatch):

@@ -192,11 +192,11 @@ def test_an_approver_token_with_several_scopes_is_accepted():
 def test_an_agent_token_cannot_approve():
     # Even one that somehow holds the role.
     failure = approver_rejected(agent_claims(roles=["AgentDisable.Approve"], scp="AgentDisable.Decide", azp=CLI))
-    assert (failure.status, failure.reason) == (403, "approver: no user in the token")
+    assert (failure.status, failure.reason) == (403, "approver: idtyp claim is not user")
 
 
 @pytest.mark.parametrize("changes, reason", [
-    ({"idtyp": None}, "approver: no user in the token"),
+    ({"idtyp": None}, "approver: idtyp claim is not user"),
     ({"xms_act_fct": "3 11 9"}, "approver: the client is an agent identity"),
     ({"xms_sub_fct": "13 1"}, "approver: the user is an agent's user account"),
     ({"azp": AGENT}, "approver: not the approve command's client app"),

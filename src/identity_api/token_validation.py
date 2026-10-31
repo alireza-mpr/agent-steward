@@ -143,7 +143,7 @@ def check_approver(claims: dict, settings: ApiSettings, now: float) -> Approver:
 
     # A person, signed in: not an app, not an agent, not an agent's user account.
     if claims.get("idtyp") != "user":
-        raise TokenRejected(403, "approver: no user in the token", client)
+        raise TokenRejected(403, "approver: idtyp claim is not user", client)
     if AGENT_IDENTITY_FACET in str(claims.get("xms_act_fct", "")).split():
         raise TokenRejected(403, "approver: the client is an agent identity", client)
     if AGENT_USER_FACET in str(claims.get("xms_sub_fct", "")).split():
