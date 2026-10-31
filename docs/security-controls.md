@@ -2,7 +2,7 @@
 
 This is the project's control register: every security control that is in place, the threat it stops, where it is enforced, and the evidence that it works. Controls that are planned or exist only as written design are listed separately at the end, so nothing here claims more than the code does.
 
-The threat model (THREATMODEL.md, still to come) works from the other side: it starts from each risk and points to the controls below by their IDs. For the architecture these controls protect, see [Agent architecture](agent-architecture.md).
+The [threat model](../THREATMODEL.md) works from the other side: it starts from each risk and points to the controls below by their IDs. For the architecture these controls protect, see [Agent architecture](agent-architecture.md).
 
 ## Contents
 
@@ -40,6 +40,7 @@ In the Evidence column, a test is named in plain words, so the tables fit the pa
 | C7 | Seven checks on every token, in a fixed order: signature, issuer and tenant, audience, lifetime, agent identity (`xms_act_fct` contains 11), app role, then a log line | Forged, foreign or expired tokens, callers that are not agent identities, and agents without the role | The Identity API ([token_validation.py](../src/identity_api/token_validation.py)) | [What an API must check](tokens.md#what-an-api-must-check), [unit tests](../tests/unit/identity_api/test_token_validation.py), [integration tests with real Entra tokens](../tests/integration/identity_api/test_with_real_tokens.py), [screenshot](screenshots/phase2-integration-tests.png) |
 | C26 | The approver check: only a person (`idtyp` is `user`, no agent facets), through the `approve` command (`azp`), with the scope `AgentDisable.Decide` and the role `AgentDisable.Approve`. The approver's identity comes only from the token | An agent approving its own request, and a person or app with no right to approve | The Identity API ([token_validation.py](../src/identity_api/token_validation.py)) | [Tests](../tests/unit/identity_api/test_token_validation.py), and a real sign-in on 31 October 2026 |
 | C27 | A decision is bound and final: a request is reachable only through its own agent's path, leaves `pending` once under a lock, and expires after 4 minutes. A second pending request for one agent is refused | A replayed or double decision, an approval used for another agent, and approval fatigue | The Identity API ([disable_requests.py](../src/identity_api/disable_requests.py)) | [Tests](../tests/unit/identity_api/test_disable_requests.py), [route tests](../tests/unit/identity_api/test_disable_routes.py) |
+| C28 | What the approver sees cannot be forged: the `approve` command removes control characters from the model's reason and the agent's name, labels the reason as untrusted, and only the full word `approve` approves | A model or a registered name rewriting the terminal, and an approval by a stray key | The `approve` command ([approve.py](../src/approve_cli/approve.py)) | [Tests](../tests/unit/approve_cli/test_approve.py) |
 
 ### The MCP server
 
