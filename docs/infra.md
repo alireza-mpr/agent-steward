@@ -89,7 +89,8 @@ The first deploy also made Entra create a service principal for Microsoft's "Mic
 |---|---|
 | [`setup/bicep/bicepconfig.json`](../setup/bicep/bicepconfig.json) | Loads the Graph extension (`v1.0` types, version `1.0.0`, pinned) under the alias `microsoftGraphV1` |
 | [`setup/bicep/phase0-smoke.bicep`](../setup/bicep/phase0-smoke.bicep) | Phase 0 smoke test: one security group. Proves the toolchain works end to end. Safe to delete. |
-| [`setup/bicep/identity-api.bicep`](../setup/bicep/identity-api.bicep) | The Identity API's app registration (app role `Findings.Submit`, v2 tokens, the agent claims as optional claims, an owner), its service principal, and the role assigned to the guardian's agent identity (FR3, FR5) |
+| [`setup/bicep/identity-api.bicep`](../setup/bicep/identity-api.bicep) | The Identity API's app registration (app role `Findings.Submit`, v2 tokens, the agent claims as optional claims, an owner), its service principal, and the role assigned to the guardian's agent identity (FR3, FR5). For the agent-disable approval (FR7) it also defines the guardian's app role `AgentDisable.Request` (assigned here), the user app role `AgentDisable.Approve` and the delegated scope `AgentDisable.Decide` |
+| [`setup/bicep/agent-disable-approvers.bicep`](../setup/bicep/agent-disable-approvers.bicep) | The people who may approve disabling an agent (FR7): the security group `agent-steward-agent-disable-approvers`, which holds the `AgentDisable.Approve` role, and the public client app `agent-steward-agent-disable-cli` (device code flow, no secret) with admin consent for `AgentDisable.Decide` |
 | [`setup/bicep/guardian-permissions.bicep`](../setup/bicep/guardian-permissions.bicep) | The guardian's Microsoft Graph permissions, one app role assignment each: read-only `AgentIdentity.Read.All`, `AgentIdentityBlueprint.Read.All`, `Application.Read.All`, `AuditLog.Read.All` (FR3, NFR1), and the one write, `AgentIdentity.EnableDisable.All`, for the approval-gated `disable_agent` tool (FR7) |
 | [`setup/agent-id/AgentIdHelpers.ps1`](../setup/agent-id/AgentIdHelpers.ps1) | Shared helpers: Graph calls, permission scopes, and one safe-to-rerun `Set-*` function per object type |
 | [`setup/agent-id/Deploy-AgentIdentities.ps1`](../setup/agent-id/Deploy-AgentIdentities.ps1) | Creates the project's blueprints, blueprint principals and agent identities, plus a stand-in sponsor user |
@@ -128,6 +129,18 @@ az deployment group create --resource-group rg-agent-steward \
 ```
 
 It prints the API's app ID. Put it in `.env` as `IDENTITY_API_APP_ID`.
+
+Then deploy the agent-disable approvers (FR7). It uses the role and the scope that `identity-api.bicep` defines, so run it after that file. Here the signed-in admin is both the owner and the only approver:
+
+```sh
+me=$(az ad signed-in-user show --query id -o tsv)
+az deployment group create --resource-group rg-agent-steward \
+  --template-file setup/bicep/agent-disable-approvers.bicep \
+  --parameters ownerId=$me approverIds="['$me']" \
+  --query properties.outputs.agentDisableCliAppId.value -o tsv
+```
+
+It prints the ID of the `approve` command's app. Put it in `.env` as `AGENT_DISABLE_CLI_APP_ID`.
 
 Grant the guardian its Graph permissions:
 
