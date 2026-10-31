@@ -82,6 +82,34 @@ With workload identity federation, a workload presents a short-lived identity to
 
 Each link has three parts. The **authentication method** is how the caller proves who it is. The **credential** is what it sends as proof. The **trust relationship** is what an admin set up in advance, so the receiver knows which credential to accept. Where several methods exist, the first one is the recommended choice for production. Where the choice depends on the mode, the bullets are labelled by mode. Every link also runs over TLS. TLS proves the other direction: the server certificate shows the caller that it reached the right service.
 
+The diagram shows every link in the table. Each arrow goes from the caller to the receiver. Its label gives the table row, then each authentication method in bold, followed by its credential. Where the table lists several methods, the first one is the recommended choice for production. Dotted arrows carry content, not a caller's proof.
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 620, "nodeSpacing": 90, "rankSpacing": 110}}}%%
+flowchart TB
+    USER["<b>End user</b>"]
+    APPROVER["<b>Approver</b>"]
+    HARNESS["<b>Harness</b>"]
+    MI["<b>Azure managed identity endpoint</b>"]
+    MODEL["<b>Model provider</b><br/>and its model"]
+    ENTRA["<b>Entra ID</b>"]
+    MCP["<b>MCP server</b>"]
+    API["<b>Resource API</b>"]
+    APPROVAL["<b>Approval service</b>"]
+
+    USER -- "Row 2 (delegated mode only)<br/>• <b>OIDC sign-in, then OAuth bearer token:</b> Tc" --> HARNESS
+    HARNESS -- "Row 1<br/>• <b>Managed identity:</b> no credential, only code on the machine reaches the endpoint" --> MI
+    HARNESS -- "Row 3<br/>• <b>Workload identity federation (JWT bearer grant):</b> managed identity token, as assertion<br/>• <b>API key:</b> a static key, read from a vault" --> MODEL
+    HARNESS -- "Row 4 (client credentials grant, request 1)<br/>• <b>Federated identity credential:</b> managed identity token, as client_assertion<br/>• <b>Certificate:</b> JWT signed with its private key, as client_assertion<br/>• <b>Client secret (testing only):</b> the secret" --> ENTRA
+    HARNESS -- "Row 5 (request 2)<br/>• <b>Autonomous, client credentials grant:</b> T1, as client_assertion<br/>• <b>Delegated, On-Behalf-Of:</b> T1, as client_assertion, plus Tc, as assertion" --> ENTRA
+    HARNESS -- "Row 6<br/>• <b>OAuth bearer token:</b> TR<br/>• <b>API key:</b> a key in a request header<br/>• <b>Network isolation only:</b> no credential" --> MCP
+    MCP -- "Row 7<br/>• <b>Autonomous, client credentials grant:</b> managed identity token, as client_assertion<br/>• <b>Delegated, On-Behalf-Of:</b> the same, plus the incoming token, as assertion" --> ENTRA
+    MCP -- "Row 8<br/>• <b>OAuth bearer token:</b> new access token, audience: this API" --> API
+    APPROVER -- "Row 9<br/>• <b>OIDC sign-in, then OAuth bearer token:</b> the approver's access token" --> APPROVAL
+    MODEL -. "Row 10<br/>• <b>None, content:</b> tool calls, untrusted" .-> HARNESS
+    MCP -. "Row 10<br/>• <b>None, content:</b> tool results, untrusted" .-> HARNESS
+```
+
 | # | Link (caller → receiver) | Authentication Method | Credentials | Trust Relationship |
 |---|---|---|---|---|
 | 1 | Harness → Azure managed identity endpoint | Managed identity: the platform vouches for the machine | None. Only code on that machine can reach the local endpoint. | An admin assigns a user-assigned managed identity to the machine. Only a user-assigned managed identity can be a federated identity credential ([source](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity)). |
@@ -95,7 +123,7 @@ Each link has three parts. The **authentication method** is how the caller prove
 | 9 | Approver → Approval service (approval gate) | OpenID Connect sign-in in a client app at approval time, then an OAuth bearer token (delegated). This is one common design: no spec defines it. With MCP URL-mode elicitation, the MCP server sends the person to a web page, and the server must check who opened it ([source](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation), checked 30 October 2026). | The approver's access token. At sign-in, the approver proves who they are to Entra ID, ideally with phishing-resistant MFA. | The approval service exposes a scope, and an admin consents to it for the client app. An admin assigns the approver role to a group of approvers. The service checks the signature, the audience, the scope (`scp`), the role (`roles`) and that the caller is a person, not an agent, then records the approver. |
 | 10 | Model → Harness (tool calls)<br/>MCP server → Harness (tool results) | None. This is content, not a caller. | None. TLS only proves which service sent it. | None. The harness treats it as untrusted data. |
 
-**Where the Guardian differs:** It runs locally, so row 1 does not exist. Row 3 uses an API key file (**D4**). The harness never talks to Entra ID: the sidecar runs requests 1 and 2 for the MCP server, as the Guardian's agent identity, with a certificate file (**D2**, **D3**). Row 6 has no token, only network isolation (**D1**). Row 2 and the delegated bullets in rows 5 and 7 are not built (**D5**). Row 9, the approval gate, is planned: the Identity API serves the approval service, and the approver signs in with the device code flow, in the `approve` command's public client app `agent-steward-agent-disable-cli`. See [Architectural Shortcuts](agent-architecture.md#architectural-shortcuts-where-the-guardian-differs).
+**Where the Guardian differs:** It runs locally, so row 1 does not exist. Row 3 uses an API key file (**D4**). The harness never talks to Entra ID: the sidecar runs requests 1 and 2 for the MCP server, as the Guardian's agent identity, with a certificate file (**D2**, **D3**). Row 6 has no token, only network isolation (**D1**). Row 2 and the delegated bullets in rows 5 and 7 are not built (**D5**). Row 9, the approval gate, is planned: the Identity API serves the approval service, and the approver signs in with the authorization code flow and PKCE, in the `approve` command's public client app `agent-steward-agent-disable-cli`. See [Architectural Shortcuts](agent-architecture.md#architectural-shortcuts-where-the-guardian-differs).
 
 Sources (Microsoft Learn, checked 29 October 2026): [Agent autonomous app OAuth flow](https://learn.microsoft.com/entra/agent-id/agent-autonomous-app-oauth-flow), [Agent OAuth flows: On-behalf-of flow](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow), [Configure an application to trust a managed identity](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity), [Microsoft identity platform and OAuth 2.0 On-Behalf-Of flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow) and [Target agents in Conditional Access policies](https://learn.microsoft.com/en-us/entra/identity/conditional-access/howto-target-agent-identities). Row 3: [Claude API authentication](https://platform.claude.com/docs/en/manage-claude/authentication).
 

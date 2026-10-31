@@ -2,11 +2,14 @@
 
     docker compose run --rm approve
 
-It signs the person in with the device code flow, as the public client agent-steward-agent-disable-cli,
-so the token is the person's own: its scp (AgentDisable.Decide) says this app may act for them, and its
-roles (AgentDisable.Approve) say they may approve. The Identity API checks both and records who decided.
-The token stays in memory: it is never written to a file or a log. Device code phishing is a known risk
-of this flow, accepted for this lab (THREATMODEL.md).
+It signs the person in with the authorization code flow and PKCE, as the public client
+agent-steward-agent-disable-cli, so the token is the person's own: its scp (AgentDisable.Decide) says
+this app may act for them, and its roles (AgentDisable.Approve) say they may approve. The Identity API
+checks both and records who decided. The token stays in memory: it is never written to a file or a log.
+
+The person pastes the final URL back, because the command runs in a container and no browser can reach
+a listener in it. That is a lab shortcut: an enterprise tool would catch the redirect itself, or use a
+web page. The code in that URL works once, and only with this run's PKCE verifier.
 
 Everything shown here is data, never instructions. The reason comes from the model, so it is labelled
 as untrusted. An agent's name comes from whoever registered it. Both have their control characters
@@ -29,6 +32,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 POLL_EVERY_SECONDS = 5
+REDIRECT_URI = "http://localhost"   # registered on the client app (setup/bicep/agent-disable-approvers.bicep)
 
 
 class SignInError(Exception):
@@ -131,16 +135,33 @@ def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[
             write("Not sent: this request was already decided, or it expired.")
 
 
-def sign_in(tenant_id: str, client_id: str, api_app_id: str, write: Callable[[str], None]) -> str:
-    """The device code flow. MSAL's default token cache is in memory only."""
+def parse_redirect(pasted: str) -> dict[str, str]:
+    """The query values of the URL the browser landed on, for MSAL to check."""
+    url = urllib.parse.urlsplit(pasted.strip())
+    if f"{url.scheme}://{url.netloc}" != REDIRECT_URI:
+        raise SignInError(f"that is not the {REDIRECT_URI} address the browser landed on")
+    return {name: value for name, value in urllib.parse.parse_qsl(url.query)}
+
+
+def sign_in(tenant_id: str, client_id: str, api_app_id: str, read: Callable[[str], str],
+            write: Callable[[str], None]) -> str:
+    """The authorization code flow with PKCE: MSAL makes the verifier and checks the state. Its
+    default token cache is in memory only."""
     import msal   # here, so the offline tests of the rest need no MSAL
     app = msal.PublicClientApplication(client_id, authority=f"https://login.microsoftonline.com/{tenant_id}")
     # .default: every scope an admin consented to for this client on this API, here AgentDisable.Decide.
-    flow = app.initiate_device_flow(scopes=[f"{api_app_id}/.default"])
-    if "user_code" not in flow:
-        raise SignInError(f"the device code flow did not start: {flow.get('error', 'unknown error')}")
-    write(flow["message"])
-    result = app.acquire_token_by_device_flow(flow)
+    scopes = [f"{api_app_id}/.default"]
+    flow = app.initiate_auth_code_flow(scopes=scopes, redirect_uri=REDIRECT_URI, prompt="select_account")
+    write("1. Open this address in your browser and sign in:\n\n" + flow["auth_uri"] + "\n")
+    write(f"2. The browser then fails to load a {REDIRECT_URI} page. That is expected. Copy its whole address.\n")
+    try:
+        pasted = read("3. Paste the address here: ")
+    except EOFError:
+        raise SignInError("no address was pasted") from None
+    try:
+        result = app.acquire_token_by_auth_code_flow(flow, parse_redirect(pasted), scopes=scopes)
+    except ValueError:   # MSAL's check of the state failed: not the answer to this sign-in
+        raise SignInError("that address does not belong to this sign-in") from None
     if "access_token" not in result:
         raise SignInError(f"sign-in failed: {result.get('error', 'unknown error')}")
     return result["access_token"]
@@ -149,7 +170,7 @@ def sign_in(tenant_id: str, client_id: str, api_app_id: str, write: Callable[[st
 def main() -> int:
     try:
         token = sign_in(os.environ["TENANT_ID"], os.environ["AGENT_DISABLE_CLI_APP_ID"],
-                        os.environ["IDENTITY_API_APP_ID"], print)
+                        os.environ["IDENTITY_API_APP_ID"], input, print)
     except SignInError as error:
         print(f"Not signed in: {error}", file=sys.stderr)
         return 1

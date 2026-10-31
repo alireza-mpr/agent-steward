@@ -2,6 +2,8 @@
 decision. No network and no sign-in."""
 
 import io
+import sys
+import types
 import urllib.error
 
 import pytest
@@ -136,39 +138,79 @@ def test_parse_pending_refuses_anything_else(body):
 
 # Sign-in
 
+FLOW = {"auth_uri": "https://login.example/authorize?state=abc", "state": "abc"}
+LANDED = "http://localhost/?code=the-code&state=abc&session_state=s"
+
+
 class FakeMsalApp:
-    def __init__(self, flow, result):
-        self.flow, self.result = flow, result
-        self.scopes = None
+    def __init__(self, result=None, error=None):
+        self.result, self.error = result, error
+        self.started, self.redeemed = None, None
 
-    def initiate_device_flow(self, scopes):
-        self.scopes = scopes
-        return self.flow
+    def initiate_auth_code_flow(self, **arguments):
+        self.started = arguments
+        return FLOW
 
-    def acquire_token_by_device_flow(self, flow):
+    def acquire_token_by_auth_code_flow(self, flow, response, scopes):
+        self.redeemed = (flow, response, scopes)
+        if self.error:
+            raise self.error
         return self.result
 
 
 def use_msal(monkeypatch, app):
-    import sys
-    import types
     monkeypatch.setitem(sys.modules, "msal", types.SimpleNamespace(PublicClientApplication=lambda client_id, authority: app))
 
 
-def test_sign_in_asks_for_the_consented_scopes_of_the_api_and_shows_the_message(monkeypatch):
-    app = FakeMsalApp({"user_code": "ABC", "message": "Open the page and enter ABC"}, {"access_token": "token"})
+def sign_in(read, lines=None):
+    return approve.sign_in("tenant", "client", "api-app", read, (lines if lines is not None else []).append)
+
+
+def test_sign_in_shows_the_address_and_redeems_what_the_person_pastes(monkeypatch):
+    app = FakeMsalApp({"access_token": "token"})
     use_msal(monkeypatch, app)
     lines = []
 
-    assert approve.sign_in("tenant", "client", "api-app", lines.append) == "token"
-    assert app.scopes == ["api-app/.default"]
-    assert lines == ["Open the page and enter ABC"]
+    assert sign_in(typed(LANDED), lines) == "token"
+    assert app.started == {"scopes": ["api-app/.default"], "redirect_uri": "http://localhost", "prompt": "select_account"}
+    assert FLOW["auth_uri"] in lines[0]
+    # The flow goes back to MSAL with the pasted values, so it checks the state and sends the PKCE verifier.
+    assert app.redeemed == (FLOW, {"code": "the-code", "state": "abc", "session_state": "s"}, ["api-app/.default"])
 
 
-@pytest.mark.parametrize("flow, result", [({"error": "invalid_client"}, {}),
-                                          ({"user_code": "ABC", "message": "m"}, {"error": "authorization_declined"})])
-def test_a_failed_sign_in_raises_and_gives_no_token(flow, result, monkeypatch):
-    use_msal(monkeypatch, FakeMsalApp(flow, result))
+def test_the_pasted_address_may_have_spaces_around_it(monkeypatch):
+    use_msal(monkeypatch, FakeMsalApp({"access_token": "token"}))
+
+    assert sign_in(typed(f"  {LANDED}\n")) == "token"
+
+
+@pytest.mark.parametrize("pasted", ["https://evil.example/?code=x&state=abc", "http://localhost.evil.example/?code=x",
+                                    "https://localhost/?code=x", "the-code", ""])
+def test_an_address_that_is_not_the_redirect_is_refused_before_msal_sees_it(pasted, monkeypatch):
+    app = FakeMsalApp({"access_token": "token"})
+    use_msal(monkeypatch, app)
 
     with pytest.raises(approve.SignInError):
-        approve.sign_in("tenant", "client", "api-app", lambda line: None)
+        sign_in(typed(pasted))
+    assert app.redeemed is None
+
+
+def test_an_address_from_another_sign_in_is_refused(monkeypatch):
+    use_msal(monkeypatch, FakeMsalApp(error=ValueError("state mismatch")))
+
+    with pytest.raises(approve.SignInError, match="does not belong"):
+        sign_in(typed(LANDED))
+
+
+def test_a_refused_sign_in_gives_no_token(monkeypatch):
+    use_msal(monkeypatch, FakeMsalApp({"error": "access_denied"}))
+
+    with pytest.raises(approve.SignInError, match="access_denied"):
+        sign_in(typed("http://localhost/?error=access_denied&state=abc"))
+
+
+def test_no_paste_gives_no_token(monkeypatch):
+    use_msal(monkeypatch, FakeMsalApp({"access_token": "token"}))
+
+    with pytest.raises(approve.SignInError):
+        sign_in(typed())

@@ -1,6 +1,6 @@
 // The people who may approve disabling an agent (FR7): a security group that holds the Identity
 // API's AgentDisable.Approve role, and the public client app that the `approve` command signs in
-// with (device code flow, no secret). Deploy identity-api.bicep first: it defines the role and
+// with (authorization code flow with PKCE, no secret). Deploy identity-api.bicep first: it defines the role and
 // the scope that this file uses.
 //
 // Deploy (signed in with `az login`, lab subscription selected):
@@ -51,14 +51,18 @@ resource approversHoldTheApproveRole 'Microsoft.Graph/appRoleAssignedTo@v1.0' = 
 }
 
 // The `approve` command's app. It runs on the approver's machine and cannot keep a secret, so it
-// is a public client with no credential. "Allow public client flows" turns on the device code
-// flow. Its own registration gives approvals their own name in the sign-in logs, and their own
-// Conditional Access target.
+// is a public client with no credential. It signs in with the authorization code flow and PKCE, so
+// it needs this redirect URI. Public client flows stay off: security defaults block the device code
+// flow anyway. Its own registration gives approvals their own name in the sign-in logs, and their
+// own Conditional Access target.
 resource agentDisableCli 'Microsoft.Graph/applications@v1.0' = {
   uniqueName: 'agent-steward-agent-disable-cli'
   displayName: 'agent-steward-agent-disable-cli'
   signInAudience: 'AzureADMyOrg'
-  isFallbackPublicClient: true
+  isFallbackPublicClient: false
+  publicClient: {
+    redirectUris: ['http://localhost']
+  }
   owners: {
     relationships: [ownerId]
   }
