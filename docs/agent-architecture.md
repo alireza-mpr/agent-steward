@@ -14,8 +14,8 @@ The details of each part are in their own documents:
 | [Security controls](security-controls.md) | Every control in place, with its evidence |
 
 > **Current Implementation Status: Partly Built**
-> * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with two tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent) and its tool allow-list, and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an MCP integration test proves it.
-> * **Not built yet:** The human approval gate, and the correlation-ID scaffold. 
+> * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with three tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent, `disable_agent` disables a dormant agent after a human approves) and its tool allow-list, and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an MCP integration test proves it.
+> * **Not built yet:** The correlation-ID scaffold across all components.
 > 
 > *(See the README's [Delivery status](../README.md#delivery-status) for live progress tracking).*
 
@@ -26,9 +26,11 @@ The details of each part are in their own documents:
   * [Four Architectural Pillars](#four-architectural-pillars)
   * [Zero Trust: Who Checks Whom?](#zero-trust-who-checks-whom)
   * [Error Handling: When a Call Fails](#error-handling-when-a-call-fails)
+  * [Human Approval: Who Approves, and How](#human-approval-who-approves-and-how)
 * [3. The Guardian's Design Today](#3-the-guardians-design-today)
   * [Architectural Shortcuts (Where the Guardian Differs)](#architectural-shortcuts-where-the-guardian-differs)
   * [Component Inventory: Who Holds What?](#component-inventory-who-holds-what)
+  * [The Human Approval Flow: `disable_agent`](#the-human-approval-flow-disable_agent)
 * [4. Blast Radius: What Happens If One Part Is Compromised?](#4-blast-radius-what-happens-if-one-part-is-compromised)
 
 ---
@@ -219,6 +221,46 @@ A run that takes minutes or hours, or waits for a human approval, should not sta
 
 Each failure writes one audit line with the run's correlation ID, the layer, the error code, and the answer chosen: retry, back to the model, or stop. Then an operator can follow one failed run across the harness, the MCP server and the identity provider's sign-in logs. The MCP spec asks clients to "log tool usage for audit purposes".
 
+### Human Approval: Who Approves, and How
+
+A model must not have the last word on a privileged action. A person decides, on a path the model cannot reach, and the decision is bound to one action. The service then acts only on that decision.
+
+**The general rules:**
+
+* **The approval path never runs through the model.** The model can ask. It cannot carry, change or answer the request.
+* **Who approved comes from the person's token,** never from a request body or from the model.
+* **An approval is bound to one action, works once, and expires.**
+* **Anything but a clear approval means no action** (fail closed): a denial, no answer in time, or a service that cannot be reached.
+* **The approver sees facts the service read itself.** The model's text is shown too, labelled as untrusted.
+* **The request, the decision and the action are all on record,** linked by one correlation ID.
+
+#### Who Approves
+
+A **group** of approvers holds the approver role, so adding or removing a person changes only the membership. The group is kept separate from the owners and operators of the agent that asks, so nobody can both steer an agent and approve its actions. This is separation of duties ([NIST SP 800-53, AC-5](https://csrc.nist.gov/projects/cprt/catalog#/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-05)).
+
+**Deviation:** Microsoft makes the **sponsor** of the *target* agent accountable for its purpose and lifecycle decisions, and a sponsor can disable an agent ([Learn](https://learn.microsoft.com/en-us/entra/agent-id/agent-owners-sponsors-managers)). So a design can send the approval to the target's sponsor instead of a central group.
+
+#### How the Approver Proves Who They Are
+
+The approver signs in through a client app with the **authorization code flow and PKCE**, the OAuth best practice ([RFC 9700](https://www.rfc-editor.org/rfc/rfc9700)), ideally with phishing-resistant MFA. The token carries two separate proofs: the **scope** says this app may act for the person, and the **role** says this person may approve ([Scopes and app roles](tokens.md#scopes-and-app-roles)). The service also checks that the caller is a person and not an agent, so an agent can never approve its own request.
+
+**Deviations:**
+
+* **The device code flow** suits devices that are hard to type on, but it is a known phishing route. Entra's security defaults block it ([Learn](https://learn.microsoft.com/en-us/entra/fundamentals/security-defaults)).
+* **CIBA** (OpenID Connect) lets a service ask a person to approve on another device, and **RAR** ([RFC 9396](https://www.rfc-editor.org/rfc/rfc9396)) puts the exact transaction into the consent. Both are the closest standards to an approval gate, but neither is a common choice for agent tools today.
+
+#### How the Request Reaches the Approver
+
+The service **notifies** the approvers, for example by email or Teams, with a link that already identifies the request. The approver never has to look for it, or copy an ID.
+
+**Deviation:** MCP's **URL-mode elicitation** does this inside the tool call: the server sends the client a URL to show the person, and the model is not part of that path. The server "MUST verify the identity of the user who opens the URL" ([MCP spec](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation)).
+
+#### Who Does the Work After the Approval
+
+A **domain service** owns the rules, the approval workflow and the write, with its own identity. The MCP server stays a thin adapter, and the agent's identity never holds the write permission, so the agent can only ask. Every other way in, such as a portal or a script, passes the same rules.
+
+**Deviation:** a tool can either **wait** inside one call, which is simple but ties the call to the caller's connection, or **return "pending" at once**, which needs a later step to report the outcome.
+
 ---
 
 ## 3. The Guardian's Design Today
@@ -291,6 +333,77 @@ To verify our security posture, here is exactly what each container holds and wh
 | **`api`** | Resource API | *No secrets* (validates tokens using Entra's public signing keys). | *Nothing* (only responds to incoming API calls). |
 
 *(Transport Note: The communication between the harness and the MCP server uses **MCP over Streamable HTTP**, the standard transport for standalone networked MCP services. The client sends each MCP message as an HTTP POST to a single `/mcp` endpoint, and the server either replies with a standard JSON payload or streams the response back over the same connection).*
+
+### The Human Approval Flow: `disable_agent`
+
+`disable_agent` disables one dormant agent identity, and only after a human approves (FR7). The MCP server does the checks and the write. The model only asks. The Identity API records who decided.
+
+> **Run live on 31 October 2026:** one approval disabled a fixture, and a read confirmed it. Four denials left their fixtures enabled.
+
+```mermaid
+sequenceDiagram
+    actor O as Operator
+    participant H as Harness and model
+    participant M as MCP server
+    participant G as Microsoft Graph
+    participant A as Identity API
+    participant C as approve command
+    participant E as Entra ID
+    actor P as Approver
+
+    O->>H: main.py --disable-dormant
+    H->>M: tools/call disable_agent(app_id, reason)
+    M->>M: check the allow-list and that app_id is a GUID
+    M->>G: read the agent and its sign-ins (sidecar's token)
+    G-->>M: the facts
+
+    alt The agent is unknown, is the guardian's own, or is not dormant
+        M-->>H: tool error: refused, and nobody is asked
+    else The agent can be disabled
+        M->>A: POST /agents/{agentId}/disableRequests<br/>(facts from Graph, the model's reason)
+        A-->>M: 201, request pending<br/>(409 if one is already waiting: tool error, not disabled)
+        Note over M,A: From here the MCP server polls (loop below) while the approver decides
+
+        P->>C: docker compose run --rm approve
+        C->>E: authorization code flow with PKCE
+        P->>E: sign in, then paste the final address into the command
+        E-->>C: the person's token (scp, roles)
+        C->>A: GET /disableRequests?status=pending
+        A-->>C: pending requests
+        C->>P: show the facts, and the reason labelled untrusted
+        P->>C: approve or deny
+        C->>A: POST .../{requestId}/decision
+        A->>A: check the token (scp, roles, the approve command as client),<br/>store who decided
+
+        loop Every 5 seconds, for at most 4 minutes
+            M->>A: GET /agents/{agentId}/disableRequests/{requestId}
+            A-->>M: status, and who decided
+        end
+
+        alt Approved, matches the request, not used before
+            M->>G: PATCH accountEnabled = false
+            G-->>M: done
+            M->>G: read accountEnabled until it shows false, or give up
+            G-->>M: the current value
+            M-->>H: result: approver's name, request ID, confirmed
+        else Denied, no decision in time, mismatch, reused, or service unreachable
+            M-->>H: tool error: not disabled (fail closed)
+        end
+    end
+```
+
+**Where the guardian differs from [the general practice](#human-approval-who-approves-and-how):**
+
+| General practice | The guardian | Why |
+|---|---|---|
+| A domain service does the write, with its own identity | The MCP server writes, as the guardian, which holds `AgentIdentity.EnableDisable.All` | Timebox |
+| A domain service checks the rules and reads the facts itself | The MCP server does both, and the Identity API trusts the facts it sends | Timebox |
+| A notification delivers the request | The approver runs the `approve` command, which lists what is pending | No web page in the timebox |
+| A local listener or a web page catches the sign-in redirect | The person pastes the final address into the terminal | The command runs in a container |
+| A durable store | In memory. A restart loses pending requests, and nothing is disabled (fail closed) | Lab |
+| An approval is refused once nobody is waiting for it | The Identity API still accepts it, and nothing follows. The MCP server writes `disable_abandoned`, so the record explains why | Known limit |
+
+The next version would use URL-mode elicitation and an approval web page, on the same identity design.
 
 ---
 

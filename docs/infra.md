@@ -20,6 +20,7 @@ How this project creates tenant objects as code: Bicep, Azure Resource Manager (
   - [The blueprint's credential](#the-blueprints-credential)
   - [Run the Agent ID scripts](#run-the-agent-id-scripts)
 - [Local run: the sidecar](#local-run-the-sidecar)
+- [The approve command](#the-approve-command)
 - [Cost](#cost)
 - [Known issue: Bicep on Apple Silicon](#known-issue-bicep-on-apple-silicon)
 - [Not in scope](#not-in-scope)
@@ -296,6 +297,22 @@ What the guardian prints, what each trace mode shows, and its settings file ([co
 - **Pinned image:** The image is pinned by digest, so a changed image cannot slip in.
 
 Sources: the sidecar's [security](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/security), [configuration](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/configuration) and [endpoints](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/endpoints) pages (Microsoft Learn, checked 26 October 2026), and its source code ([`LocalCallerRestriction.cs`](https://github.com/AzureAD/microsoft-identity-web/blob/master/src/Microsoft.Identity.Web.Sidecar/LocalCallerRestriction.cs), [`AuthorizationHeaderEndpoint.cs`](https://github.com/AzureAD/microsoft-identity-web/blob/master/src/Microsoft.Identity.Web.Sidecar/Endpoints/AuthorizationHeaderEndpoint.cs)).
+
+## The approve command
+
+A person approves or denies the guardian's requests to disable an agent (FR7). The command runs on demand, on the `agent` network, because the Identity API is not published to the host:
+
+```sh
+docker compose run --rm approve
+```
+
+1. Open the printed address in a browser and sign in.
+2. The browser then fails to load a `http://localhost:18400` page. That is expected. Copy its whole address.
+3. Paste it into the terminal. Do not share it or save it: it holds the sign-in code. The code works once, and only with this run's PKCE verifier.
+
+The command then waits, and shows each pending request as it arrives. It keeps the token in memory only. To see why the Identity API refused a call, read the `request_rejected` lines in `docker compose logs api`.
+
+The sign-in fails with `AADSTS530035` only if the device code flow comes back: security defaults block that flow ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)).
 
 ## Cost
 

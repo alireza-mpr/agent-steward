@@ -288,7 +288,7 @@ So the short rule is:
 | The guardian's TR for the Identity API (app only) | none | `Findings.Submit`, `AgentDisable.Request` | No person is signed in, so only roles apply. |
 | The `approve` command's token (a person, through `agent-steward-agent-disable-cli`) | `AgentDisable.Decide` | `AgentDisable.Approve` | A person signs in through a client app, so both apply. |
 
-The Identity API needs both claims in the approver's token (FR7, planned):
+The Identity API needs both claims in the approver's token (FR7):
 
 - **The scope is for the client.** Entra issues a token for the API only to an app that got consent for the scope. So another app the approver signs in to cannot approve in their name.
 - **The role is for the person.** The client app holds the scope, but a person outside the group `agent-steward-agent-disable-approvers` gets no `AgentDisable.Approve`, so the API refuses them.
@@ -308,6 +308,8 @@ The roles and the scope are defined in [identity-api.bicep](../setup/bicep/ident
 7. **Log:** Record the agent (`appid` or `azp`, and `oid`) and its blueprint (`xms_par_app_azp`).
 
 To tell the modes apart, `idtyp` is `app` in the autonomous flow and `user` when a user is in the token. `xms_sub_fct` containing `13` marks an agent's user account instead of a human.
+
+By default, Entra sends `idtyp` only on app-only tokens. A user token carries it only when the API's optional claim asks for it with `include_user_token` ([Learn](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims-reference)). In this lab, the first real approver token had no `idtyp`, so the approver check refused it with a 403. The fix was the setting in [identity-api.bicep](../setup/bicep/identity-api.bicep), not a looser check.
 
 Learn lists the `xms_*` agent claims as optional claims, so check that tokens for your own API carry them. If they are missing, check 5 rejects the token, so the API fails safe. In this lab, the guardian's first token for the Identity API had none of them, and no `idtyp` either. They appeared only after the API's app registration asked for them as optional claims (`idtyp`, `xms_act_fct`, `xms_sub_fct` and `xms_par_app_azp`, in [identity-api.bicep](../setup/bicep/identity-api.bicep)).
 

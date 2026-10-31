@@ -8,6 +8,7 @@ For where the harness sits in the agent's design, see [Agent architecture](agent
 
 - [1. The Agent Loop in Action](#1-the-agent-loop-in-action)
   - [Step-by-Step: How One Run Works](#step-by-step-how-one-run-works)
+  - [The Run's Task](#the-runs-task)
 - [2. Why the Model Stopped: stop_reason](#2-why-the-model-stopped-stop_reason)
 - [3. The Model Settings](#3-the-model-settings)
 - [4. Seeing a Run: Tags and Traces](#4-seeing-a-run-tags-and-traces)
@@ -48,7 +49,7 @@ sequenceDiagram
         alt tool not on the allow-list
             M-->>G: error -32602 (Unknown tool), logged.<br/>The harness stops the run.
         else tool allowed
-            opt privileged tool (planned)
+            opt privileged tool
                 M->>M: wait for a human's approval
             end
             M->>S: token for the API, as the agent identity
@@ -67,6 +68,16 @@ sequenceDiagram
 The JSON of one round, in its general form, is in [The Messages API](messages-api.md#1-the-big-picture-a-stateless-conversation-loop). To see the exact bodies of a real run, use `GUARDIAN_TRACE=full` ([Seeing a Run](#4-seeing-a-run-tags-and-traces)).
 
 ---
+
+### The Run's Task
+
+A run only reports by default. To also ask a human to approve disabling each dormant agent (FR7), the operator chooses the other task:
+
+```sh
+docker compose run --rm guardian python main.py --disable-dormant
+```
+
+Only the command line chooses the task, so nothing the model reads can change it. The rule that the model must not use `disable_agent` on the default task is only a prompt rule. If a tricked model calls the tool anyway, the server's checks and the human still stop it ([the flow](agent-architecture.md#the-human-approval-flow-disable_agent)).
 
 ## 2. Why the Model Stopped: stop_reason
 
@@ -109,7 +120,7 @@ Some settings are fixed in the code, because they are not choices an operator sh
 | `max_tokens` | `16000` | A hard cap on the output of one answer. |
 | `temperature` | not set | This model does not accept `temperature`, `top_p` or `top_k` (HTTP 400). Effort does not control randomness, so two runs can give different answers. |
 
-**Why `medium`:** the guardian's task is short and routine: two tools, two or three turns, and a short report. The level was chosen by judgment, not measured.
+**Why `medium`:** the guardian's task is short and routine: three tools, a few turns, and a short report. The level was chosen by judgment, not measured.
 
 **Effort is not a security control.** A lower effort usually means fewer tool calls, but no control in this design depends on it. The turn limit (C12) is the hard limit.
 
@@ -136,7 +147,7 @@ Errors go to stderr. A run without a trace prints lines like these (the IDs are 
 
 ```
 [harness] settings: model=claude-opus-5-5, effort=medium, max_rounds=10, strict_tool_inputs=True, refusal_fallback=True
-[mcp]     tools/list: scan_registry, get_agent
+[mcp]     tools/list: scan_registry, get_agent, disable_agent
 [model]   round 1: claude-opus-5-5 stopped with tool_use, asks for scan_registry
 [mcp]     round 1: tools/call scan_registry({}) succeeded
 [model]   round 2: claude-opus-5-5 stopped with tool_use, asks for get_agent

@@ -61,7 +61,7 @@ A modern client's first request is `server/discover`. The server answers with th
 
 **The risk.** A changing tool list is a known MCP attack, often called a *rug pull*: a server first shows harmless tools, then changes a tool's description or adds a new tool. A client that simply reloads the list on every notification hands the new tools to the model without any review. The industry answer is that the client checks every tool against its own allow-list, and pins the approved tool definitions (for example, by a hash), so a changed definition is refused.
 
-**In the guardian.** The server declares `listChanged: true` only because these are the SDK's defaults: its two tools never change. The harness reads the tool list once, at the start of a run, and never reads it again, so the tools the model sees are fixed for the run. The harness does not check the list against an allow-list of its own, and does not pin the definitions: it trusts its own server, which this project builds and runs inside the Compose network ([D1](agent-architecture.md#architectural-shortcuts-where-the-guardian-differs)). The MCP server enforces its tool allow-list ([C22](security-controls.md#the-mcp-server)): `tools/list` shows only the tools on it, and `tools/call` refuses any other name. A second check in the harness is not planned.
+**In the guardian.** The server declares `listChanged: true` only because these are the SDK's defaults: its tools never change. The harness reads the tool list once, at the start of a run, and never reads it again, so the tools the model sees are fixed for the run. The harness does not check the list against an allow-list of its own, and does not pin the definitions: it trusts its own server, which this project builds and runs inside the Compose network ([D1](agent-architecture.md#architectural-shortcuts-where-the-guardian-differs)). The MCP server enforces its tool allow-list ([C22](security-controls.md#the-mcp-server)): `tools/list` shows only the tools on it, and `tools/call` refuses any other name. A second check in the harness is not planned.
 
 ### Tools: definitions, results and errors
 
@@ -169,6 +169,7 @@ Content-Type: application/json
 | Accepted names (`Host` header) | `sidecar:8100` only, as protection against DNS rebinding. The Inspector override adds `localhost:8100` and `127.0.0.1:8100`. |
 | `scan_registry()` | Runs the four registry rules on Graph data, sends the findings to the Identity API's audit log itself ([ADR-001](decisions.md#adr-001-the-mcp-server-sends-the-findings-to-the-identity-api-never-the-model)), and returns the findings with the audit's correlation ID. Not read-only: every call writes to the audit log. |
 | `get_agent(app_id)` | Returns one agent identity's name, blueprint and description. Read-only. It refuses any `app_id` that is not a GUID, before it calls Graph. |
+| `disable_agent(app_id, reason)` | Asks a human to approve disabling one dormant agent identity, waits up to 4 minutes, and disables it only after an approval. It refuses the guardian's own agents and any agent that is not dormant, before anyone is asked ([the flow](agent-architecture.md#the-human-approval-flow-disable_agent)). |
 
 ## 5. Calling it from your machine
 
