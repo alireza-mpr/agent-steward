@@ -18,6 +18,11 @@ This doc explains why an API must be registered before any token exists for it, 
   - [Where Entra checks the parent blueprint](#where-entra-checks-the-parent-blueprint)
   - [How a token names the API](#how-a-token-names-the-api)
   - [What TR does not show: the blueprint's credential](#what-tr-does-not-show-the-blueprints-credential)
+- [Scopes and app roles](#scopes-and-app-roles)
+  - [The two side by side](#the-two-side-by-side)
+  - [The standard](#the-standard)
+  - [Where vendors differ](#where-vendors-differ)
+  - [In the guardian](#in-the-guardian)
 - [What an API must check](#what-an-api-must-check)
   - [What kind of caller vs what it may do](#what-kind-of-caller-vs-what-it-may-do)
   - [A real negative case: the blueprint's own token](#a-real-negative-case-the-blueprints-own-token)
@@ -235,6 +240,61 @@ Tested in this lab on 27 October 2026. A 1-day secret was added to the guardian'
 
 TR's `azpacr` describes request 2 only. There the client is the agent identity, and its proof is always T1, a signed assertion. Entra records that proof as a federated identity credential. So a rule like "blueprints use certificates, never secrets" must be enforced on the blueprint itself, by the credentials it holds ([how](infra.md#the-blueprints-credential)), or watched in the sign-in log. The Identity API cannot enforce it.
 
+## Scopes and app roles
+
+**In one line:** a role says what a caller (a person or an app) may do, and a scope says what a client app may do for the signed-in person. When a person uses an app, the API checks both, so the action is allowed only when both allow it.
+
+### The two side by side
+
+| | Role (app role) | Scope (delegated permission) |
+|---|---|---|
+| Question it answers | May this **caller** do it? | May this **client app** do it **for this person**? |
+| Who gets it | A user, a group or a service principal (an agent too) | A client application |
+| How it is given | An admin assigns it | Someone consents to it: the user, or an admin for all users |
+| Claim in the token | `roles` | `scp` |
+| When it is in the token | App-only tokens and user tokens | User (delegated) tokens only |
+
+A picture to remember it: you may drive your car, so that is your role. A valet key lets the valet drive it but not open the boot, so that is a scope. The valet can do only what both allow.
+
+### The standard
+
+- **Scope is OAuth's word, and it is general.** It is the extent of the access the client asks for, with or without a user ([RFC 6749 §3.3](https://www.rfc-editor.org/rfc/rfc6749#section-3.3)). Every grant can carry a `scope` parameter, also the client credentials grant, which has no user ([§4.4.2](https://www.rfc-editor.org/rfc/rfc6749#section-4.4.2)). So by the standard, an app-only token can hold scopes.
+- **Roles are not in core OAuth.** The JWT access token profile puts the granted scopes in a `scope` claim, one string with the values separated by spaces. It only allows `roles`, `groups` and `entitlements` claims, borrowed from SCIM ([RFC 9068 §2.2.3](https://www.rfc-editor.org/rfc/rfc9068#section-2.2.3)).
+
+### Where vendors differ
+
+- **Entra splits permissions by whether a user is in the token** ([source](https://learn.microsoft.com/en-us/entra/identity-platform/permissions-consent-overview)):
+  - With a user, the app gets **delegated permissions** (scopes) in `scp`, and it can never reach more than the user could.
+  - With no user, the app gets **application permissions**, which are app roles, in `roles`. Only the client credentials grant gives them.
+  - So an app-only token **never** has `scp`. A user token can have both: `scp` for the client, and `roles` for the roles the user holds on this API.
+  - The claim is named `scp`, not the standard `scope`.
+  - The same app-role object serves as a user's role and as an app's permission.
+  - On-Behalf-Of uses only delegated scopes, never app roles ([source](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow)).
+- **The `.default` trap in Entra:** an app-only client still sends `scope=<appId>/.default`, but what comes back is roles. In the client credentials grant, `scope` is only the name of the request parameter. `.default` means "every permission an admin granted to me on this API".
+- **Okta follows the standard more closely:** a client credentials token carries the granted custom scopes in `scp` ([source](https://developer.okta.com/docs/guides/implement-grant-type/clientcreds/main/)).
+- **Auth0 too:** a machine-to-machine app gets the scopes of its client grant in the token's `scope` claim ([source](https://auth0.com/docs/get-started/applications/application-access-to-apis-client-grants)).
+
+So the short rule is:
+
+| Platform | Scope means |
+|---|---|
+| OAuth standard, Okta, Auth0 | What the client may do, with or without a user |
+| Entra | What the client may do **for a signed-in user**. App-only access uses app roles. |
+
+### In the guardian
+
+| Token | `scp` | `roles` | Why |
+|---|---|---|---|
+| The guardian's TR for the Identity API (app only) | none | `Findings.Submit`, `AgentDisable.Request` | No person is signed in, so only roles apply. |
+| The `approve` command's token (a person, through `agent-steward-agent-disable-cli`) | `AgentDisable.Decide` | `AgentDisable.Approve` | A person signs in through a client app, so both apply. |
+
+The Identity API needs both claims in the approver's token (FR7, planned):
+
+- **The scope is for the client.** Entra issues a token for the API only to an app that got consent for the scope. So another app the approver signs in to cannot approve in their name.
+- **The role is for the person.** The client app holds the scope, but a person outside the group `agent-steward-agent-disable-approvers` gets no `AgentDisable.Approve`, so the API refuses them.
+
+The roles and the scope are defined in [identity-api.bicep](../setup/bicep/identity-api.bicep). The group, the client app and its consent are in [agent-disable-approvers.bicep](../setup/bicep/agent-disable-approvers.bicep).
+
 ## What an API must check
 
 **In one line:** an API decides from the token alone whether to accept a call, using a fixed list of checks, and the first failed check rejects the call.
@@ -282,3 +342,4 @@ So check 5 rejects it: its actor facets do not contain `11`.
 - [Access token claims reference](https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference) (Microsoft Learn, checked 26 October 2026).
 - [Token claims reference for agent IDs](https://learn.microsoft.com/en-us/entra/agent-id/agent-token-claims) (Microsoft Learn, updated August 2026, checked 26 October 2026).
 - Real tokens from this lab's guardian agent identity, 26 October 2026.
+- Scopes and app roles: [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749), [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [Overview of permissions and consent](https://learn.microsoft.com/en-us/entra/identity-platform/permissions-consent-overview) (Microsoft Learn), [Okta client credentials](https://developer.okta.com/docs/guides/implement-grant-type/clientcreds/main/) and [Auth0 client grants](https://auth0.com/docs/get-started/applications/application-access-to-apis-client-grants), checked 30 October 2026.
