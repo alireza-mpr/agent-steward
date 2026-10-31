@@ -13,16 +13,16 @@ C numbers are in the [control register](docs/security-controls.md), with their e
 
 | Risk | Status | Why | Controls | Where | MAESTRO layer | Accepted |
 |---|---|---|---|---|---|---|
-| ASI01 Agent Goal Hijack | Mitigated | A planted attack failed in the [agent eval](tests/agent_eval/eval_prompt_injection.py), and the hard controls hold even if the model is fooled | C11, C13, C22-C25 | [server.py](src/mcp_server/server.py) | 1 Foundation Models, 3 Agent Frameworks | A5, A6 |
-| ASI02 Tool Misuse & Exploitation | Mitigated | Three tools on an allow-list, checked inputs, and a person before the only write | C8, C9, C21-C25 | [tool-allow-list.json](config/tool-allow-list.json) | 3 Agent Frameworks | A3 |
-| ASI03 Identity & Privilege Abuse | Mitigated | One agent identity, least privilege, and every token checked. An agent cannot approve | C1-C7, C26 | [token_validation.py](src/identity_api/token_validation.py) | 6 Security and Compliance | A1, A2, A7 |
-| ASI04 Agentic Supply Chain Vulnerabilities | Mitigated | The sidecar image and Python packages are pinned. The history scan is still planned (NFR6) | C16, C18 | [docker-compose.yml](docker-compose.yml) | 4 Deployment and Infrastructure | - |
-| ASI05 Unexpected Code Execution | Out of scope | No tool runs code, and the model's output is never executed. Containers run as non-root as a second layer | C19, C22 | [Dockerfile](src/mcp_server/Dockerfile) | 4 Deployment and Infrastructure | - |
+| ASI01 Agent Goal Hijack | Mitigated | A planted attack failed in the [agent eval](tests/agent_eval/eval_prompt_injection.py), and the hard controls hold even if the model is fooled | C24, C11 | [server.py](src/mcp_server/server.py) | 1 Foundation Models, 3 Agent Frameworks | A5, A6 |
+| ASI02 Tool Misuse & Exploitation | Mitigated | Enforcing allow-list in MCP server, human approval on disable | C24, C22 | [tool-allow-list.json](config/tool-allow-list.json) | 3 Agent Frameworks | A3 |
+| ASI03 Identity & Privilege Abuse | Mitigated | Human in the loop, token checks, least privilege, one agent identity | C26, C7, C6, C1 | [token_validation.py](src/identity_api/token_validation.py) | 6 Security and Compliance | A1, A2, A7 |
+| ASI04 Agentic Supply Chain Vulnerabilities | Accepted | Pinned versions, but no dependency scanning | C18 | [docker-compose.yml](docker-compose.yml) | 4 Deployment and Infrastructure | - |
+| ASI05 Unexpected Code Execution | Out of scope | No tool runs code | C22 | [tool-allow-list.json](config/tool-allow-list.json) | 4 Deployment and Infrastructure | - |
 | ASI06 Memory & Context Poisoning | Out of scope | No memory survives a run. Poisoned text within a run is ASI01 | C13 | [harness.py](src/guardian/harness.py) | 2 Data Operations | - |
 | ASI07 Insecure Inter-Agent Communication | Out of scope | One agent. The fixture agents are registry entries and run no code | - | - | 7 Agent Ecosystem | - |
-| ASI08 Cascading Failures | Mitigated | A limit on model calls, fail closed on errors, and one pending request per agent | C12, C23, C27 | [harness.py](src/guardian/harness.py) | 3 Agent Frameworks | A4 |
-| ASI09 Human-Agent Trust Exploitation | Mitigated | The approver sees facts from Graph, the model's text is labelled untrusted, and only the full word approves. A person can still approve carelessly | C24, C27, C28 | [approve.py](src/approve_cli/approve.py) | 7 Agent Ecosystem | A3, A5 |
-| ASI10 Rogue Agents | Mitigated | Rules flag bad agents, every decision is audited, and a disable path exists. Revocation is planned (FR11) | C14, C15, C24 | [rules.py](src/mcp_server/rules.py) | 5 Evaluation and Observability, 6 Security and Compliance | A7 |
+| ASI08 Cascading Failures | Mitigated | A limit on model calls, fail closed on errors | C12, C23 | [harness.py](src/guardian/harness.py) | 3 Agent Frameworks | A4 |
+| ASI09 Human-Agent Trust Exploitation | Accepted | Facts from Graph and the model's text labelled untrusted, but a person can still approve carelessly | C28, C27 | [approve.py](src/approve_cli/approve.py) | 7 Agent Ecosystem | A3, A5 |
+| ASI10 Rogue Agents | Accepted | Registry rules flag bad agents, audit lines, a disable path, but no detection of an active agent misbehaving | C14, C15, C24 | [rules.py](src/mcp_server/rules.py) | 5 Evaluation and Observability, 6 Security and Compliance | A7 |
 
 ## Accepted risks
 
