@@ -17,6 +17,7 @@ never through here. This server's role, AgentDisable.Request, opens only the two
 """
 
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Awaitable, Callable
@@ -39,8 +40,8 @@ class DisableRequest:
 
 
 class ApprovalError(Exception):
-    """The request was not approved, so nothing may be disabled. reason is one of: denied,
-    expired, mismatch, reused, unavailable."""
+    """The request was not approved, so nothing may be disabled. reason is one of: already_waiting,
+    denied, expired, mismatch, reused, unavailable."""
 
     def __init__(self, reason: str):
         super().__init__(reason)
@@ -83,8 +84,13 @@ class IdentityApiApprovals:
             return parse_request(json.load(response))
 
     def create(self, agent_id: str, reason: str, facts: dict, correlation_id: str) -> DisableRequest:
-        return self._call("POST", f"/agents/{urllib.parse.quote(agent_id)}/disableRequests", correlation_id,
-                          {"reason": reason, "facts": facts})
+        try:
+            return self._call("POST", f"/agents/{urllib.parse.quote(agent_id)}/disableRequests", correlation_id,
+                              {"reason": reason, "facts": facts})
+        except urllib.error.HTTPError as error:
+            if error.code == 409:
+                raise ApprovalError("already_waiting") from None
+            raise
 
     def get(self, agent_id: str, request_id: str) -> DisableRequest:
         return self._call("GET", f"/agents/{urllib.parse.quote(agent_id)}/disableRequests/"

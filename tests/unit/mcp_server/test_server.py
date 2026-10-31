@@ -14,7 +14,7 @@ from mcp.types import INVALID_PARAMS
 
 import server
 from allow_list import load_allow_list
-from approval import DisableRequest
+from approval import ApprovalError, DisableRequest
 from graph_reader import AgentDetails
 from rules import Finding
 
@@ -309,6 +309,30 @@ def test_disable_agent_fails_closed_when_the_request_cannot_be_created(disable_s
     assert outcome.is_error and "reached" in outcome.content[0].text
     assert disabled == []
     assert {"event": "disable_refused", "agent": AGENT.app_id, "reason": "unavailable"} in audit_lines(capsys)
+
+
+def test_the_write_is_on_record_with_the_approver(disable_setup, capsys):
+    _, use = disable_setup
+    use(FakeApprovals("approved"))
+
+    disable()
+
+    [line] = [line for line in audit_lines(capsys) if line["event"] == "agent_disabled"]
+    assert (line["approver_id"], line["approver_name"], line["confirmed"]) == ("approver-oid", "An Approver", True)
+
+
+def test_a_second_request_for_an_agent_gets_its_own_message(disable_setup, capsys):
+    disabled, use = disable_setup
+    class Waiting(FakeApprovals):
+        def create(self, *args):
+            raise ApprovalError("already_waiting")
+    use(Waiting("approved"))
+
+    outcome = disable()
+
+    assert outcome.is_error and "already waiting" in outcome.content[0].text
+    assert disabled == []
+    assert {"event": "disable_refused", "agent": AGENT.app_id, "reason": "already_waiting"} in audit_lines(capsys)
 
 
 def test_disable_agent_reports_and_audits_a_failed_write_after_an_approval(disable_setup, monkeypatch, capsys):

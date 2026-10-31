@@ -162,6 +162,7 @@ class DisableResult:
 
 # The model reads these. They say what happened, and no internal detail (CWE-209).
 NOT_APPROVED = {
+    "already_waiting": "Not disabled: a request for this agent is already waiting.",
     "denied": "Not disabled: the approver denied the request.",
     "expired": "Not disabled: no approver decided in time.",
     "mismatch": "Not disabled: the approval service's answer did not match the request.",
@@ -216,18 +217,21 @@ async def check_can_be_disabled(graph: GraphClient, app_id: str) -> tuple[AgentD
 
 
 async def request_approval(service: IdentityApiApprovals, agent: AgentDetails, dormant: Finding, reason: str,
-                           correlation_id: str) -> DisableRequest | None:
-    """Create the disable request. Returns None when the approval service cannot be reached. The
+                           correlation_id: str) -> tuple[DisableRequest | None, str | None]:
+    """Create the disable request. Returns the request and None, or None and why there is none. The
     facts come from Graph, so the approver can trust them. The reason comes from the model."""
     facts = {"name": agent.name, "blueprintAppId": agent.blueprint_app_id, "flaw": dormant.detail,
              "lastSignIn": dormant.date}
     try:
         request = await asyncio.to_thread(service.create, agent.app_id, reason[:MAX_REASON], facts, correlation_id)
+    except ApprovalError as error:
+        audit(event="disable_refused", agent=agent.app_id, reason=error.reason)
+        return None, error.reason
     except SERVICE_ERRORS:
         audit(event="disable_refused", agent=agent.app_id, reason="unavailable")
-        return None
+        return None, "unavailable"
     audit_request("disable_requested", request, correlation_id)
-    return request
+    return request, None
 
 
 async def wait_for_approval(service: IdentityApiApprovals, request: DisableRequest,
@@ -245,14 +249,16 @@ async def wait_for_approval(service: IdentityApiApprovals, request: DisableReque
     return approved, None
 
 
-async def write_disable(graph: GraphClient, request: DisableRequest, correlation_id: str) -> bool | None:
-    """The write. Returns whether a read already shows it, or None when the write failed."""
+async def write_disable(graph: GraphClient, approved: DisableRequest, correlation_id: str) -> bool | None:
+    """The write. Returns whether a read already shows it, or None when the write failed. Its audit
+    lines name the approver, so the action stands on its own (FR7)."""
+    approver = {"approver_id": approved.decided_by_id, "approver_name": approved.decided_by_name}
     try:
-        confirmed = await asyncio.to_thread(disable_agent_identity, graph, request.agent_id)
+        confirmed = await asyncio.to_thread(disable_agent_identity, graph, approved.agent_id)
     except SERVICE_ERRORS:
-        audit_request("disable_failed", request, correlation_id)
+        audit_request("disable_failed", approved, correlation_id, **approver)
         return None
-    audit_request("agent_disabled", request, correlation_id, confirmed=confirmed)
+    audit_request("agent_disabled", approved, correlation_id, confirmed=confirmed, **approver)
     return confirmed
 
 
@@ -269,15 +275,15 @@ async def disable_agent(app_id: str, reason: str) -> DisableResult:
     if refusal:
         raise ToolError(refusal)
 
-    request = await request_approval(service, agent, dormant, reason, correlation_id)
-    if request is None:
-        raise ToolError(NOT_APPROVED["unavailable"])
+    request, not_created = await request_approval(service, agent, dormant, reason, correlation_id)
+    if not_created:
+        raise ToolError(NOT_APPROVED[not_created])
 
     approved, not_approved = await wait_for_approval(service, request, correlation_id)
     if not_approved:
         raise ToolError(NOT_APPROVED[not_approved])
 
-    confirmed = await write_disable(graph, request, correlation_id)
+    confirmed = await write_disable(graph, approved, correlation_id)
     if confirmed is None:
         raise ToolError("Not disabled: the approver approved, but the write to Microsoft Graph failed.")
 

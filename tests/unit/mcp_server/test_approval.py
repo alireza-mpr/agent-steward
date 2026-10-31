@@ -2,11 +2,14 @@
 and the clock is fake, so the 4-minute limit takes no time."""
 
 import asyncio
+import io
+import urllib.error
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from approval import POLL_EVERY, WAIT_FOR_APPROVAL, ApprovalError, DisableRequest, parse_request, wait_for_decision
+from approval import (POLL_EVERY, WAIT_FOR_APPROVAL, ApprovalError, DisableRequest, IdentityApiApprovals, parse_request,
+                      wait_for_decision)
 
 CREATED = DisableRequest("request-1", "agent-1", "pending")
 APPROVED = DisableRequest("request-1", "agent-1", "approved", "approver-oid", "An Approver")
@@ -102,3 +105,27 @@ def test_parse_request_reads_a_pending_request_with_no_approver():
 def test_parse_request_refuses_anything_else(body):
     with pytest.raises(ValueError):
         parse_request(body)
+
+
+# Creating a request
+
+def creating_answers(monkeypatch, code):
+    def fail(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, code, "refused", {}, io.BytesIO())
+    monkeypatch.setattr("approval.urllib.request.urlopen", fail)
+    return IdentityApiApprovals("http://api", lambda: "token")
+
+
+def test_a_409_on_create_means_a_request_is_already_waiting(monkeypatch):
+    service = creating_answers(monkeypatch, 409)
+
+    with pytest.raises(ApprovalError) as error:
+        service.create("agent-1", "reason", {}, "correlation-1")
+    assert error.value.reason == "already_waiting"
+
+
+def test_any_other_refusal_on_create_stays_a_service_error(monkeypatch):
+    service = creating_answers(monkeypatch, 403)
+
+    with pytest.raises(OSError):
+        service.create("agent-1", "reason", {}, "correlation-1")

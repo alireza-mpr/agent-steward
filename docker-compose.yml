@@ -52,6 +52,7 @@ services:
     environment:
       TENANT_ID: ${TENANT_ID:?set TENANT_ID in .env}
       IDENTITY_API_APP_ID: ${IDENTITY_API_APP_ID:?set IDENTITY_API_APP_ID in .env}
+      AGENT_DISABLE_CLI_APP_ID: ${AGENT_DISABLE_CLI_APP_ID:?set AGENT_DISABLE_CLI_APP_ID in .env}
     networks:
       - agent
 

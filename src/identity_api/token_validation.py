@@ -9,6 +9,9 @@ from dataclasses import dataclass
 import jwt
 
 AGENT_IDENTITY_FACET = "11"   # in xms_act_fct: the actor (the client) is an agent identity
+AGENT_USER_FACET = "13"       # in xms_sub_fct: the subject is an agent's user account
+DECIDE_SCOPE = "AgentDisable.Decide"
+APPROVE_ROLE = "AgentDisable.Approve"
 CLOCK_SKEW_SECONDS = 60
 
 
@@ -30,8 +33,8 @@ class TokenRejected(Exception):
 @dataclass(frozen=True)
 class ApiSettings:
     tenant_id: str
-    audience: str         # this API's client ID: v2 tokens carry it in aud
-    required_role: str    # the app role a caller must hold, for example Findings.Submit
+    audience: str               # this API's client ID: v2 tokens carry it in aud
+    approver_client_id: str     # the only client app an approver may use: the approve command's
 
     @property
     def issuer(self) -> str:
@@ -40,7 +43,7 @@ class ApiSettings:
 
 @dataclass(frozen=True)
 class Caller:
-    """Who called, for the audit line (FR8)."""
+    """Which agent called, for the audit line (FR8)."""
 
     agent_app_id: str       # azp: the agent identity
     agent_object_id: str    # oid
@@ -48,14 +51,23 @@ class Caller:
     mode: str               # autonomous (idtyp app) or obo (idtyp user)
 
 
-def verify_token(token: str, signing_key, settings: ApiSettings, now: float) -> Caller:
-    """Check 1, the signature, then checks 2 to 6 on the claims."""
+@dataclass(frozen=True)
+class Approver:
+    """Which person decided, for the audit line (FR7). Only from the token, never from a request body."""
+
+    object_id: str          # oid
+    name: str
+    client_app_id: str      # azp: the app the person used
+
+
+def check_signature(token: str, signing_key) -> dict:
+    """Check 1. Returns the claims."""
     try:
-        claims = jwt.decode(
+        return jwt.decode(
             token,
             signing_key,
             algorithms=["RS256"],
-            # The library checks only the signature here. Checks 2 to 4 run in check_claims,
+            # The library checks only the signature here. Checks 2 to 4 run in check_shared,
             # so that each failure has its own reason, in the documented order.
             options={
                 "verify_aud": False,
@@ -67,12 +79,15 @@ def verify_token(token: str, signing_key, settings: ApiSettings, now: float) -> 
         )
     except jwt.InvalidTokenError as error:
         raise TokenRejected(401, f"signature: {error}") from error
-    return check_claims(claims, settings, now)
 
 
-def check_claims(claims: dict, settings: ApiSettings, now: float) -> Caller:
-    """Checks 2 to 6. Raises TokenRejected at the first one that fails."""
-    client = claims.get("azp") or claims.get("appid")
+def client_of(claims: dict) -> str | None:
+    return claims.get("azp") or claims.get("appid")
+
+
+def check_shared(claims: dict, settings: ApiSettings, now: float) -> None:
+    """Checks 2 to 4, for every caller. Raises TokenRejected at the first one that fails."""
+    client = client_of(claims)
 
     # 2. Issuer and tenant.
     if claims.get("iss") != settings.issuer or claims.get("tid") != settings.tenant_id:
@@ -91,15 +106,26 @@ def check_claims(claims: dict, settings: ApiSettings, now: float) -> Caller:
     if now >= exp + CLOCK_SKEW_SECONDS:
         raise TokenRejected(401, "lifetime: token expired", client)
 
+
+def holds_role(claims: dict, role: str) -> bool:
+    # A string is not a list: "in" would match a substring, so it must fail too.
+    roles = claims.get("roles")
+    return isinstance(roles, list) and role in roles
+
+
+def check_agent(claims: dict, settings: ApiSettings, role: str, now: float) -> Caller:
+    """Checks 2 to 6 for an agent that must hold this app role."""
+    check_shared(claims, settings, now)
+    client = client_of(claims)
+
     # 5. Agent. The actor facets are a space-separated list in any order, so look for 11
     # among the values. Never compare the whole string.
     if AGENT_IDENTITY_FACET not in str(claims.get("xms_act_fct", "")).split():
         raise TokenRejected(403, "agent: caller is not an agent identity", client)
 
     # 6. Permission. App-only tokens carry application permissions in roles, never in scp.
-    roles = claims.get("roles")
-    if not isinstance(roles, list) or settings.required_role not in roles:
-        raise TokenRejected(403, f"permission: missing app role {settings.required_role}", client)
+    if not holds_role(claims, role):
+        raise TokenRejected(403, f"permission: missing app role {role}", client)
 
     return Caller(
         agent_app_id=client or "",
@@ -107,3 +133,42 @@ def check_claims(claims: dict, settings: ApiSettings, now: float) -> Caller:
         blueprint_app_id=claims.get("xms_par_app_azp", ""),
         mode={"app": "autonomous", "user": "obo"}.get(claims.get("idtyp"), "unknown"),
     )
+
+
+def check_approver(claims: dict, settings: ApiSettings, now: float) -> Approver:
+    """Checks 2 to 4, then that a human uses the approve command and may approve (FR7). A missing
+    claim fails: an agent must never be able to approve, not even its own request."""
+    check_shared(claims, settings, now)
+    client = client_of(claims)
+
+    # A person, signed in: not an app, not an agent, not an agent's user account.
+    if claims.get("idtyp") != "user":
+        raise TokenRejected(403, "approver: no user in the token", client)
+    if AGENT_IDENTITY_FACET in str(claims.get("xms_act_fct", "")).split():
+        raise TokenRejected(403, "approver: the client is an agent identity", client)
+    if AGENT_USER_FACET in str(claims.get("xms_sub_fct", "")).split():
+        raise TokenRejected(403, "approver: the user is an agent's user account", client)
+
+    # The right app. The scope already limits who can get this token, and this still holds if
+    # someone grants that scope to another app by mistake.
+    if not settings.approver_client_id or client != settings.approver_client_id:
+        raise TokenRejected(403, "approver: not the approve command's client app", client)
+
+    # The app may act for the person (scp), and the person may approve (roles).
+    if DECIDE_SCOPE not in str(claims.get("scp", "")).split():
+        raise TokenRejected(403, f"permission: missing scope {DECIDE_SCOPE}", client)
+    if not holds_role(claims, APPROVE_ROLE):
+        raise TokenRejected(403, f"permission: missing app role {APPROVE_ROLE}", client)
+
+    object_id = claims.get("oid")
+    if not object_id:
+        raise TokenRejected(403, "approver: no oid, so the decision could not be recorded", client)
+    return Approver(object_id, claims.get("name") or claims.get("preferred_username") or "", client)
+
+
+def verify_agent(token: str, signing_key, settings: ApiSettings, role: str, now: float) -> Caller:
+    return check_agent(check_signature(token, signing_key), settings, role, now)
+
+
+def verify_approver(token: str, signing_key, settings: ApiSettings, now: float) -> Approver:
+    return check_approver(check_signature(token, signing_key), settings, now)
