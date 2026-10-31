@@ -14,6 +14,9 @@ each conversation in its own sections:
     docker compose run --rm -e GUARDIAN_TRACE=full guardian    # the exact request and response bodies, in full
 The trace holds real tenant data (agent names, IDs), so keep it out of git (run*.txt is ignored)
 and redact it in any screenshot.
+
+By default a run only reports. To also ask a human to approve disabling each dormant agent (FR7):
+    docker compose run --rm guardian python main.py --disable-dormant
 """
 
 import asyncio
@@ -32,7 +35,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
 from harness import (BodyLog, ModelStopped, RoundLimitReached, SettingsError, ToolCallRejected, Trace,
-                     load_settings, run_agent, setup_logging)
+                     choose_task, load_settings, run_agent, setup_logging)
 from trace_view import ChatTrace
 
 MCP_URL = os.environ.get("MCP_URL", "http://sidecar:8100/mcp")
@@ -59,6 +62,7 @@ def wait_until_listening(url: str, timeout_seconds: int = 60) -> None:
 
 
 async def main() -> int:
+    task = choose_task(sys.argv[1:])
     setup_logging(TRACE)
     try:
         settings = load_settings(SETTINGS_PATH)
@@ -67,6 +71,7 @@ async def main() -> int:
         return 1
     # Every run records the settings it used, in every trace mode.
     log.info("settings: " + ", ".join(f"{name}={value}" for name, value in asdict(settings).items()))
+    log.info(f"task: {task}")
 
     wait_until_listening(MCP_URL)
     # full: two body logs, one in each SDK's HTTP client, so each sees every body exactly as sent:
@@ -82,15 +87,15 @@ async def main() -> int:
             anthropic.AsyncAnthropic(http_client=model_http) as claude:   # the key comes from the environment
         try:
             if full:
-                result = await run_agent(claude, mcp_client, settings, show_thinking=True)
+                result = await run_agent(claude, mcp_client, settings, show_thinking=True, task=task)
             elif TRACE == "json":
                 result = await run_agent(claude, mcp_client, settings,
-                                         trace=Trace(mcp_endpoint=mcp_endpoint), show_thinking=True)
+                                         trace=Trace(mcp_endpoint=mcp_endpoint), show_thinking=True, task=task)
             elif TRACE:
                 result = await run_agent(claude, mcp_client, settings,
-                                         trace=ChatTrace(mcp_endpoint=mcp_endpoint), show_thinking=True)
+                                         trace=ChatTrace(mcp_endpoint=mcp_endpoint), show_thinking=True, task=task)
             else:
-                result = await run_agent(claude, mcp_client, settings)
+                result = await run_agent(claude, mcp_client, settings, task=task)
         except (ModelStopped, RoundLimitReached, ToolCallRejected) as error:
             log.error(f"run stopped: {error}")
             return 1

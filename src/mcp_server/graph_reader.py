@@ -1,15 +1,18 @@
-"""Reads the tenant's agents from Microsoft Graph, in the shapes the rules expect (FR3).
+"""Reads the tenant's agents from Microsoft Graph, in the shapes the rules expect (FR3), and
+holds the one write: disabling an agent identity, after a human approved it (FR7).
 
 Two layers:
 - GraphClient and the fetch_* functions call Graph. They are tested live.
 - The parse_* functions and permission_names turn Graph's JSON into the rules' shapes.
   They have no network access, so they are unit-tested with sample JSON (NFR8).
 
-Every call uses the guardian's read-only Graph permissions (setup/bicep/guardian-permissions.bicep).
+Every read uses the guardian's read-only Graph permissions, and the write uses
+AgentIdentity.EnableDisable.All (setup/bicep/guardian-permissions.bicep).
 The MCP server's tools call these functions; the guardian's harness never does (docs/agent-architecture.md).
 """
 
 import json
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -36,6 +39,13 @@ class GraphClient:
 
     def get(self, path: str, params: dict | None = None) -> dict:
         return self._get_url(GRAPH + path + ("?" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote) if params else ""))
+
+    def patch(self, path: str, body: dict) -> None:
+        request = urllib.request.Request(GRAPH + path, data=json.dumps(body).encode(), method="PATCH",
+                                         headers={"Authorization": f"Bearer {self._get_token()}",
+                                                  "Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=60):
+            pass
 
     def get_all(self, path: str, params: dict | None = None) -> list[dict]:
         """Follow Graph's pages until the last one."""
@@ -159,3 +169,25 @@ def fetch_agent_details(client: GraphClient, app_id: str) -> AgentDetails | None
     return parse_agent_details(client.get_all("/v1.0/servicePrincipals/microsoft.graph.agentIdentity",
                                               {"$filter": f"appId eq '{app_id}'",
                                                "$select": "appId,displayName,description,agentIdentityBlueprintId"}))
+
+
+# The one write. Only the disable_agent tool calls it, after a human approved (FR7).
+
+CONFIRM_TRIES = 6
+CONFIRM_EVERY_SECONDS = 5
+
+
+def disable_agent_identity(client: GraphClient, app_id: str, sleep: Callable[[float], None] = time.sleep) -> bool:
+    """Set accountEnabled to false on one agent identity, so it can get no new tokens. Returns
+    whether a read showed the change: Graph is eventually consistent, and in this lab a read
+    still showed the old value about 10 seconds after the write. The caller must check that
+    app_id is a GUID first."""
+    [item] = client.get_all("/v1.0/servicePrincipals/microsoft.graph.agentIdentity",
+                            {"$filter": f"appId eq '{app_id}'", "$select": "id"})
+    path = f"/beta/servicePrincipals/{item['id']}/microsoft.graph.agentIdentity"
+    client.patch(path, {"accountEnabled": False})
+    for _ in range(CONFIRM_TRIES):
+        if client.get(path, {"$select": "accountEnabled"}).get("accountEnabled") is False:
+            return True
+        sleep(CONFIRM_EVERY_SECONDS)
+    return False

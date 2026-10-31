@@ -5,7 +5,7 @@ The sample JSON copies the shape of real Graph answers from this lab, with made-
 
 from datetime import datetime, timezone
 
-from graph_reader import NO_ROLE, parse_agent_details, parse_agents, parse_blueprints, parse_last_sign_ins, permission_names
+from graph_reader import NO_ROLE, disable_agent_identity, parse_agent_details, parse_agents, parse_blueprints, parse_last_sign_ins, permission_names
 
 GRAPH_SP = "sp-graph"
 USER_READ_ALL = "role-user-read-all"
@@ -84,3 +84,34 @@ def test_a_failed_sign_in_is_not_activity():
               {"appId": "a-1", "createdDateTime": "2026-10-26T08:45:18Z",
                "agent": {"agentType": "agenticAppInstance"}, "status": {"errorCode": 0}}]
     assert parse_last_sign_ins(events) == {"a-1": datetime(2026, 10, 26, 8, 45, 18, tzinfo=timezone.utc)}
+
+
+# The one write (FR7)
+
+class FakeGraph:
+    """Answers reads with the next accountEnabled value. The last one repeats."""
+
+    def __init__(self, *enabled_values):
+        self.enabled_values = list(enabled_values)
+        self.patches = []
+
+    def get_all(self, path, params=None):
+        return [{"id": "object-id"}]
+
+    def patch(self, path, body):
+        self.patches.append((path, body))
+
+    def get(self, path, params=None):
+        value = self.enabled_values.pop(0) if len(self.enabled_values) > 1 else self.enabled_values[0]
+        return {"accountEnabled": value}
+
+
+def test_disable_agent_identity_writes_accountenabled_false_and_confirms_with_a_read():
+    graph = FakeGraph(True, True, False)   # the first reads still show the old value
+
+    assert disable_agent_identity(graph, "app-id", sleep=lambda seconds: None) is True
+    assert graph.patches == [("/beta/servicePrincipals/object-id/microsoft.graph.agentIdentity", {"accountEnabled": False})]
+
+
+def test_disable_agent_identity_says_so_when_no_read_shows_the_change():
+    assert disable_agent_identity(FakeGraph(True), "app-id", sleep=lambda seconds: None) is False

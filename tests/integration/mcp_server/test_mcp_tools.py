@@ -101,16 +101,16 @@ def test_get_agent_rejects_an_input_that_is_not_a_guid():
 
 def test_tools_list_returns_only_the_tools_on_the_allow_list():
     # config/tool-allow-list.json, as the running server loaded it at start.
-    assert list_tools() == {"scan_registry", "get_agent"}
+    assert list_tools() == {"scan_registry", "get_agent", "disable_agent"}
 
 
 def test_a_tool_off_the_allow_list_is_refused_with_the_specs_unknown_tool_error():
     # The MCP server writes a "refused" audit line for it: docker compose logs mcp-server
     with pytest.raises(MCPError) as refusal:
-        call_tool("disable_agent", {})
+        call_tool("delete_agent", {})
 
     assert refusal.value.code == -32602   # a protocol error (JSON-RPC invalid params), not an isError result
-    assert refusal.value.message == "Unknown tool: disable_agent"
+    assert refusal.value.message == "Unknown tool: delete_agent"
 
 
 def test_the_guardians_network_cannot_reach_the_token_sidecar():

@@ -363,3 +363,28 @@ def test_an_unknown_key_stops_the_run(tmp_path):
 def test_a_wrong_value_stops_the_run(tmp_path, changes, message):
     with pytest.raises(harness.SettingsError, match=message):
         harness.load_settings(settings_file(tmp_path, **changes))
+
+
+# --- The task: only the operator can allow disabling (FR7) ---
+
+def test_a_run_only_reports_by_default():
+    assert harness.choose_task([]) == harness.TASK
+    assert "disable" not in harness.TASK
+
+
+def test_the_flag_chooses_the_task_that_asks_to_disable_dormant_agents():
+    assert harness.choose_task(["--disable-dormant"]) == harness.DISABLE_DORMANT_TASK
+    assert "disable each dormant agent" in harness.DISABLE_DORMANT_TASK
+
+
+def test_an_unknown_argument_stops_the_run():
+    with pytest.raises(SystemExit):
+        harness.choose_task(["--disable-everything"])
+
+
+def test_the_chosen_task_is_what_the_model_receives():
+    claude = ScriptedClaude(answer("end_turn", text("Done.")))
+
+    asyncio.run(harness.run_agent(claude, FakeMcpServer({}), SETTINGS, task=harness.DISABLE_DORMANT_TASK))
+
+    assert claude.requests[0]["messages"] == [{"role": "user", "content": harness.DISABLE_DORMANT_TASK}]

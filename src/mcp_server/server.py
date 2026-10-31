@@ -26,8 +26,10 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import INVALID_PARAMS, ToolAnnotations
 
 from allow_list import AllowListError, load_allow_list
-from graph_reader import AgentDetails, GraphClient, fetch_agent_details, fetch_agents, fetch_blueprints, fetch_last_sign_ins
-from rules import Finding, load_permission_policy, run_all_rules
+from approval import SERVICE_ERRORS, ApprovalError, DisableRequest, IdentityApiApprovals, wait_for_decision
+from graph_reader import (AgentDetails, GraphClient, disable_agent_identity, fetch_agent_details, fetch_agents,
+                          fetch_blueprints, fetch_last_sign_ins)
+from rules import Agent, Finding, find_dormant, load_permission_policy, run_all_rules
 
 SIDECAR_URL = os.environ.get("SIDECAR_URL", "http://127.0.0.1:5000")
 API_URL = os.environ.get("API_URL", "http://api:8000")
@@ -147,6 +149,139 @@ def get_agent(app_id: str) -> AgentDetails:
     if details is None:
         raise ToolError(f"No agent identity has the app ID {app_id}")
     return details
+
+
+@dataclass(frozen=True)
+class DisableResult:
+    app_id: str
+    name: str
+    approved_by: str | None     # the approver's display name
+    request_id: str
+    confirmed: bool             # whether a read already shows the agent as disabled
+
+
+# The model reads these. They say what happened, and no internal detail (CWE-209).
+NOT_APPROVED = {
+    "denied": "Not disabled: the approver denied the request.",
+    "expired": "Not disabled: no approver decided in time.",
+    "mismatch": "Not disabled: the approval service's answer did not match the request.",
+    "reused": "Not disabled: this approval was already used.",
+    "unavailable": "Not disabled: the approval service could not be reached.",
+}
+MAX_REASON = 500                    # the model's reason is shown to the approver, labelled as untrusted
+used_request_ids: set[str] = set()  # each approval works once
+
+
+def approval_service() -> IdentityApiApprovals:
+    return IdentityApiApprovals(API_URL, token_for("identity-api"))
+
+
+def is_protected(graph: GraphClient, agent: AgentDetails) -> bool:
+    """The guardian's own agents: the guardian itself and the others of its blueprint. If the
+    guardian cannot be read, every agent counts as protected (fail closed)."""
+    guardian = fetch_agent_details(graph, os.environ["GUARDIAN_AGENT_APP_ID"])
+    return guardian is None or agent.blueprint_app_id == guardian.blueprint_app_id
+
+
+def dormant_finding(graph: GraphClient, agent: AgentDetails, now: datetime) -> Finding | None:
+    """The same rule as scan_registry, so the tool does not depend on what the model says."""
+    plain = Agent(agent.app_id, agent.name, agent.blueprint_app_id, sponsor_count=0)
+    return next(iter(find_dormant([plain], fetch_last_sign_ins(graph, now), now)), None)
+
+
+def audit_request(event: str, request: DisableRequest, correlation_id: str, **fields) -> None:
+    audit(event=event, agent=request.agent_id, request_id=request.request_id, correlation_id=correlation_id, **fields)
+
+
+# The steps of disable_agent. A step reports what happened and raises nothing for an expected
+# outcome, so every decision to stop is in one place: disable_agent itself.
+
+async def check_can_be_disabled(graph: GraphClient, app_id: str) -> tuple[AgentDetails | None, Finding | None, str | None]:
+    """The server's own checks, before anyone is asked. Returns the agent, its dormant finding,
+    and the refusal text, which is None when the agent can be disabled."""
+    # MCP servers must validate every input. app_id goes into a Graph filter, so only a GUID passes.
+    if not GUID.fullmatch(app_id):
+        return None, None, "app_id must be an agent identity's app ID (a GUID)"
+    agent = await asyncio.to_thread(fetch_agent_details, graph, app_id)
+    if agent is None:
+        return None, None, f"No agent identity has the app ID {app_id}"
+    if await asyncio.to_thread(is_protected, graph, agent):
+        audit(event="disable_refused", agent=app_id, reason="protected")
+        return agent, None, "Refused: this agent belongs to the guardian."
+    dormant = await asyncio.to_thread(dormant_finding, graph, agent, datetime.now(timezone.utc))
+    if dormant is None:
+        audit(event="disable_refused", agent=app_id, reason="not dormant")
+        return agent, None, "Refused: this agent signed in within the last 30 days."
+    return agent, dormant, None
+
+
+async def request_approval(service: IdentityApiApprovals, agent: AgentDetails, dormant: Finding, reason: str,
+                           correlation_id: str) -> DisableRequest | None:
+    """Create the disable request. Returns None when the approval service cannot be reached. The
+    facts come from Graph, so the approver can trust them. The reason comes from the model."""
+    facts = {"name": agent.name, "blueprintAppId": agent.blueprint_app_id, "flaw": dormant.detail,
+             "lastSignIn": dormant.date}
+    try:
+        request = await asyncio.to_thread(service.create, agent.app_id, reason[:MAX_REASON], facts, correlation_id)
+    except SERVICE_ERRORS:
+        audit(event="disable_refused", agent=agent.app_id, reason="unavailable")
+        return None
+    audit_request("disable_requested", request, correlation_id)
+    return request
+
+
+async def wait_for_approval(service: IdentityApiApprovals, request: DisableRequest,
+                            correlation_id: str) -> tuple[DisableRequest | None, str | None]:
+    """Wait for the human. Returns the approved request and None, or None and why it was not approved."""
+    try:
+        approved = await wait_for_decision(lambda: asyncio.to_thread(service.get, request.agent_id, request.request_id),
+                                           request, used_request_ids, lambda: datetime.now(timezone.utc),
+                                           asyncio.sleep)
+    except ApprovalError as error:
+        audit_request("disable_decision", request, correlation_id, decision=error.reason)
+        return None, error.reason
+    audit_request("disable_decision", request, correlation_id, decision="approved",
+                  approver_id=approved.decided_by_id, approver_name=approved.decided_by_name)
+    return approved, None
+
+
+async def write_disable(graph: GraphClient, request: DisableRequest, correlation_id: str) -> bool | None:
+    """The write. Returns whether a read already shows it, or None when the write failed."""
+    try:
+        confirmed = await asyncio.to_thread(disable_agent_identity, graph, request.agent_id)
+    except SERVICE_ERRORS:
+        audit_request("disable_failed", request, correlation_id)
+        return None
+    audit_request("agent_disabled", request, correlation_id, confirmed=confirmed)
+    return confirmed
+
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
+async def disable_agent(app_id: str, reason: str) -> DisableResult:
+    """Ask a human to approve disabling one dormant agent identity, and wait up to 4 minutes for
+    the decision. The agent is disabled only if the human approves. Refused for an agent that is
+    not dormant, and for the guardian's own agents. reason: one short sentence for the approver."""
+    graph = GraphClient(token_for("graph"))
+    service = approval_service()
+    correlation_id = str(uuid.uuid4())
+
+    agent, dormant, refusal = await check_can_be_disabled(graph, app_id)
+    if refusal:
+        raise ToolError(refusal)
+
+    request = await request_approval(service, agent, dormant, reason, correlation_id)
+    if request is None:
+        raise ToolError(NOT_APPROVED["unavailable"])
+
+    approved, not_approved = await wait_for_approval(service, request, correlation_id)
+    if not_approved:
+        raise ToolError(NOT_APPROVED[not_approved])
+
+    confirmed = await write_disable(graph, request, correlation_id)
+    if confirmed is None:
+        raise ToolError("Not disabled: the approver approved, but the write to Microsoft Graph failed.")
+
+    return DisableResult(app_id, agent.name, approved.decided_by_name, request.request_id, confirmed)
 
 
 if __name__ == "__main__":

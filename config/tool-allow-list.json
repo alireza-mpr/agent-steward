@@ -1,4 +1,4 @@
 {
   "description": "The tools the guardian's MCP server offers and runs (FR6). tools/list hides every other tool, and tools/call refuses it before it runs, with the same answer as for a tool that does not exist. Read once when the server starts (src/mcp_server/allow_list.py): a missing file, an unknown key, or a name that is not a tool in the code stops the server. To change it, edit this file and restart the MCP server: no rebuild.",
-  "allowed_tools": ["scan_registry", "get_agent"]
+  "allowed_tools": ["scan_registry", "get_agent", "disable_agent"]
 }
