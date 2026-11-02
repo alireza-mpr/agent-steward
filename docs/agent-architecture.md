@@ -64,8 +64,9 @@ flowchart TB
         USER["<b>User (a human)</b><br/>starts a task (delegated mode)<br/>approves privileged tools"]
     end
 
-    subgraph PROVIDER["Model provider, for example Anthropic or Google"]
-        MODEL["<b>Model</b><br/>for example<br/>Claude or Gemini<br/>sees prompts, tools, results<br/>holds nothing"]
+    subgraph PROVIDER["Model provider"]
+        PIDP["<b>Provider's identity service</b><br/>token endpoint<br/>trusts Entra ID as the issuer of token 1<br/>issues the provider token"]
+        MODEL["<b>Model</b><br/>sees prompts, tools, results<br/>holds nothing"]
     end
 
     subgraph RUNTIME["Agent runtime"]
@@ -76,8 +77,10 @@ flowchart TB
     subgraph GATEWAY["Tools"]
         direction LR
         MCP["<b>MCP server</b> (shared)<br/>has its own identity<br/>checks the agent's token<br/>approval gate, audit<br/><i>tools: send_email,<br/>save_record</i>"]
-        MAP["<b>Role-to-tool mapping</b><br/>kept by the server's team, in git<br/>Tools.Email → send_email<br/>Tools.Records → save_record<br/>checked on every tools/list<br/>and every tools/call"]
+        MAP["<b>Role-to-tool mapping</b><br/>kept by the server's team<br/>Tools.Email → send_email<br/>Tools.Records → save_record<br/>checked on every tools/list<br/>and every tools/call"]
+        ALLOW["<b>Tool allow-list</b><br/>the tools this server offers<br/>send_email, save_record<br/>any other tool is refused<br/>before it runs"]
         MCP -- "enforces" --- MAP
+        MCP -- "enforces" --- ALLOW
     end
 
     subgraph RESOURCES["Resource APIs: each checks the token (audience, roles)"]
@@ -96,9 +99,10 @@ flowchart TB
     USER -- "task, with the user's token" --> HARNESS
     HARNESS -- "token 1 (audience: the Claude API's app)<br/>token 2 (audience: api://AzureADTokenExchange)" --> MI
     MI -- "gets each token<br/>for the managed identity" --> ENTRA
-    HARNESS -- "workload identity federation: token 1<br/>for a short-lived provider token,<br/>then prompts, tools, results" --> MODEL
+    HARNESS -- "workload identity federation:<br/>token 1 (the harness's own managed identity)<br/>for a short-lived provider token" --> PIDP
+    HARNESS -- "with the provider token:<br/>prompts, tools, results" --> MODEL
     MODEL -- "tool calls" --> HARNESS
-    HARNESS -- "request 1: token 2 as the blueprint's<br/>credential, for T1<br/>request 2: T1, for TR (the agent identity)" --> ENTRA
+    HARNESS -- "request 1: token 2 as the blueprint's<br/>credential, with fmi_path (the agent identity), for T1<br/>request 2: T1, for TR (the agent identity)" --> ENTRA
     %% These links attach to the Tools box, not to the MCP node: Mermaid keeps the box's
     %% "direction LR" (the two boxes side by side) only when no node inside it links outside.
     HARNESS -- "MCP + Bearer TR<br/>(agent identity,<br/>audience: the MCP server,<br/>roles: the agent's tool roles)" --> GATEWAY
@@ -127,7 +131,9 @@ To understand why the enterprise diagram is wired this way, look closely at four
    * **`tools/call`:** It checks again before the tool runs, because a caller can name a tool it was never shown. So hiding a tool is not enough on its own. A refused call goes to the audit log.
 
    **Two kinds of roles.** `Tools.Email` is a role that the *agent* holds on the *MCP server*: it opens the `send_email` tool. `Mail.Send` is a role that the *MCP server* holds on the *Email API*: it lets the tool's code call that API. In this design, the agent never holds `Mail.Send`.
-4. **The MCP Server Uses Its Own Token for Downstream APIs:** How the MCP server calls backend APIs depends on the mode:
+4. **The MCP Server Uses Its Own Token for Downstream APIs:** Microsoft's documentation says each hop must get its own token. The harness calls the MCP server with a token whose `aud` is the MCP server. The MCP server then uses its own identity to get a new token whose `aud` is the downstream API, because the API refuses any other audience. Entra is the party that both sides trust. This means a new token for each API, not token passthrough. Microsoft Learn gives this rule for MCP servers: the token "is meant to represent access to your MCP server, and not to a downstream resource", pass-through creates security vulnerabilities, and downstream access needs "a new token through the on-behalf-of flow or another mechanism for explicit delegation" ([Configure MCP server authorization](https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-mcp)).
+
+   How the MCP server calls backend APIs depends on the mode:
    * *With a human user (Delegated):* It uses the On-Behalf-Of (OBO) flow, meaning the downstream token carries the identity of both the human user and the calling service.
    * *Without a human user (Autonomous):* Entra's OBO flow cannot be used here because OBO strictly requires a human user in the incoming token. Instead, the MCP server authenticates using its own app token and records which agent requested the action in its audit logs. *(Note: RFC 8693 token exchange can carry the caller's identity into the new token, in an `act` (actor) claim ([RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). Microsoft documents no RFC 8693 flow for this case. Its documented flow for a downstream call is OBO, which uses the `jwt-bearer` grant and "only works for user principals" ([On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). Entra's token endpoint does recognize the RFC 8693 grant type, but no Microsoft page says what it issues for it (both checked 29 October 2026).)*
 
@@ -137,6 +143,16 @@ To understand why the enterprise diagram is wired this way, look closely at four
    * The API's logs would show the original caller, not who really made the call.
 
    So each hop gets its own token, with its own audience. Source: [MCP Security Best Practices](https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices.md) (checked 28 October 2026).
+
+   **Reading a token: who acts, and for whom.**
+
+   | | Entra | RFC |
+   |---|---|---|
+   | **Acting client** | `azp` (v2.0) or `appid` (v1.0) | `client_id` |
+   | **User** (on whose behalf) | `sub` or `oid` | `sub` |
+   | **What marks delegation (OBO)** | `scp` is present | `act` is present |
+
+   Entra has no claim that says "this is OBO". `scp` means a user is involved, and 11 in `xms_act_fct` means an agent is the client. Together they show an agent acting for a user. Each claim describes its own token: when the MCP server does the OBO exchange, `azp` in the downstream token names the MCP server, not the agent. Sources: [Token claims reference for agent IDs](https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/agent-token-claims), [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693).
 
 ### Zero Trust: Who Checks Whom?
 
