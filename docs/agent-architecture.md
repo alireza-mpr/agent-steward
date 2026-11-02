@@ -117,7 +117,7 @@ flowchart TB
 To understand why the enterprise diagram is wired this way, look closely at four core mechanics:
 
 1. **Tools Are Not APIs:** A *tool* is simply a function exposed to the model by the MCP server (defined by a name, description, and input format). An *API* is a backend resource server registered in Entra with its own app roles (like `Mail.Send` or `Records.Write`). When a tool runs, the MCP server's internal code fetches a token and calls the API. The model only ever sees the tool; it is completely blind to the underlying API and token. The MCP protocol itself knows nothing about APIs—that connection exists purely inside the tool's code and configuration (the API URL and token audience; see [How a tool reaches its API](mcp.md#3-how-a-tool-reaches-its-api)). While Entra app roles dictate what the MCP server is *allowed* to call, a tool can intentionally restrict privileges further in code (for example, a `send_email` tool can hardcode the recipient address, even if the underlying `Mail.Send` API role allows emailing anyone).
-2. **The Harness Signs In, Not the MCP Server:** It is the harness's job to prove who the agent is. It authenticates as the agent identity, with an Azure managed identity as the blueprint's credential so no keys sit on disk, and requests a token scoped specifically for the MCP server (`audience`: MCP server). Only the MCP server accepts that token: no other API does. The same managed identity also authenticates the harness to the model provider, so the harness holds no static secret at all (see [How the Harness Authenticates](authentication.md#1-how-the-harness-authenticates)).
+2. **The Harness Signs In, Not the MCP Server:** It is the harness's job to prove who the agent is. It authenticates as the agent identity, with an Azure managed identity as the blueprint's credential so no keys sit on disk, and requests a token scoped specifically for the MCP server (`audience`: MCP server). Only the MCP server accepts that token: no other API does. The same managed identity also authenticates the harness to the model provider, so the harness holds no static secret at all (see [The Harness's Proofs, in Order](authentication.md#the-harnesss-proofs-in-order)).
 3. **The MCP Server Maps Roles to Tools:** The MCP server decides which tools each agent may use. The decision has two halves, stored in two places:
    * *Which agent holds which role (stored in Entra):* The MCP server's app registration defines app roles, for example `Tools.Email` and `Tools.Records`. An admin assigns them to each agent identity. They reach the MCP server in the `roles` claim of the agent's token (TR).
    * *Which role opens which tool (stored with the MCP server):* The team that owns the MCP server keeps a **role-to-tool mapping** with the server's code, in git, and changes it through code review. A tool that no role opens is open to no one.
@@ -150,7 +150,7 @@ By forcing every boundary to verify the component calling it, a single tricked o
 | **Resource APIs** | **The MCP Server's token:** Validates cryptographic signatures, token audience, and assigned app roles. |
 | **Entra ID** | **Every sign-in:** Validates the blueprint credential, verifies the parent blueprint relationship, and enforces Conditional Access policies. |
 
-How each caller proves who it is, link by link, is in [Authentication](authentication.md#2-how-each-caller-proves-who-it-is).
+Who proves to whom, and how, is in [Authentication](authentication.md#who-proves-to-whom).
 
 ### Error Handling: When a Call Fails
 
