@@ -18,6 +18,9 @@ This doc explains why an API must be registered before any token exists for it, 
   - [Where Entra checks the parent blueprint](#where-entra-checks-the-parent-blueprint)
   - [How a token names the API](#how-a-token-names-the-api)
   - [What TR does not show: the blueprint's credential](#what-tr-does-not-show-the-blueprints-credential)
+- [The approver's token: a delegated token](#the-approvers-token-a-delegated-token)
+  - [The claims, with placeholders](#the-claims-with-placeholders)
+  - [What differs from TR](#what-differs-from-tr)
 - [Scopes and app roles](#scopes-and-app-roles)
   - [The two side by side](#the-two-side-by-side)
   - [The standard](#the-standard)
@@ -239,6 +242,59 @@ Tested in this lab on 27 October 2026. A 1-day secret was added to the guardian'
 | Sign-in log, request 2 (`clientCredentialType`) | `federatedIdentityCredential` | `federatedIdentityCredential` |
 
 TR's `azpacr` describes request 2 only. There the client is the agent identity, and its proof is always T1, a signed assertion. Entra records that proof as a federated identity credential. So a rule like "blueprints use certificates, never secrets" must be enforced on the blueprint itself, by the credentials it holds ([how](infra.md#the-blueprints-credential)), or watched in the sign-in log. The Identity API cannot enforce it.
+
+## The approver's token: a delegated token
+
+**In one line:** this is the token the `approve` command gets after a person signs in through `agent-steward-agent-disable-cli`. It is a delegated access token for the Identity API: the client acts for a signed-in person. No OBO is involved.
+
+It was captured on 3 November 2026 with `docker compose run --rm approve python approve.py --show-claims` ([how](infra.md#the-approve-command)), which prints the claims and never the token. The IDs and personal details are replaced with placeholders.
+
+### The claims, with placeholders
+
+```json
+{
+  "aio": "<opaque>",
+  "aud": "<IDENTITY_API_APP_ID>",
+  "azp": "<AGENT_DISABLE_CLI_APP_ID>",
+  "azpacr": "0",
+  "exp": 1793682788,
+  "iat": 1793677091,
+  "idtyp": "user",
+  "iss": "https://login.microsoftonline.com/<TENANT_ID>/v2.0",
+  "name": "<APPROVER_NAME>",
+  "nbf": 1793677091,
+  "oid": "<APPROVER_OBJECT_ID>",
+  "preferred_username": "<APPROVER_UPN>",
+  "rh": "<opaque>",
+  "roles": ["AgentDisable.Approve"],
+  "scp": "AgentDisable.Decide",
+  "sid": "<SESSION_ID>",
+  "sub": "<PAIRWISE_SUBJECT>",
+  "tid": "<TENANT_ID>",
+  "uti": "<opaque>",
+  "ver": "2.0",
+  "xms_act_fct": "3 9",
+  "xms_ftd": "<opaque>",
+  "xms_sub_fct": "6 3"
+}
+```
+
+### What differs from TR
+
+| Claim | TR (the guardian, app-only) | The approver's token (delegated) |
+|---|---|---|
+| `idtyp` | `app` | `user`. Entra sends it on user tokens only because the Identity API asks for it with `include_user_token`. |
+| `sub` and `oid` | The agent identity | The person. `sub` is pairwise: another app would see a different value. Use `oid`. |
+| `name`, `preferred_username`, `sid` | Missing | The person's name, sign-in name, and session |
+| `azp` (or `appid`) | The agent identity | The CLI: the client that acts for the person |
+| `azpacr` (or `appidacr`) | `2`: the client proved itself with a signed assertion | `0`: a public client, with no credential |
+| `scp` | Missing | `AgentDisable.Decide`: what the CLI may do for the person |
+| `roles` | The agent's app roles | `AgentDisable.Approve`: what the **person** may do on the Identity API |
+| `xms_act_fct` | Contains `11`: the client is an agent | `3 9`, no `11`: the client is not an agent |
+| `xms_sub_fct` | Contains `11`: the subject is an agent | `6 3`, no `11` or `13`: a human, not an agent's user account |
+| `xms_par_app_azp` | The blueprint | Missing: no agent is involved |
+
+This is the token `check_approver` accepts ([token_validation.py](../src/identity_api/token_validation.py)): `idtyp` is `user`, `xms_act_fct` has no `11` (the client is not an agent), `xms_sub_fct` has no `13` (the person is not an agent's user account), `azp` is the CLI, `scp` has `AgentDisable.Decide`, and `roles` has `AgentDisable.Approve`. It lived 95 minutes. Learn documents only `11` and `13` among the facet values, so the other values are not read.
 
 ## Scopes and app roles
 

@@ -21,6 +21,7 @@ The Identity API's side of the contract:
                                                                      409 if it was already decided
 """
 
+import base64
 import json
 import os
 import sys
@@ -177,13 +178,27 @@ def refusal_text(error: urllib.error.HTTPError) -> str:
         return f"HTTP {error.code}"
 
 
-def main() -> int:
+def decode_claims(token: str) -> dict:
+    """A JWT's payload, without checking the signature. For display only: the Identity API checks it."""
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))
+
+
+def main(argv: list[str] | None = None) -> int:
+    # --show-claims: a dev option. It prints the approver's token claims after sign-in, then stops.
+    # It never prints the token itself, so the output cannot be replayed. The claims hold real
+    # tenant and object IDs: redact them before they go anywhere.
+    show_claims = "--show-claims" in (sys.argv[1:] if argv is None else argv)
     try:
         token = sign_in(os.environ["TENANT_ID"], os.environ["AGENT_DISABLE_CLI_APP_ID"],
                         os.environ["IDENTITY_API_APP_ID"], input, print)
     except SignInError as error:
         print(f"Not signed in: {error}", file=sys.stderr)
         return 1
+    if show_claims:
+        print(json.dumps(decode_claims(token), indent=2, sort_keys=True))
+        return 0
     api = IdentityApi(os.environ.get("API_URL", "http://api:8000"), token)
     skipped: set[str] = set()
     print("Waiting for requests. Press Ctrl+C to stop.", flush=True)

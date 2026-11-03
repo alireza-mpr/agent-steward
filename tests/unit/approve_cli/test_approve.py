@@ -230,3 +230,33 @@ def test_no_paste_gives_no_token(monkeypatch):
 
     with pytest.raises(approve.SignInError):
         sign_in(typed())
+
+
+def fake_jwt(claims: dict) -> str:
+    """A token shaped like a JWT, with no real signature: only its payload matters here."""
+    import base64
+    import json
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+    return f"header.{payload}.signature"
+
+
+def test_decode_claims_reads_the_payload():
+    claims = {"scp": "AgentDisable.Decide", "roles": ["AgentDisable.Approve"], "idtyp": "user"}
+
+    assert approve.decode_claims(fake_jwt(claims)) == claims
+
+
+def test_show_claims_prints_the_claims_never_the_token_and_calls_no_api(monkeypatch, capsys):
+    token = fake_jwt({"scp": "AgentDisable.Decide", "roles": ["AgentDisable.Approve"]})
+    for name in ("TENANT_ID", "AGENT_DISABLE_CLI_APP_ID", "IDENTITY_API_APP_ID"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setattr(approve, "sign_in", lambda *arguments: token)
+    def no_api(*arguments):
+        raise AssertionError("--show-claims must not call the Identity API")
+    monkeypatch.setattr(approve, "IdentityApi", no_api)
+
+    assert approve.main(["--show-claims"]) == 0
+    shown = capsys.readouterr().out
+    assert '"scp": "AgentDisable.Decide"' in shown
+    assert token not in shown
+    assert token.split(".")[1] not in shown

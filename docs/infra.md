@@ -310,7 +310,14 @@ docker compose run --rm approve
 2. The browser then fails to load a `http://localhost:18400` page. That is expected. Copy its whole address.
 3. Paste it into the terminal. Do not share it or save it: it holds the sign-in code. The code works once, and only with this run's PKCE verifier.
 
-The command then waits, and shows each pending request as it arrives. It keeps the token in memory only. To see why the Identity API refused a call, read the `request_rejected` lines in `docker compose logs api`.
+The command then waits, and shows each pending request as it arrives. It keeps the token in memory only.
+
+To see the claims of the approver's token, add `--show-claims`: the command signs in the same way, prints the decoded claims, and stops. It never prints the token itself. The claims hold real tenant and object IDs, so redact them before they go anywhere.
+
+```sh
+docker compose build approve
+docker compose run --rm approve python approve.py --show-claims
+``` To see why the Identity API refused a call, read the `request_rejected` lines in `docker compose logs api`.
 
 The sign-in fails with `AADSTS530035` only if the device code flow comes back: security defaults block that flow ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)).
 
