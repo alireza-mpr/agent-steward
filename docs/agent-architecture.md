@@ -161,14 +161,23 @@ Remember: request 1 is who the agent is, request 2 adds who the user is.
 
    **OBO is one way to get a delegated token.** The authorization code flow is another. `scp` appears in the delegated tokens from both, so it marks delegation, not OBO.
 
+   **Delegated token vs OBO.** Common to both: a client signs the user in and gets a delegated token that names the user.
+
+   * **`aud` is the final API:** the client calls it directly. No OBO. The CLI and the Identity API work like this.
+   * **`aud` is a middle tier, which needs to call another API:** the middle tier exchanges the token with OBO. An agent's blueprint is one kind of middle tier, but a normal API can be one too, such as the Identity API calling Graph for the user (it does not today).
+
+   Sign-in gives a delegated token for one audience. If that audience is the final API, it's used directly. If it's a middle tier, such as an agent, the middle tier exchanges it with OBO. The token is called Tc only in the OBO case. The CLI's token is a delegated access token.
+
    Entra has no claim that says "this is OBO". `scp` means a user is involved, and 11 in `xms_act_fct` means an agent is the client. Together they show an agent acting for a user. Each claim describes its own token: when the MCP server does the OBO exchange, `azp` in the downstream token names the MCP server, not the agent. Sources: [Token claims reference for agent IDs](https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/agent-token-claims), [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693).
 
 ### The Delegated Flow (OBO), Step by Step
 
 A user asks the agent to act for them. There are two OBO exchanges: the agent identity gets a token for the MCP server, and the MCP server gets a token for the downstream API. The user stays in both tokens. The yellow steps are what differs from the autonomous flow. This is the enterprise design: the Guardian does not build it ([D5](#architectural-shortcuts-where-the-guardian-differs)).
 
+**Who signs the user in:** a client application. Microsoft says blueprints and agent identities "can't initiate interactive authorization (`/authorize`) flows directly" and "must receive a user token from a client application" ([Agent on-behalf-of flow](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow)).
+
 **Set up in advance:**
-* The blueprint exposes a scope, so a user's token can have the blueprint as its audience.
+* The blueprint exposes a scope, so a user's token can have the blueprint as its audience. Microsoft says agents "have the capabilities of Microsoft Entra ID resource (API) applications" and support the API attributes for this (`OAuth2Permissions`, `AppURI`) ([same page](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow)).
 * An admin consents to the delegated permissions on the blueprint, and agent identities inherit them. Agent identities cannot ask for consent interactively.
 * The MCP server's application exposes a scope, and an admin consents to its delegated permissions on the downstream API.
 

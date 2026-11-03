@@ -227,7 +227,7 @@ The two questions every token request answers (who is asking, and what token for
 
 **In short:** A person never sends a password to the agent. The person proves who they are to Entra ID (row 9), and a client app gets a token for them.
 
-**The end user (row 9, then row 10, delegated mode only).** The method is OpenID Connect sign-in in a client app (authorization code flow with PKCE). The blueprint cannot run the sign-in itself ([source](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow)). At sign-in, the user proves who they are, ideally with phishing-resistant MFA such as a passkey. The client app then holds the user's access token, Tc.
+**The end user (row 9, then row 10, delegated mode only).** The method is OpenID Connect sign-in in a client app (authorization code flow with PKCE). The blueprint cannot run the sign-in itself, and neither can its agent identities: Microsoft says they "can't initiate interactive authorization (`/authorize`) flows directly" and "must receive a user token from a client application" ([source](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow)). At sign-in, the user proves who they are, ideally with phishing-resistant MFA such as a passkey. The client app then holds the user's access token, Tc.
 
 **The approver (row 9, then row 11).** The approver signs in the same way at approval time, in a client app, and also ideally with phishing-resistant MFA. Trust: the approval service exposes a scope, and an admin consents to it for the client app. An admin assigns the approver role to a group of approvers.
 
