@@ -24,6 +24,7 @@ The details of each part are in their own documents:
 * [1. The Anatomy of an Agent (The Four Parts)](#1-the-anatomy-of-an-agent-the-four-parts)
 * [2. The Enterprise Reference Design](#2-the-enterprise-reference-design)
   * [Four Architectural Pillars](#four-architectural-pillars)
+  * [The Delegated Flow (OBO), Step by Step](#the-delegated-flow-obo-step-by-step)
   * [Zero Trust: Who Checks Whom?](#zero-trust-who-checks-whom)
   * [Error Handling: When a Call Fails](#error-handling-when-a-call-fails)
   * [Human Approval: Who Approves, and How](#human-approval-who-approves-and-how)
@@ -153,6 +154,75 @@ To understand why the enterprise diagram is wired this way, look closely at four
    | **What marks delegation (OBO)** | `scp` is present | `act` is present |
 
    Entra has no claim that says "this is OBO". `scp` means a user is involved, and 11 in `xms_act_fct` means an agent is the client. Together they show an agent acting for a user. Each claim describes its own token: when the MCP server does the OBO exchange, `azp` in the downstream token names the MCP server, not the agent. Sources: [Token claims reference for agent IDs](https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/agent-token-claims), [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693).
+
+### The Delegated Flow (OBO), Step by Step
+
+A user asks the agent to act for them. There are two OBO exchanges: the agent identity gets a token for the MCP server, and the MCP server gets a token for the downstream API. The user stays in both tokens. The yellow steps are what differs from the autonomous flow. This is the enterprise design: the Guardian does not build it ([D5](#architectural-shortcuts-where-the-guardian-differs)).
+
+**Set up in advance:**
+* The blueprint exposes a scope, so a user's token can have the blueprint as its audience.
+* An admin consents to the delegated permissions on the blueprint, and agent identities inherit them. Agent identities cannot ask for consent interactively.
+* The MCP server's application exposes a scope, and an admin consents to its delegated permissions on the downstream API.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant C as Client application
+    participant H as Harness
+    participant I as Managed identity endpoint
+    participant E as Entra ID
+    participant M as MCP server
+    participant A as Downstream API
+
+    Note over U,E: The user signs in. The blueprint cannot run /authorize, so a client application does it.
+    U->>C: starts a task
+    C-->>U: redirect the browser to Entra's /authorize<br/>response_type=code, scope=#lt;blueprint app ID#gt;/#lt;scope#gt;,<br/>code_challenge
+    U->>E: the user signs in (password, MFA)<br/>Entra applies the user's Conditional Access policies
+    E-->>C: authorization code, through the browser redirect
+    C->>E: POST /token: grant_type=authorization_code,<br/>code, code_verifier
+    E-->>C: Tc (Client Token)<br/>(aud: the blueprint, oid: the user, scp: the scope)
+    C->>H: the task + Authorization: Bearer Tc
+    H->>H: validate Tc: signature, issuer, aud, exp, scp
+
+    Note over H,E: Request 1: the blueprint gets T1 for one agent identity
+    H->>I: token for api://AzureADTokenExchange (no secret)
+    I->>E: get the token for the machine's managed identity
+    E-->>I: token 2
+    I-->>H: token 2
+    H->>E: client_id=#lt;blueprint app ID#gt;,<br/>scope=api://AzureADTokenExchange/.default,<br/>fmi_path=#lt;agent identity app ID#gt;,<br/>client_assertion=token 2,<br/>grant_type=client_credentials
+    E-->>H: T1 (azp: the blueprint, sub: the FMI path)
+
+    Note over H,E: Request 2: the agent identity exchanges Tc (first OBO)
+    rect rgba(255, 200, 0, 0.25)
+        H->>E: client_id=#lt;agent identity app ID#gt;,<br/>scope=#lt;MCP server app ID#gt;/#lt;scope#gt;,<br/>client_assertion=T1,<br/>grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer,<br/>►►► assertion=Tc ◄◄◄<br/>requested_token_use=on_behalf_of
+    end
+    E->>E: check Tc: aud is the blueprint<br/>check T1: azp is the blueprint,<br/>sub resolves to this agent identity
+    E-->>H: TR (Resource Token)<br/>(aud: the MCP server, azp: the agent identity,<br/>sub and oid: the user, scp: the scope,<br/>xms_act_fct contains 11)
+
+    Note over H,M: The model asks for a tool, as in the autonomous flow. It never sees a token.
+    H->>M: tools/call + Authorization: Bearer TR
+    M->>M: validate TR: signature, issuer, aud, exp, xms_act_fct<br/>check scp against the tool mapping<br/>and the allow-list
+
+    Note over M,E: The MCP server exchanges TR (second OBO)
+    M->>I: token for api://AzureADTokenExchange,<br/>for the MCP server's own managed identity
+    I-->>M: the MCP server's credential
+    rect rgba(255, 200, 0, 0.25)
+        M->>E: client_id=#lt;MCP server app ID#gt;,<br/>scope=#lt;downstream API#gt;/#lt;scope#gt;,<br/>client_assertion=the MCP server's credential,<br/>grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer,<br/>►►► assertion=TR ◄◄◄<br/>requested_token_use=on_behalf_of
+    end
+    E->>E: check TR: aud is the MCP server
+    E-->>M: downstream token (aud: the API,<br/>azp: the MCP server, sub and oid: the user, scp: the scope)
+
+    Note over M,A: Ready to call the API. From here, the same as the autonomous flow,<br/>except that the API checks scp and the user, not roles.
+    M->>A: the API call + Authorization: Bearer downstream token
+```
+
+**Design points:**
+* **Permissions:** a delegated token has `scp`, so the role-to-tool mapping must also map scopes to tools. The user's own roles, if any, stay in `roles`.
+* **The agent in the downstream token:** `azp` names the MCP server, so the downstream token does not name the agent. The MCP server's audit line records the agent, the user and the tool.
+* **Not tested:** Microsoft documents steps 1 to 17 for an agent, and the standard OBO flow for a middle tier. It shows no chain where a middle tier exchanges a token that an agent identity obtained. So steps 20 to 24 are this design's reading of those two pages, and need a test before anyone relies on them.
+
+Sources: [Agent on-behalf-of flow](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow), [On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow), [Configure MCP server authorization](https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-mcp) (checked 2 November 2026).
 
 ### Zero Trust: Who Checks Whom?
 
