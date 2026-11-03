@@ -327,6 +327,15 @@ A picture to remember it: you may drive your car, so that is your role. A valet 
 - **Same end user, same resource API → same `roles`**, whatever the client. The roles belong to the user, on that API.
 - **Same client, same resource API → same `scp`** for every user, when the grant's `consentType` is `AllPrincipals` (admin consent). With `Principal` (user consent), each grant covers one user, so `scp` can differ between users.
 
+**Roles cannot be narrowed, scopes can:**
+
+- **`roles`, app-only:** the client asks for `.default`, so the token carries every app role the client holds on that API. The guardian's Graph token always carries its write role for this reason ([A1](../THREATMODEL.md#accepted-risks)).
+- **`roles`, delegated:** the token carries every role the user holds on that API. The client cannot ask for fewer.
+- **`scp`:** a client can ask for one named scope instead of `.default`, and gets only that scope.
+- **The ways around it:** separate identities (for example one to read and one to write), or separate APIs, so a token for one API carries no roles for the other.
+
+Standard OAuth lets a client name the scope it wants in any grant ([RFC 6749 §3.3](https://www.rfc-editor.org/rfc/rfc6749#section-3.3)), so it can ask for less. Entra's app roles are the exception.
+
 ### The standard
 
 - **Scope is OAuth's word, and it is general.** It is the extent of the access the client asks for, with or without a user ([RFC 6749 §3.3](https://www.rfc-editor.org/rfc/rfc6749#section-3.3)). Every grant can carry a `scope` parameter, also the client credentials grant, which has no user ([§4.4.2](https://www.rfc-editor.org/rfc/rfc6749#section-4.4.2)). So by the standard, an app-only token can hold scopes.
