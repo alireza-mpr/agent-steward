@@ -136,7 +136,10 @@ To understand why the enterprise diagram is wired this way, look closely at four
 
    How the MCP server calls backend APIs depends on the mode:
    * *With a human user (Delegated):* It uses the On-Behalf-Of (OBO) flow, meaning the downstream token carries the identity of both the human user and the calling service.
-   * *Without a human user (Autonomous):* Entra's OBO flow cannot be used here because OBO strictly requires a human user in the incoming token. Instead, the MCP server authenticates using its own app token and records which agent requested the action in its audit logs. *(Note: RFC 8693 token exchange can carry the caller's identity into the new token, in an `act` (actor) claim ([RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). Microsoft documents no RFC 8693 flow for this case. Its documented flow for a downstream call is OBO, which uses the `jwt-bearer` grant and "only works for user principals" ([On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). Entra's token endpoint does recognize the RFC 8693 grant type, but no Microsoft page says what it issues for it (both checked 29 October 2026).)*
+   
+   * *Without a human user (Autonomous):* Entra's OBO flow cannot be used here because OBO strictly requires a human user in the incoming token. Instead, the MCP server authenticates using its own app token and records which agent requested the action in its audit logs. *(Note: RFC 8693 token exchange can carry the caller's identity into the new token, in an `act` (actor) claim ([RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). Microsoft documents no RFC 8693 flow for this case. Its documented flow for a downstream call is OBO, which uses the `jwt-bearer` grant and "only works for user principals" ([On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). Entra's token endpoint does recognize the RFC 8693 grant type, but no Microsoft page says what it issues for it (both checked 29 October 2026).
+
+Remember: request 1 is who the agent is, request 2 adds who the user is.
 
    **No token passthrough.** The MCP server never forwards the token it received to a downstream API. The MCP spec forbids this and calls it "token passthrough". There are three reasons:
    * The token's audience is the MCP server, so a downstream API must refuse it.
@@ -149,9 +152,11 @@ To understand why the enterprise diagram is wired this way, look closely at four
 
    | | Entra | RFC |
    |---|---|---|
-   | **Acting client** | `azp` (v2.0) or `appid` (v1.0) | `client_id` |
+   | **Acting client** (agent) | `azp` (v2.0) or `appid` (v1.0) | `client_id` |
    | **User** (on whose behalf) | `sub` or `oid` | `sub` |
    | **What marks delegation (OBO)** | `scp` is present | `act` is present |
+   | **Delegated Permissions** | `scp` | `scope` |
+   | **Grant** | `jwt-bearer` | `token-exchange` |
 
    Entra has no claim that says "this is OBO". `scp` means a user is involved, and 11 in `xms_act_fct` means an agent is the client. Together they show an agent acting for a user. Each claim describes its own token: when the MCP server does the OBO exchange, `azp` in the downstream token names the MCP server, not the agent. Sources: [Token claims reference for agent IDs](https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/agent-token-claims), [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693).
 
