@@ -458,7 +458,7 @@ sequenceDiagram
     M-->>H: the findings
     H->>L: the findings
 
-    L-->>H: call disable_agent(app_id, reason),<br/>once for each agent the model chose
+    L-->>H: tool calls: disable_agent(agent 1),<br/>disable_agent(agent 2), ...
 
     loop For each disable_agent call, one at a time
         H->>M: disable_agent
