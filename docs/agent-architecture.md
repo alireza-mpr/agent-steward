@@ -31,6 +31,7 @@ The details of each part are in their own documents:
 * [3. The Guardian's Design Today](#3-the-guardians-design-today)
   * [Architectural Shortcuts (Where the Guardian Differs)](#architectural-shortcuts-where-the-guardian-differs)
   * [Component Inventory: Who Holds What?](#component-inventory-who-holds-what)
+  * [The Main Flow at a Glance](#the-main-flow-at-a-glance)
   * [The Human Approval Flow: `disable_agent`](#the-human-approval-flow-disable_agent)
 * [4. Blast Radius: What Happens If One Part Is Compromised?](#4-blast-radius-what-happens-if-one-part-is-compromised)
 
@@ -223,6 +224,8 @@ sequenceDiagram
     Note over M,A: Ready to call the API. From here, the same as the autonomous flow,<br/>except that the API checks scp and the user, not roles.
     M->>A: the API call + Authorization: Bearer downstream token
 ```
+
+> **Only the token's audience can exchange it.** An OBO request is accepted only when the token sent as `assertion` was issued for the app that makes the request: its `aud` must be that app. So only the blueprint's agent identity can exchange Tc (step 15), and only the MCP server can exchange TR (step 22). Entra rejects any other token with `AADSTS50013`. The client that received a token for an API cannot exchange it, because the token is not for the client.
 
 **Design points:**
 * **Permissions:** a delegated token has `scp`, so the role-to-tool mapping must also map scopes to tools. The user's own roles, if any, stay in `roles`.
@@ -427,6 +430,68 @@ To verify our security posture, here is exactly what each container holds and wh
 
 *(Transport Note: The communication between the harness and the MCP server uses **MCP over Streamable HTTP**, the standard transport for standalone networked MCP services. The client sends each MCP message as an HTTP POST to a single `/mcp` endpoint, and the server either replies with a standard JSON payload or streams the response back over the same connection).*
 
+### The Main Flow at a Glance
+
+One run of the guardian on the `--disable-dormant` task, from the scan to the disable. Sign-in and tokens are left out: they are in [Authentication](authentication.md) and in the next section.
+
+```mermaid
+sequenceDiagram
+    actor O as Operator
+    participant H as Harness
+    participant L as Model
+    participant M as MCP server
+    participant G as Microsoft Graph
+    participant A as Identity API
+    participant C as approve command
+    actor P as Approver
+
+    O->>H: start a run (--disable-dormant)
+    H->>L: task and tool list
+    L-->>H: call scan_registry
+    H->>M: scan_registry
+    M->>G: read agents, blueprints, sign-ins
+    G-->>M: the data
+    M->>M: run the four rules
+    M->>A: send the findings (audit log)
+    M-->>H: the findings
+    H->>L: the findings
+
+    L-->>H: call disable_agent(app_id, reason)
+    H->>M: disable_agent
+    M->>G: read the agent and its sign-ins
+    M->>M: check: dormant, not the guardian's own
+    M->>A: create a disable request (facts and reason)
+    A-->>M: request pending
+
+    par The approver decides
+        P->>C: run the approve command
+        C->>A: get pending requests
+        A-->>C: the request
+        C->>P: show facts, and the reason as untrusted
+        P->>C: approve or deny
+        C->>A: send the decision
+    and The MCP server waits
+        loop every 5 seconds, at most 4 minutes
+            M->>A: get the request's status
+            A-->>M: pending, approved, denied or expired
+        end
+    end
+
+    alt Approved
+        M->>G: disable the agent
+        M->>G: read it back to confirm
+        M-->>H: disabled, and who approved
+    else Denied or expired
+        M-->>H: not disabled
+    end
+    H->>L: the result
+    L-->>H: the final report
+```
+
+* **The MCP server does all the Graph work:** reading, the rules and the disable.
+* **The Identity API only stores things:** findings, requests and decisions.
+* **The approver and the MCP server never talk directly.** The Identity API connects them.
+
 ### The Human Approval Flow: `disable_agent`
 
 `disable_agent` disables one dormant agent identity, and only after a human approves (FR7). The MCP server does the checks and the write. The model only asks. The Identity API records who decided.
@@ -497,6 +562,44 @@ sequenceDiagram
 | An approval is refused once nobody is waiting for it | The Identity API still accepts it, and nothing follows. The MCP server writes `disable_abandoned`, so the record explains why | Known limit |
 
 The next version would use URL-mode elicitation and an approval web page, on the same identity design.
+
+#### The Approver's Sign-In and Decision, Step by Step
+
+The `approve` command ([approve.py](../src/approve_cli/approve.py)) is the client application `agent-steward-agent-disable-cli`. It gets a delegated token for the Identity API with the authorization code flow and PKCE ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)). No OBO happens: the command calls the Identity API with this token directly.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor P as Approver (and browser)
+    participant C as approve command<br/>(agent-steward-agent-disable-cli)
+    participant E as Entra ID
+    participant A as Identity API
+
+    P->>C: docker compose run --rm approve
+    C->>C: MSAL makes code_verifier, code_challenge and state
+    C->>P: print the sign-in address: /authorize?<br/>client_id=#lt;CLI app ID#gt;, response_type=code,<br/>redirect_uri=http://localhost:18400,<br/>scope=#lt;Identity API app ID#gt;/.default openid profile offline_access,<br/>code_challenge, code_challenge_method=S256, state,<br/>prompt=select_account
+    P->>E: open the address, sign in (password, MFA)
+    E->>E: the CLI's grant: AgentDisable.Decide, for all users (admin consent)<br/>the person's roles on the Identity API
+    E-->>P: redirect to http://localhost:18400/?code=...#amp;state=...<br/>(the page fails to load, as expected)
+    P->>C: paste the address
+    C->>E: POST /token: grant_type=authorization_code,<br/>client_id, code, code_verifier, redirect_uri<br/>(MSAL first checks that state matches)
+    E->>E: check code_verifier against code_challenge
+    E-->>C: the approver's access token<br/>(aud: the Identity API, azp: the CLI, oid: the person, idtyp: user,<br/>scp: AgentDisable.Decide, roles: AgentDisable.Approve)
+
+    loop Every 5 seconds, until Ctrl+C
+        C->>A: GET /disableRequests?status=pending + Bearer token
+        A->>A: check_approver: signature, issuer, aud, exp,<br/>idtyp is user, not an agent, azp is the CLI,<br/>scp has AgentDisable.Decide, roles has AgentDisable.Approve
+        A-->>C: pending requests
+    end
+
+    C->>P: show the facts, and the model's reason labelled untrusted
+    P->>C: approve (the full word) or deny
+    C->>A: POST /agents/{agentId}/disableRequests/{requestId}/decision + Bearer token
+    A->>A: the same checks, then decide once, under a lock,<br/>and record the approver's oid and name
+    A-->>C: the decision (409 if already decided or expired)
+```
+
+The token answers two questions: `scp` says the CLI may send decisions for this person, and `roles` says this person may approve. `azp` is a third check, in case the scope is ever granted to another app by mistake.
 
 ---
 
