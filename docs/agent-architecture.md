@@ -442,7 +442,7 @@ sequenceDiagram
     participant M as MCP server
     participant G as Microsoft Graph
     participant A as Identity API
-    participant C as approve command
+    participant C as CLI
     actor P as Approver
 
     O->>H: start a run (--disable-dormant)
@@ -458,41 +458,46 @@ sequenceDiagram
     M-->>H: the findings
     H->>L: the findings
 
-    L-->>H: call disable_agent(app_id, reason)
-    H->>M: disable_agent
-    M->>G: read the agent and its sign-ins
-    M->>M: check: dormant, not the guardian's own
-    M->>A: create a disable request (facts and reason)
-    A-->>M: request pending
+    L-->>H: call disable_agent(app_id, reason),<br/>once for each agent the model chose
 
-    par The approver decides
-        P->>C: run the approve command
-        C->>A: get pending requests
-        A-->>C: the request
-        C->>P: show facts, and the reason as untrusted
-        P->>C: approve or deny
-        C->>A: send the decision
-    and The MCP server waits
-        loop every 5 seconds, at most 4 minutes
-            M->>A: get the request's status
-            A-->>M: pending, approved, denied or expired
+    loop For each disable_agent call, one at a time
+        H->>M: disable_agent
+        M->>G: read the agent and its sign-ins
+        M->>M: check: dormant, not the guardian's own
+        M->>A: create a disable request (facts and reason)
+        A-->>M: request pending
+
+        par The approver decides
+            P->>C: start the CLI
+            C->>A: get pending requests
+            A-->>C: the request
+            C->>P: show facts, and the reason as untrusted
+            P->>C: approve or deny
+            C->>A: send the decision
+        and The MCP server waits
+            loop every 5 seconds, at most 4 minutes
+                M->>A: get the request's status
+                A-->>M: pending, approved, denied or expired
+            end
+        end
+
+        alt Approved
+            M->>G: disable the agent
+            M->>G: read it back to confirm
+            M-->>H: disabled, and who approved
+        else Denied or expired
+            M-->>H: not disabled
         end
     end
 
-    alt Approved
-        M->>G: disable the agent
-        M->>G: read it back to confirm
-        M-->>H: disabled, and who approved
-    else Denied or expired
-        M-->>H: not disabled
-    end
-    H->>L: the result
+    H->>L: all the results
     L-->>H: the final report
 ```
 
 * **The MCP server does all the Graph work:** reading, the rules and the disable.
 * **The Identity API only stores things:** findings, requests and decisions.
 * **The approver and the MCP server never talk directly.** The Identity API connects them.
+* **The model chooses, the harness loops.** The model can ask for several disables in one answer. The harness runs the calls one at a time, and each waits for its own approval.
 
 ### The Human Approval Flow: `disable_agent`
 
