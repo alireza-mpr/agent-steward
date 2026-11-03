@@ -135,9 +135,9 @@ To understand why the enterprise diagram is wired this way, look closely at four
 4. **The MCP Server Uses Its Own Token for Downstream APIs:** Microsoft's documentation says each hop must get its own token. The harness calls the MCP server with a token whose `aud` is the MCP server. The MCP server then uses its own identity to get a new token whose `aud` is the downstream API, because the API refuses any other audience. Entra is the party that both sides trust. This means a new token for each API, not token passthrough. Microsoft Learn gives this rule for MCP servers: the token "is meant to represent access to your MCP server, and not to a downstream resource", pass-through creates security vulnerabilities, and downstream access needs "a new token through the on-behalf-of flow or another mechanism for explicit delegation" (Reference: Microsoft, [Configure MCP server authorization](https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-mcp)).
 
    How the MCP server calls backend APIs depends on the mode:
-   * *With a human user (Delegated):* It uses the On-Behalf-Of (OBO) flow, meaning the downstream token carries the identity of both the human user and the calling service.
+   * *With a signed-in user (Delegated):* It uses the On-Behalf-Of (OBO) flow. The downstream token names the signed-in user and the calling service. The user takes no part in the exchange.
    
-   * *Without a human user (Autonomous):* Entra's OBO flow cannot be used here because OBO strictly requires a human user in the incoming token. Instead, the MCP server authenticates using its own app token and records which agent requested the action in its audit logs. *(Note: RFC 8693 token exchange can carry the caller's identity into the new token, in an `act` (actor) claim ([RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). Microsoft documents no RFC 8693 flow for this case. Its documented flow for a downstream call is OBO, which uses the `jwt-bearer` grant and "only works for user principals" ([On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). Entra's token endpoint does recognize the RFC 8693 grant type, but no Microsoft page says what it issues for it (both checked 29 October 2026).
+   * *Without a human user (Autonomous):* Entra's OBO flow cannot be used here because OBO strictly requires a signed-in user in the incoming token. Instead, the MCP server authenticates using its own app token and records which agent requested the action in its audit logs. *(Note: RFC 8693 token exchange can carry the caller's identity into the new token, in an `act` (actor) claim ([RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). Microsoft documents no RFC 8693 flow for this case. Its documented flow for a downstream call is OBO, which uses the `jwt-bearer` grant and "only works for user principals" ([On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). Entra's token endpoint does recognize the RFC 8693 grant type, but no Microsoft page says what it issues for it (both checked 29 October 2026).
 
 Remember: request 1 is who the agent is, request 2 adds who the user is.
 
@@ -154,9 +154,11 @@ Remember: request 1 is who the agent is, request 2 adds who the user is.
    |---|---|---|
    | **Acting client** (agent) | `azp` (v2.0) or `appid` (v1.0) | `client_id` |
    | **User** (on whose behalf) | `sub` or `oid` | `sub` |
-   | **What marks delegation (OBO)** | `scp` is present | `act` is present |
+   | **What marks delegation** | `scp` is present | `act` is present, after a token exchange |
    | **Delegated Permissions** | `scp` | `scope` |
    | **Grant** | `jwt-bearer` | `token-exchange` |
+
+   **OBO is one way to get a delegated token.** The authorization code flow is another. `scp` appears in the delegated tokens from both, so it marks delegation, not OBO.
 
    Entra has no claim that says "this is OBO". `scp` means a user is involved, and 11 in `xms_act_fct` means an agent is the client. Together they show an agent acting for a user. Each claim describes its own token: when the MCP server does the OBO exchange, `azp` in the downstream token names the MCP server, not the agent. Sources: [Token claims reference for agent IDs](https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/agent-token-claims), [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693).
 

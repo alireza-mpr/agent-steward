@@ -256,6 +256,16 @@ TR's `azpacr` describes request 2 only. There the client is the agent identity, 
 
 A picture to remember it: you may drive your car, so that is your role. A valet key lets the valet drive it but not open the boot, so that is a scope. The valet can do only what both allow.
 
+**Two rules for reading a token:**
+
+- **`roles`:** what the token's subject may do on the token's `aud`. With no user, that's the client. With a user, that's the user.
+- **`scp`:** what the client may do for the signed-in user. It only appears when a user is involved.
+
+| Same client | `roles` holds | `scp` holds |
+|---|---|---|
+| Autonomous token | The client's app roles | Nothing |
+| OBO token | The signed-in user's roles, if any | The client's delegated permissions |
+
 ### The standard
 
 - **Scope is OAuth's word, and it is general.** It is the extent of the access the client asks for, with or without a user ([RFC 6749 §3.3](https://www.rfc-editor.org/rfc/rfc6749#section-3.3)). Every grant can carry a `scope` parameter, also the client credentials grant, which has no user ([§4.4.2](https://www.rfc-editor.org/rfc/rfc6749#section-4.4.2)). So by the standard, an app-only token can hold scopes.
