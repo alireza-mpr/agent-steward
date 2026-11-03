@@ -327,6 +327,14 @@ A picture to remember it: you may drive your car, so that is your role. A valet 
 - **Same end user, same resource API → same `roles`**, whatever the client. The roles belong to the user, on that API.
 - **Same client, same resource API → same `scp`** for every user, when the grant's `consentType` is `AllPrincipals` (admin consent). With `Principal` (user consent), each grant covers one user, so `scp` can differ between users.
 
+**So, in a user token:** `scp` answers "may this client act for this user?", and `roles` answers "may this user do it?". The API needs both to say yes. An example from this project: `AgentDisable.Decide` is granted to the CLI with `AllPrincipals`, so every user who signs in to the CLI gets it in `scp`. That alone would let anyone decide. The `AgentDisable.Approve` role limits it to approvers.
+
+**A scope is granted, a role is assigned:**
+
+- **A scope** is granted to the client app, for all users (`AllPrincipals`) or for one user (`Principal`). It cannot be granted for a group.
+- **A role** is assigned to a user, a group or a service principal. That is why the approvers group can hold `AgentDisable.Approve`.
+- **So, to allow only some people:** use a role, or set "Assignment required" on the client's enterprise application and assign the group (assigning a group needs Entra ID P1 or P2), so only its members can sign in to the client. This project uses the role only. "Assignment required" would be a second layer.
+
 **Roles cannot be narrowed, scopes can:**
 
 - **`roles`, app-only:** the client asks for `.default`, so the token carries every app role the client holds on that API. The guardian's Graph token always carries its write role for this reason ([A1](../THREATMODEL.md#accepted-risks)).

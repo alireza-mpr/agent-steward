@@ -29,6 +29,7 @@ The details of each part are in their own documents:
   * [Error Handling: When a Call Fails](#error-handling-when-a-call-fails)
   * [Human Approval: Who Approves, and How](#human-approval-who-approves-and-how)
 * [3. The Guardian's Design Today](#3-the-guardians-design-today)
+  * [Why the Guardian Uses a Model](#why-the-guardian-uses-a-model)
   * [Architectural Shortcuts (Where the Guardian Differs)](#architectural-shortcuts-where-the-guardian-differs)
   * [Component Inventory: Who Holds What?](#component-inventory-who-holds-what)
   * [The Main Flow at a Glance](#the-main-flow-at-a-glance)
@@ -411,6 +412,14 @@ flowchart TB
     MCP -.-> LOGS
     API -.-> LOGS
 ```
+
+### Why the Guardian Uses a Model
+
+Every safety decision is deterministic, on purpose. The MCP server's rules decide which agents are flagged, the allow-list decides which tools exist, the MCP server checks each disable again (the agent must be dormant and not the guardian's own), and a human approves each disable. The operator's `--disable-dormant` option only changes the model's task, so it is not a control.
+
+The model is used where rules fail: scanning unstructured data, such as an agent's description, for malicious text. A rule could search for known words, but an attacker can reword the text easily. In the NFR3 agent eval, it flagged the planted prompt injection in a description on its own ([eval_prompt_injection.py](../tests/agent_eval/eval_prompt_injection.py)).
+
+So if the model is wrong, the system stays safe, just less useful.
 
 ### Architectural Shortcuts (Where the Guardian Differs)
 
