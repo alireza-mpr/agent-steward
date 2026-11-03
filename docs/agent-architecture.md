@@ -446,6 +446,8 @@ sequenceDiagram
     actor P as Approver
 
     O->>H: start a run (--disable-dormant)
+    H->>M: tools/list
+    M-->>H: the tools on the allow-list
     H->>L: task and tool list
     L-->>H: call scan_registry
     H->>M: scan_registry
