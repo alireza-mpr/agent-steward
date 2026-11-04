@@ -12,17 +12,17 @@ This document shows how this project's **Guardian** agent is built today: its pa
 
 * [1. The Guardian's Design Today](#1-the-guardians-design-today)
   * [Why the Guardian Uses a Model](#why-the-guardian-uses-a-model)
-  * [Architectural Shortcuts (Where the Guardian Differs)](#architectural-shortcuts-where-the-guardian-differs)
   * [Component Inventory: Who Holds What?](#component-inventory-who-holds-what)
   * [The Main Flow at a Glance](#the-main-flow-at-a-glance)
   * [The Human Approval Flow: `disable_agent`](#the-human-approval-flow-disable_agent)
+  * [Architectural Shortcuts (Where the Guardian Differs)](#architectural-shortcuts-where-the-guardian-differs)
 * [2. Blast Radius: What Happens If One Part Is Compromised?](#2-blast-radius-what-happens-if-one-part-is-compromised)
 
 ---
 
 ## 1. The Guardian's Design Today
 
-While our **Guardian** agent shares the same four-part conceptual anatomy, it runs locally on a single machine via Docker Compose. To fit our project's timebox, it takes six deliberate architectural shortcuts (labeled **D1** through **D6** in the diagram and detailed in the table below). The decisions behind this design, with their reasons, are recorded in the [decision log](decisions.md).
+While our **Guardian** agent shares the same four-part conceptual anatomy, it runs locally on a single machine via Docker Compose. To fit our project's timebox, it takes six deliberate architectural shortcuts (labeled **D1** through **D6** in the diagram and detailed in [Architectural Shortcuts](#architectural-shortcuts-where-the-guardian-differs), at the end of this section). The decisions behind this design, with their reasons, are recorded in the [decision log](decisions.md).
 
 ```mermaid
 flowchart TB
@@ -71,19 +71,6 @@ Every safety decision is deterministic, on purpose. The MCP server's rules decid
 The model is used where rules fail: scanning unstructured data, such as an agent's description, for malicious text. A rule could search for known words, but an attacker can reword the text easily. In the NFR3 agent eval, it flagged the planted prompt injection in a description on its own ([eval_prompt_injection.py](../tests/agent_eval/eval_prompt_injection.py)).
 
 So if the model is wrong, the system stays safe, just less useful.
-
-### Architectural Shortcuts (Where the Guardian Differs)
-
-| ID | Enterprise Reference Design | The Guardian Today | Why We Took the Shortcut | Risk Accepted |
-|---|---|---|---|---|
-| **D1** | The harness sends a bearer token to the MCP server, which validates it. | **No token:** The MCP server relies on Docker network isolation, trusting that only the Guardian container can reach it. Because it does not know who calls it, its tool allow-list is one list for every caller, not a role-to-tool mapping per agent. | Project timebox. | Any code that manages to reach the MCP server's network port can invoke allow-listed tools. |
-| **D2** | The MCP server has its own Entra identity and serves multiple agents. | **Shared Identity:** The MCP server serves *only* the Guardian and fetches tokens using the Guardian's identity (it acts as the Guardian itself). | Keeping one identity and one sidecar is simpler, and ensures no Entra token ever reaches the harness. | The MCP server cannot be shared with other agents. If compromised, it can request tokens for *any* agent identity under the blueprint (since the sidecar lets callers specify which agent identity they want). |
-| **D3** | The blueprint authenticates via an Azure Managed Identity (zero keys on disk). | **Certificate File:** A certificate file is mounted exclusively into the sidecar container ([details](infra.md#the-blueprints-credential)). | The demo runs locally in Docker, not in Azure. | If the certificate file is stolen from disk, every agent identity tied to the blueprint is exposed. |
-| **D4** | No static model key: the harness authenticates to the model provider with workload identity federation (or, failing that, reads a key from a cloud vault). | **API Key File:** An Anthropic service account API key in `secrets/anthropic.env` (the folder is excluded via `.gitignore`), given only to the guardian container. | Local demo environment, with no managed identity to federate. | The Anthropic API key sits unencrypted on the host disk. |
-| **D5** | Supports Delegated mode with OBO when a human user is present. | **Autonomous Mode Only:** OBO exists strictly as written documentation. | Project timebox. | No human user ever appears in the token chain. |
-| **D6** | Audit logs and distributed traces ship to a central SIEM/sink. | **Local Logs:** Audit lines and traces are written locally. One trace ID across the Guardian, the MCP server and the Identity API is planned (FR8). | Project timebox. | All audit logs reside on the same single machine. |
-
-For the credential options behind D2, D3 and D4, and how to move from the Guardian's shortcuts to the enterprise design, see [Credentials and Tokens](authentication.md#3-credentials-and-tokens-how-a-workload-gets-them).
 
 ### Component Inventory: Who Holds What?
 
@@ -277,6 +264,19 @@ sequenceDiagram
 
 The token answers two questions: `scp` says the CLI may send decisions for this person, and `roles` says this person may approve. `azp` is a third check, in case the scope is ever granted to another app by mistake.
 
+### Architectural Shortcuts (Where the Guardian Differs)
+
+| ID | Enterprise Reference Design | The Guardian Today | Why We Took the Shortcut | Risk Accepted |
+|---|---|---|---|---|
+| **D1** | The harness sends a bearer token to the MCP server, which validates it. | **No token:** The MCP server relies on Docker network isolation, trusting that only the Guardian container can reach it. Because it does not know who calls it, its tool allow-list is one list for every caller, not a role-to-tool mapping per agent. | Project timebox. | Any code that manages to reach the MCP server's network port can invoke allow-listed tools. |
+| **D2** | The MCP server has its own Entra identity and serves multiple agents. | **Shared Identity:** The MCP server serves *only* the Guardian and fetches tokens using the Guardian's identity (it acts as the Guardian itself). | Keeping one identity and one sidecar is simpler, and ensures no Entra token ever reaches the harness. | The MCP server cannot be shared with other agents. If compromised, it can request tokens for *any* agent identity under the blueprint (since the sidecar lets callers specify which agent identity they want). |
+| **D3** | The blueprint authenticates via an Azure Managed Identity (zero keys on disk). | **Certificate File:** A certificate file is mounted exclusively into the sidecar container ([details](infra.md#the-blueprints-credential)). | The demo runs locally in Docker, not in Azure. | If the certificate file is stolen from disk, every agent identity tied to the blueprint is exposed. |
+| **D4** | No static model key: the harness authenticates to the model provider with workload identity federation (or, failing that, reads a key from a cloud vault). | **API Key File:** An Anthropic service account API key in `secrets/anthropic.env` (the folder is excluded via `.gitignore`), given only to the guardian container. | Local demo environment, with no managed identity to federate. | The Anthropic API key sits unencrypted on the host disk. |
+| **D5** | Supports Delegated mode with OBO when a human user is present. | **Autonomous Mode Only:** OBO exists strictly as written documentation. | Project timebox. | No human user ever appears in the token chain. |
+| **D6** | Audit logs and distributed traces ship to a central SIEM/sink. | **Local Logs:** Audit lines and traces are written locally. One trace ID across the Guardian, the MCP server and the Identity API is planned (FR8). | Project timebox. | All audit logs reside on the same single machine. |
+
+For the credential options behind D2, D3 and D4, and how to move from the Guardian's shortcuts to the enterprise design, see [Credentials and Tokens](authentication.md#3-credentials-and-tokens-how-a-workload-gets-them).
+
 ---
 
 ## 2. Blast Radius: What Happens If One Part Is Compromised?
@@ -284,12 +284,17 @@ The token answers two questions: `scp` says the CLI may send decisions for this 
 We separate the agent into distinct trust boundaries specifically to contain the blast radius when something goes wrong. Here is how the Guardian's architecture holds up if individual components fail:
 
 * **Scenario 1: The Model Is Tricked (Prompt Injection)**
-  * *Impact:* Minimal (this is the primary failure mode the architecture is built to handle). The model can only *ask* the harness to invoke tools. The MCP server's checks (the tool allow-list and its input checks today; the human approval gate is planned) and the harness's turn limit all remain strictly enforced, and the model never sees an Entra token.
+  * *Impact:* Minimal (this is the primary failure mode the architecture is built to handle). The model can only *ask* the harness to invoke tools. The MCP server's checks (the tool allow-list, its input checks, its own check that an agent is dormant and not one of the guardian's own, and the human approval gate) and the harness's turn limit all remain strictly enforced, and the model never sees an Entra token.
 * **Scenario 2: The Harness is Compromised**
   * *Impact:* Moderate. Because the harness mediates all communication with the model, it can manipulate the tool list, alter or fabricate tool results, invoke any allow-listed tool, and burn through the local Anthropic API key. However, **it still cannot obtain an Entra token**, and it cannot bypass the tool allow-list or approval gates because those checks are enforced inside the MCP server. 
   * *Crucial Audit Rule:* Because a compromised harness can lie to the model, **the LLM's final report is never proof of what actually happened—only the Identity API's audit log is.**
 * **Scenario 3: The MCP Server is Compromised**
-  * *Impact:* High. Due to shortcut **D2** (where the sidecar lets its caller request tokens for any child of the blueprint), a compromised MCP server can obtain TR access tokens for *any* agent identity under that blueprint. Consequently, in the Guardian's current design, the MCP server is our most trusted component and its codebase must be kept as small and auditable as possible.
+  * *Impact:* High. Due to shortcut **D2** (where the sidecar lets its caller request tokens for any child of the blueprint), a compromised MCP server can obtain TR access tokens for *any* agent identity under that blueprint. It also does the write itself: its Graph token always carries the write role ([A1](../THREATMODEL.md#accepted-risks)), so it can disable any agent without asking anyone. And it writes the facts the approver sees, so it can mislead the approver ([A3](../THREATMODEL.md#accepted-risks)). Consequently, in the Guardian's current design, the MCP server is our most trusted component and its codebase must be kept as small and auditable as possible.
 * **Scenario 4: The Sidecar is Compromised**
   * *Impact:* Critical. The blueprint's private certificate is exposed (**D3**), immediately compromising every agent identity governed by that blueprint *(see the blast radius note in [Agent ID](agent-id.md#why-use-two-requests-instead-of-one))*.
+* **Scenario 5: The Identity API is Compromised**
+  * *Impact:* Moderate. It stores the disable requests and the decisions, so it can report "approved" for a request that nobody approved, and the MCP server then disables the agent. The damage has a limit: the MCP server waits only on requests it created itself, after its own checks, so only dormant agents that are not the guardian's own can be disabled this way. The Identity API also keeps the audit log, so it could change or drop lines, because the logs stay on this machine ([D6](#architectural-shortcuts-where-the-guardian-differs)). It holds no credential and never gets a token, so it cannot call Graph itself.
+* **Scenario 6: An Approver's Account is Compromised**
+  * *Impact:* Low to moderate. The attacker can sign in through the `approve` command as the approver, and approve or deny pending requests. They cannot create a request, so they can approve only the disables the MCP server already asked for: dormant agents that are not the guardian's own, while the request is pending (up to 4 minutes). Denying everything blocks the clean-up but disables nothing.
+  * *The fix:* protect the account itself, for example with a Conditional Access policy that requires phishing-resistant MFA for the approvers group. This is not set up in the lab tenant.
 
