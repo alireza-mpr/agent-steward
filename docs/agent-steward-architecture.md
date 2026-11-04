@@ -25,43 +25,25 @@ This document shows how this project's **Guardian** agent is built today: its pa
 While our **Guardian** agent shares the same four-part conceptual anatomy, it runs locally on a single machine via Docker Compose. To fit our project's timebox, it takes six deliberate architectural shortcuts (labeled **D1** through **D6** in the diagram and detailed in [Architectural Shortcuts](#architectural-shortcuts-where-the-guardian-differs), at the end of this section). The decisions behind this design, with their reasons, are recorded in the [decision log](decisions.md).
 
 ```mermaid
-flowchart TB
-    subgraph PROVIDER["Model provider (Anthropic)"]
-        MODEL["<b>Model</b><br/>Claude"]
-    end
-
+flowchart LR
+    MODEL["<b>Model</b><br/>Claude (Anthropic)"]
     subgraph COMPOSE["Docker Compose, one machine"]
-        subgraph GCONT["guardian container"]
-            HARNESS["<b>Harness</b> (MCP host)<br/>agent loop, turn limit<br/>no identity, no token<br/>D4: model API key from a file"]
-        end
+        HARNESS["<b>Harness</b><br/>agent loop · D4"]
         subgraph NS["sidecar's network namespace"]
-            MCP["<b>MCP server</b><br/>serves only the guardian<br/>D2: no identity of its own<br/>tool allow-list (the same<br/>for every caller, D1)<br/>approval gate (planned)"]
-            SIDECAR["<b>Sidecar</b><br/>(Entra ID Auth SDK)<br/>loopback only<br/>D3: certificate file<br/>caller names the agent identity"]
+            MCP["<b>MCP server</b><br/>allow-list, approval gate · D2"]
+            SIDECAR["<b>Sidecar</b><br/>certificate · D3"]
         end
-        subgraph ACONT["api container"]
-            API["<b>Identity API</b><br/>checks the token<br/>audit log"]
-        end
-        LOGS[("D6: audit + trace ID<br/>stay local")]
+        API["<b>Identity API</b><br/>approvals, audit log · D6"]
     end
+    ENTRA["<b>Entra ID</b><br/>autonomous only · D5"]
+    GRAPH["<b>Microsoft Graph</b>"]
 
-    subgraph IDP["Identity provider (Microsoft)"]
-        ENTRA["<b>Entra ID</b><br/>D5: autonomous mode only"]
-    end
-
-    subgraph RES["Resource API (Microsoft)"]
-        GRAPH["<b>Microsoft Graph</b>"]
-    end
-
-    HARNESS -- "prompts, tools, results" --> MODEL
-    MODEL -- "tool calls" --> HARNESS
-    HARNESS -- "D1: MCP with no token<br/>(network location only)" --> MCP
-    MCP -- "loopback: get TR" --> SIDECAR
-    SIDECAR -- "T1, then TR,<br/>as the guardian" --> ENTRA
-    MCP -- "TR for Graph" --> GRAPH
-    MCP -- "TR for the Identity API" --> API
-    HARNESS -.-> LOGS
-    MCP -.-> LOGS
-    API -.-> LOGS
+    HARNESS <-->|"prompts, tool calls"| MODEL
+    HARNESS -->|"MCP, no token · D1"| MCP
+    MCP -->|"loopback: get TR"| SIDECAR
+    SIDECAR -->|"T1, then TR"| ENTRA
+    MCP -->|"TR"| GRAPH
+    MCP -->|"TR"| API
 ```
 
 ### Why the Guardian Uses a Model
