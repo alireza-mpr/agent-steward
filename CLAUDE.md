@@ -23,7 +23,7 @@ The project is also a learning vehicle. In every session, follow **MENTOR.md**. 
 1. One guardian agent holds all intelligence. The live worker is a dumb timer loop - **no LLM in the worker**, ever.
 2. Fixture agents are registry entries only. They run no code.
 3. No video recording. Proof = DEMO.md with screenshots. Capture screenshots into `docs/screenshots/` the same day a thing works - the trial tenant will expire.
-4. Federation, token exchange (RFC 8693), AIMS, Agent 365 governance, dynamic agent registration: written design in DESIGN-NOTES.md only. **Never implement these in code.**
+4. Federation, token exchange (RFC 8693), AIMS, Agent 365 governance, dynamic agent registration: written design in docs/DESIGN-NOTES.md only. **Never implement these in code.**
 5. OpenTelemetry: traces + the three-way correlation link (trace <-> audit line <-> Entra sign-in log) are required. Per-step token count and cost metrics are optional and are the first thing to cut if behind schedule.
 6. If Conditional Access for agents is blocked by tenant licensing, document the exact constraint in DEMO.md and move on. Do not burn hours fighting licensing.
 
@@ -47,7 +47,7 @@ The project is also a learning vehicle. In every session, follow **MENTOR.md**. 
 - Write offline tests for policy logic (allow-list, approval gate, claim checks) in the same session the logic is written, not later (NFR8).
 - When a requirement ships, update its row in the README "Delivery status" table in the same commit: status + an evidence link (DEMO.md section, screenshot, test file, or log capture). A requirement is `done` only with evidence linked. Use `documented-only` when licensing or the timebox prevented a live demo, and make the evidence explain why.
 - Small, frequent commits with clear conventional messages. Propose a commit at every working step (see the commit rule below).
-- Ideas outside the README spec and ROADMAP.md go to the "Future work" section of DESIGN-NOTES.md: one line each, plus why it was left out. Never build them inside the 14 days.
+- Ideas outside the README spec and ROADMAP.md go to the "Future work" section of docs/DESIGN-NOTES.md: one line each, plus why it was left out. Never build them inside the 14 days.
 
 ## Git / repo hygiene
 

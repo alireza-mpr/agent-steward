@@ -17,8 +17,8 @@ Patterns that belong to a production version of this system but were deliberatel
 
 - **What:** a client trades a token it holds for a new one, usually for another audience or with less scope. It can also name an actor, and the new token then records who acts for whom in an `act` claim.
 - **Why for agents:** an agent should never forward its full-power token downstream. Each hop gets the minimum, and the audit can see the whole chain.
-- **How it would attach here:** the guardian has no incoming token to exchange, because it acts as itself and the sidecar gets a new token for each API. Exchange would matter on a chain of services. It could also address [A1](THREATMODEL.md#accepted-risks), because a read-only token could be narrowed from a broader one. Entra's app-only tokens cannot do that today: `.default` gives every role the agent holds.
-- **Relation to OBO:** both solve the same problem, but Entra's OBO is not RFC 8693 ([comparison](docs/jwt-bearer-and-token-exchange.md#52-obo-is-not-rfc-8693)).
+- **How it would attach here:** the guardian has no incoming token to exchange, because it acts as itself and the sidecar gets a new token for each API. Exchange would matter on a chain of services. It could also address [A1](../THREATMODEL.md#accepted-risks), because a read-only token could be narrowed from a broader one. Entra's app-only tokens cannot do that today: `.default` gives every role the agent holds.
+- **Relation to OBO:** both solve the same problem, but Entra's OBO is not RFC 8693 ([comparison](jwt-bearer-and-token-exchange.md#52-obo-is-not-rfc-8693)).
 
 ## 2. AIMS - AI Identity Management System
 
@@ -30,8 +30,8 @@ The mapping below is this project's own reading of the draft:
 | AIMS function | This project | Gap |
 |---|---|---|
 | Identifier | Each agent identity's `appId` | Not a WIMSE or SPIFFE identifier |
-| Credentials and provisioning | The blueprint's credential, and short-lived tokens | The certificate and the model key are files ([A7](THREATMODEL.md#accepted-risks)). The draft treats static API keys as an antipattern. |
-| Authentication | Entra's two token requests | The harness to MCP server hop has no token ([A2](THREATMODEL.md#accepted-risks)) |
+| Credentials and provisioning | The blueprint's credential, and short-lived tokens | The certificate and the model key are files ([A7](../THREATMODEL.md#accepted-risks)). The draft treats static API keys as an antipattern. |
+| Authentication | Entra's two token requests | The harness to MCP server hop has no token ([A2](../THREATMODEL.md#accepted-risks)) |
 | Authorization | OAuth, with roles checked at each API | No delegated mode ([section 6](#6-delegation-and-on-behalf-of-obo-for-agents)) |
 | Observability and remediation | Audit lines, and a disable path with human approval | No detection of an active agent misbehaving |
 | Policy and compliance | The registry rules and the permission policy file | Local files, not a central policy service |
@@ -42,7 +42,7 @@ Two of the draft's rules match choices already made here. A tool must not forwar
 
 - **What it adds:** Microsoft says [Agent 365](https://learn.microsoft.com/en-us/microsoft-agent-365/overview) is the registry and control plane for agents, and Entra provides the identity through Agent ID ([announcement](https://www.microsoft.com/en-us/security/blog/2026/05/01/microsoft-agent-365-now-generally-available-expands-capabilities-and-integrations/), generally available 1 May 2026).
 - **Overlap with the guardian:** I expect a real deployment to take the inventory from Agent 365, not from its own scan. The custom rules, the prompt injection boundary and the approval gate would stay until the product covers them. This project did not test Agent 365 in a tenant, so that is a judgment, not a finding.
-- **Licensing reality:** viewing the inventory needs an admin role. Controls such as Conditional Access for agents need a license ([notes](docs/entra.md#6-agent-id-licensing--trials)). Microsoft's pages differ on the prerequisites, so check the current service description before relying on this.
+- **Licensing reality:** viewing the inventory needs an admin role. Controls such as Conditional Access for agents need a license ([notes](entra.md#6-agent-id-licensing--trials)). Microsoft's pages differ on the prerequisites, so check the current service description before relying on this.
 
 ## 4. Dynamic agent registration - the CDR parallel
 
@@ -56,14 +56,14 @@ Two of the draft's rules match choices already made here. A tool must not forwar
 
 - **What:** an agent running outside Azure (AWS, a local container) gets an Entra agent identity with no secret, by federating a token its platform issues.
 - **Why:** it removes long-lived cross-cloud secrets.
-- **How it would attach here:** the blueprint's certificate would be replaced by a federated identity credential that trusts the platform's token. That closes the credential half of [A7](THREATMODEL.md#accepted-risks).
+- **How it would attach here:** the blueprint's certificate would be replaced by a federated identity credential that trusts the platform's token. That closes the credential half of [A7](../THREATMODEL.md#accepted-risks).
 
 ## 6. Delegation and On-Behalf-Of (OBO) for agents
 
-This is the design for FR4. The guardian runs in autonomous mode only ([D5](docs/agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs)).
+This is the design for FR4. The guardian runs in autonomous mode only ([D5](agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs)).
 
 - **The problem:** a user signs in and asks the agent to act for them. The user's token, Tc, is issued for the blueprint. Graph would refuse it, and forwarding it would be token passthrough. So the agent asks Entra for a new token for the downstream API, and the user stays in that token.
-- **The flow:** request 1 does not change: the blueprint gets T1. Request 2 changes ([Microsoft's flow](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow), [details](docs/authentication.md#part-a-a-workload-proves-itself-to-entra-id)):
+- **The flow:** request 1 does not change: the blueprint gets T1. Request 2 changes ([Microsoft's flow](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow), [details](authentication.md#part-a-a-workload-proves-itself-to-entra-id)):
 
 | Request 2 | Autonomous (built) | OBO (design only) |
 |---|---|---|
@@ -75,11 +75,11 @@ This is the design for FR4. The guardian runs in autonomous mode only ([D5](docs
 
 - **What would change here:**
   1. A user signs in before the harness starts the task. The model never sees the token.
-  2. The harness to MCP server hop carries a real token, which also closes [A2](THREATMODEL.md#accepted-risks).
+  2. The harness to MCP server hop carries a real token, which also closes [A2](../THREATMODEL.md#accepted-risks).
   3. The blueprint exposes a scope, and an admin consents to the delegated permissions.
   4. The Identity API tells the modes apart from the token: `idtyp` and `scp` for a user, `idtyp` and `roles` for an agent alone.
   5. The audit line names the user and the agent.
-- **The trade-off:** the scan runs with no person present, so it stays autonomous. A write could use OBO, so the guardian would not need an app-only write role, and that would address [A1](THREATMODEL.md#accepted-risks). The cost is that a write then needs a user who holds the rights, and a signed-in user is not by itself an approval of one action.
+- **The trade-off:** the scan runs with no person present, so it stays autonomous. A write could use OBO, so the guardian would not need an app-only write role, and that would address [A1](../THREATMODEL.md#accepted-risks). The cost is that a write then needs a user who holds the rights, and a signed-in user is not by itself an approval of one action.
 - **What exists today:** the `approve` command uses a person's delegated token, with `scp` and `roles`, and the Identity API checks it. That is delegated access, not OBO: no service exchanges the token.
 
 ## 7. Revoking live tokens
@@ -90,7 +90,7 @@ This is the design for FR4. The guardian runs in autonomous mode only ([D5](docs
   2. The API checks the agent's state on each call or with a short cache, which costs a call or some delay.
   3. A kill list at the API, fed by the disable event.
   4. Continuous Access Evaluation, if it covers the agent's tokens. This project has not checked that.
-- **Status:** FR11 is not built. The disable itself is built and was run live ([FR7](DEMO.md#6-human-approval)).
+- **Status:** FR11 is not built. The disable itself is built and was run live ([FR7](../DEMO.md#6-human-approval)).
 
 ## Future work
 

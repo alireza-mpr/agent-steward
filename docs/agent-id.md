@@ -2,7 +2,7 @@
 
 This document breaks down how Microsoft Entra Agent ID objects fit together and explains the mechanics behind how an agent signs in. We will cover this in four progressive parts, with each section building on the concepts from the last. 
 
-*(For short definitions of each term and how they map to OAuth, OIDC, and CDR terminology, please see the [glossary](../GLOSSARY.md). For foundational context, you can reference the `agent-id.md` file).*
+*(For short definitions of each term and how they map to OAuth, OIDC, and CDR terminology, please see the [glossary](GLOSSARY.md). For foundational context, you can reference the `agent-id.md` file).*
 
 ## Contents
 

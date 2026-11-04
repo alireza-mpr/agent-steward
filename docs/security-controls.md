@@ -104,4 +104,4 @@ These controls belong to the enterprise design and are described in [Agent archi
 | Workload identity federation for the model provider, so no key exists | D4: an API key in a file |
 | Delegated mode with OBO, so a user (a human) appears in the token chain | D5: autonomous mode only |
 | A central sink for audit logs and traces | D6: logs stay local |
-| Conditional Access for agent identities | Not demonstrated: it needs an Agent 365 licence ([glossary](../GLOSSARY.md#core-identity-objects)) |
+| Conditional Access for agent identities | Not demonstrated: it needs an Agent 365 licence ([glossary](GLOSSARY.md#core-identity-objects)) |

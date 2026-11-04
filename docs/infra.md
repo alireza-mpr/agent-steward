@@ -191,7 +191,7 @@ Creating the blueprint does not create its principal. That is a second call, the
 
 **Portal alternative.** Entra ID > Agents > Agent blueprints > New agent blueprint (Preview). The wizard does steps 1 and 4 only. To see the result in the portal, see [Agent ID objects in the portal](entra.md#4-finding-agent-id-objects).
 
-**Not in scope.** The Learn how-to ends with one more step: register the blueprint in the Agent 365 registry. Agent 365 governance is a written design only in this project ([DESIGN-NOTES.md](../DESIGN-NOTES.md#3-agent-365-governance)).
+**Not in scope.** The Learn how-to ends with one more step: register the blueprint in the Agent 365 registry. Agent 365 governance is a written design only in this project ([DESIGN-NOTES.md](DESIGN-NOTES.md#3-agent-365-governance)).
 
 Source: [Create an agent identity blueprint](https://learn.microsoft.com/en-us/entra/agent-id/create-blueprint) (Microsoft Learn, checked 23 October 2026).
 
@@ -343,4 +343,4 @@ az bicep install --target-platform osx-x64
 
 ## Not in scope
 
-Deploying `setup/` from a CI/CD pipeline is recorded in [DESIGN-NOTES.md](../DESIGN-NOTES.md), "Future work".
+Deploying `setup/` from a CI/CD pipeline is recorded in [DESIGN-NOTES.md](DESIGN-NOTES.md), "Future work".
