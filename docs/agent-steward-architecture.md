@@ -16,7 +16,7 @@ This document shows how this project's **Guardian** agent is built today: its pa
   * [The Main Flow at a Glance](#the-main-flow-at-a-glance)
   * [The Human Approval Flow: `disable_agent`](#the-human-approval-flow-disable_agent)
   * [Architectural Shortcuts (Where the Guardian Differs)](#architectural-shortcuts-where-the-guardian-differs)
-* [2. Blast Radius: What Happens If One Part Is Compromised?](#2-blast-radius-what-happens-if-one-part-is-compromised)
+* [2. Blast Radius](#2-blast-radius)
 
 ---
 
@@ -261,22 +261,6 @@ For the credential options behind D2, D3 and D4, and how to move from the Guardi
 
 ---
 
-## 2. Blast Radius: What Happens If One Part Is Compromised?
+## 2. Blast Radius
 
-We separate the agent into distinct trust boundaries specifically to contain the blast radius when something goes wrong. Here is how the Guardian's architecture holds up if individual components fail:
-
-* **Scenario 1: The Model Is Tricked (Prompt Injection)**
-  * *Impact:* Minimal (this is the primary failure mode the architecture is built to handle). The model can only *ask* the harness to invoke tools. The MCP server's checks (the tool allow-list, its input checks, its own check that an agent is dormant and not one of the guardian's own, and the human approval gate) and the harness's turn limit all remain strictly enforced, and the model never sees an Entra token.
-* **Scenario 2: The Harness is Compromised**
-  * *Impact:* Moderate. Because the harness mediates all communication with the model, it can manipulate the tool list, alter or fabricate tool results, invoke any allow-listed tool, and burn through the local Anthropic API key. However, **it still cannot obtain an Entra token**, and it cannot bypass the tool allow-list or approval gates because those checks are enforced inside the MCP server. 
-  * *Crucial Audit Rule:* Because a compromised harness can lie to the model, **the LLM's final report is never proof of what actually happened—only the Identity API's audit log is.**
-* **Scenario 3: The MCP Server is Compromised**
-  * *Impact:* High. Due to shortcut **D2** (where the sidecar lets its caller request tokens for any child of the blueprint), a compromised MCP server can obtain TR access tokens for *any* agent identity under that blueprint. It also does the write itself: its Graph token always carries the write role ([A1](../THREATMODEL.md#accepted-risks)), so it can disable any agent without asking anyone. And it writes the facts the approver sees, so it can mislead the approver ([A3](../THREATMODEL.md#accepted-risks)). Consequently, in the Guardian's current design, the MCP server is our most trusted component and its codebase must be kept as small and auditable as possible.
-* **Scenario 4: The Sidecar is Compromised**
-  * *Impact:* Critical. The blueprint's private certificate is exposed (**D3**), immediately compromising every agent identity governed by that blueprint *(see the blast radius note in [Agent ID](agent-id.md#why-use-two-requests-instead-of-one))*.
-* **Scenario 5: The Identity API is Compromised**
-  * *Impact:* Moderate. It stores the disable requests and the decisions, so it can report "approved" for a request that nobody approved, and the MCP server then disables the agent. The damage has a limit: the MCP server waits only on requests it created itself, after its own checks, so only dormant agents that are not the guardian's own can be disabled this way. The Identity API also keeps the audit log, so it could change or drop lines, because the logs stay on this machine ([D6](#architectural-shortcuts-where-the-guardian-differs)). It holds no credential and never gets a token, so it cannot call Graph itself.
-* **Scenario 6: An Approver's Account is Compromised**
-  * *Impact:* Low to moderate. The attacker can sign in through the `approve` command as the approver, and approve or deny pending requests. They cannot create a request, so they can approve only the disables the MCP server already asked for: dormant agents that are not the guardian's own, while the request is pending (up to 4 minutes). Denying everything blocks the clean-up but disables nothing.
-  * *The fix:* protect the account itself, for example with a Conditional Access policy that requires phishing-resistant MFA for the approvers group. This is not set up in the lab tenant.
-
+What happens if one part of the Guardian is compromised, part by part, is in the threat model: [Blast Radius](../THREATMODEL.md#blast-radius-what-happens-if-one-part-is-compromised).
