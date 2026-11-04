@@ -89,7 +89,7 @@ Because evals only show probabilities, they are never a substitute for hard-code
 If you are curious about where the statistics in Section 3 come from, here is the math:
 
 1. **The chance of zero failures:** If a test has a real-world failure rate of $p$, the mathematical chance that $n$ trials will *all* pass in a row is $(1 - p)^n$.
-2. **The 95% upper bound:** We want to find the worst-case failure rate ($p$) where there is only a $5\%$ chance of getting a perfect score by pure luck. So, we set the equation to $0.05$: 
+2. **The 95% upper bound:** We want to find the worst-case failure rate ($p$) where there is only a $5\%$ chance of getting a perfect score by pure luck. So, we set the equation to $0.05$. This $0.05$ is the **significance level**, written $\alpha$: one minus the confidence level ($1 - 95\%$).
    $$(1 - p)^n = 0.05$$
    Solving for $p$ gives us the exact bound: 
    $$p = 1 - 0.05^{1/n}$$
@@ -100,3 +100,13 @@ If you are curious about where the statistics in Section 3 come from, here is th
    $$p \approx 3/n$$
 
 *Note: This approximation only works well when $n$ is large (greater than 30). For very small numbers, like $n=3$, the formula $3/n$ gives $100\%$, while the exact math gives $63\%$.*
+
+4. **How many trials you need:** the same equation, solved for $n$. Pick the failure rate $p$ you want to claim, then:
+   $$n = \frac{\ln(\alpha)}{\ln(1 - p)}$$
+   Round up, and every trial must pass. The rule of three gives the same answer the other way round: $n \approx 3/p$.
+
+| To claim the failure rate is below... (95% confidence) | Exact $n$ | Rule of three ($3/p$) |
+| :--- | :--- | :--- |
+| $10\%$ | 29 | 30 |
+| $5\%$ | 59 | 60 |
+| $1\%$ | 299 | 300 |
