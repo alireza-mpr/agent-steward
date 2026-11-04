@@ -14,15 +14,15 @@ C numbers are in the [control register](docs/security-controls.md), with their e
 
 | Risk | Status | Why | Controls | Where | MAESTRO layer | Accepted |
 |---|---|---|---|---|---|---|
-| ASI01 Agent Goal Hijack | Mitigated | A planted attack failed in the [agent eval](tests/agent_eval/eval_prompt_injection.py), and the hard controls hold even if the model is fooled | C24, C11 | [server.py](src/mcp_server/server.py) | 1 Foundation Models, 3 Agent Frameworks | A5, A6 |
+| ASI01 Agent Goal Hijack | Mitigated | A planted attack failed in the [agent eval](tests/agent_eval/eval_prompt_injection.py), and the hard controls hold even if the model is fooled | C24, C11 | [server.py](src/mcp_server/server.py) | 1 Foundation Models, 3 Agent Frameworks | A5 |
 | ASI02 Tool Misuse & Exploitation | Mitigated | Enforcing allow-list in MCP server, human approval on disable | C24, C22 | [tool-allow-list.json](config/tool-allow-list.json) | 3 Agent Frameworks | A3 |
 | ASI03 Identity & Privilege Abuse | Mitigated | Human in the loop, token checks, least privilege, one agent identity | C26, C7, C6, C1 | [token_validation.py](src/identity_api/token_validation.py) | 6 Security and Compliance | A1, A2, A7 |
 | ASI04 Agentic Supply Chain Vulnerabilities | Accepted | Pinned versions, but no dependency scanning | C18 | [docker-compose.yml](docker-compose.yml) | 4 Deployment and Infrastructure | - |
 | ASI05 Unexpected Code Execution | Out of scope | No tool runs code | C22 | [tool-allow-list.json](config/tool-allow-list.json) | 4 Deployment and Infrastructure | - |
 | ASI06 Memory & Context Poisoning | Out of scope | No memory survives a run. Poisoned text within a run is ASI01 | C13 | [harness.py](src/guardian/harness.py) | 2 Data Operations | - |
 | ASI07 Insecure Inter-Agent Communication | Out of scope | One agent. The fixture agents are registry entries and run no code | - | - | 7 Agent Ecosystem | - |
-| ASI08 Cascading Failures | Mitigated | A limit on model calls, fail closed on errors | C12, C23 | [harness.py](src/guardian/harness.py) | 3 Agent Frameworks | A4 |
-| ASI09 Human-Agent Trust Exploitation | Accepted | Facts from Graph and the model's text labelled untrusted, but a person can still approve carelessly | C28, C27 | [approve.py](src/approve_cli/approve.py) | 7 Agent Ecosystem | A3, A5 |
+| ASI08 Cascading Failures | Mitigated | A limit on model calls, fail closed on errors | C12, C23 | [harness.py](src/guardian/harness.py) | 3 Agent Frameworks | A6 |
+| ASI09 Human-Agent Trust Exploitation | Accepted | Facts from Graph and the model's text labelled untrusted, but a person can still approve carelessly | C28, C27 | [approve.py](src/approve_cli/approve.py) | 7 Agent Ecosystem | A3, A4, A5 |
 | ASI10 Rogue Agents | Accepted | Registry rules flag bad agents, audit lines, a disable path, but no detection of an active agent misbehaving | C14, C15, C24 | [rules.py](src/mcp_server/rules.py) | 5 Evaluation and Observability, 6 Security and Compliance | A7 |
 
 ## Blast Radius: What Happens If One Part Is Compromised?
@@ -48,12 +48,12 @@ We separate the agent into distinct trust boundaries specifically to contain the
 
 Accepted for a 14-day lab. Each one has a known fix.
 
-| # | Risk | Why it matters | The fix |
-|---|---|---|---|
-| A1 | The guardian's Graph token always carries its write role, because `.default` gives every role it holds | A stolen read token can also disable agents | A separate identity for writes |
-| A2 | The harness proves itself to the MCP server only by network location ([D1](docs/agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs)) | Any code on that network can call the tools | A bearer token on that link |
-| A3 | The MCP server holds the rules and does the write, and the Identity API trusts the facts it sends | A compromised MCP server could mislead the approver, and it holds the write role | A domain service with its own identity, which reads Graph itself |
-| A4 | An approval on an abandoned request is accepted, and nothing follows. `disable_abandoned` records why | The approver believes an action happened | The domain service does the write |
-| A5 | "Report only" on the default task is a prompt rule. The [eval](docs/testing-ai-agents.md) passed 3 of 3 runs, which still allows a failure rate of up to about 63% | The model could ask to disable an agent on a routine run, though a person must still approve | The harness hides the tool on that task, and more trials and attacks |
-| A6 | Pending requests are in memory, and sign-in uses a paste step | A restart loses requests (nothing is disabled), and the step is clumsy | A database, and an approval web page |
-| A7 | The blueprint's certificate and the model key are files, and audit logs stay local ([D3, D4, D6](docs/agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs)) | Someone on the host could take the keys or change the logs | Managed identity, federation, and a central log store |
+| # | Risk | OWASP risk | Why it matters | The fix |
+|---|---|---|---|---|
+| A1 | The guardian's Graph token always carries its write role, because `.default` gives every role it holds | ASI03 Identity & Privilege Abuse | A stolen read token can also disable agents | A separate identity for writes |
+| A2 | The harness proves itself to the MCP server only by network location ([D1](docs/agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs)) | ASI03 Identity & Privilege Abuse | Any code on that network can call the tools | A bearer token on that link |
+| A3 | The MCP server holds the rules and does the write, and the Identity API trusts the facts it sends | ASI02 Tool Misuse & Exploitation, ASI09 Human-Agent Trust Exploitation | A compromised MCP server could mislead the approver, and it holds the write role | A domain service with its own identity, which reads Graph itself |
+| A4 | An approval on an abandoned request is accepted, and nothing follows. `disable_abandoned` records why | ASI09 Human-Agent Trust Exploitation | The approver believes an action happened | The domain service does the write |
+| A5 | "Report only" on the default task is a prompt rule. The [eval](docs/testing-ai-agents.md) passed 3 of 3 runs, which still allows a failure rate of up to about 63% | ASI01 Agent Goal Hijack, ASI09 Human-Agent Trust Exploitation | The model could ask to disable an agent on a routine run, though a person must still approve | The harness hides the tool on that task, and more trials and attacks |
+| A6 | Pending requests are in memory, and sign-in uses a paste step | ASI08 Cascading Failures | A restart loses requests (nothing is disabled), and the step is clumsy | A database, and an approval web page |
+| A7 | The blueprint's certificate and the model key are files, and audit logs stay local ([D3, D4, D6](docs/agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs)) | ASI03 Identity & Privilege Abuse, ASI10 Rogue Agents | Someone on the host could take the keys or change the logs | Managed identity, federation, and a central log store |
