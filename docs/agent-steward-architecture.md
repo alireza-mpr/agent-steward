@@ -195,7 +195,7 @@ sequenceDiagram
     end
 ```
 
-**Where the guardian differs from [the general practice](agent-architecture.md#human-approval-who-approves-and-how):**
+**Where the guardian differs from [the enterprise practice](agent-architecture.md#human-approval-who-approves-and-how):**
 
 | Enterprise practice | The guardian | Why |
 |---|---|---|
