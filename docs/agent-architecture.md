@@ -155,6 +155,10 @@ Remember: request 1 is who the agent is, request 2 adds who the user is.
    * **`aud` is the final API:** the client calls it directly. No OBO. The CLI and the Identity API work like this.
    * **`aud` is a middle tier, which needs to call another API:** the middle tier exchanges the token with OBO. An agent's blueprint is one kind of middle tier, but a normal API can be one too, such as the Identity API calling Graph for the user (it does not today).
 
+   > **The client's `scope` decides the audience.** In its sign-in request, the client names the resource in `scope`: the part before the last `/`. So the scope alone decides where the delegated token can go.
+   > * **The CLI:** `scope=<Identity API app ID>/.default`, so `aud` is the Identity API, the final API. No OBO.
+   > * **OBO with an agent: the first token's `aud` is the blueprint.** The client asks for `scope=api://<blueprint app ID>/<a scope the blueprint exposes>` (or `/.default`), so the first token, Tc, is issued for the blueprint, not for Graph. The agent must exchange Tc with OBO before it can call Graph.
+
    Sign-in gives a delegated token for one audience. If that audience is the final API, it's used directly. If it's a middle tier, such as an agent, the middle tier exchanges it with OBO. The token is called Tc only in the OBO case. The CLI's token is a delegated access token.
 
    Entra has no claim that says "this is OBO". `scp` means a user is involved, and 11 in `xms_act_fct` means an agent is the client. Together they show an agent acting for a user. Each claim describes its own token: when the MCP server does the OBO exchange, `azp` in the downstream token names the MCP server, not the agent. Sources: [Token claims reference for agent IDs](https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/agent-token-claims), [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693).
@@ -162,6 +166,8 @@ Remember: request 1 is who the agent is, request 2 adds who the user is.
 ### The Delegated Flow (OBO), Step by Step
 
 A user asks the agent to act for them. There are two OBO exchanges: the agent identity gets a token for the MCP server, and the MCP server gets a token for the downstream API. The user stays in both tokens. The yellow steps are what differs from the autonomous flow. This is the enterprise design: the Guardian does not build it ([D5](agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs)).
+
+> **In OBO, the first token's `aud` is the blueprint.** The client signs the user in with a scope on the blueprint, so the first token (Tc) is issued for the blueprint. Only the blueprint's agent identity can then exchange it (steps 15 and 16 below).
 
 **Who signs the user in:** a client application. Microsoft says blueprints and agent identities "can't initiate interactive authorization (`/authorize`) flows directly" and "must receive a user token from a client application" ([Agent on-behalf-of flow](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow)).
 
