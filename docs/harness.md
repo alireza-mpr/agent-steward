@@ -77,7 +77,7 @@ A run only reports by default. To also ask a human to approve disabling each dor
 docker compose run --rm guardian python main.py --disable-dormant
 ```
 
-Only the command line chooses the task, so nothing the model reads can change it. The rule that the model must not use `disable_agent` on the default task is only a prompt rule. If a tricked model calls the tool anyway, the server's checks and the human still stop it ([the flow](agent-architecture.md#the-human-approval-flow-disable_agent)).
+Only the command line chooses the task, so nothing the model reads can change it. The rule that the model must not use `disable_agent` on the default task is only a prompt rule. If a tricked model calls the tool anyway, the server's checks and the human still stop it ([the flow](agent-steward-architecture.md#the-human-approval-flow-disable_agent)).
 
 ## 2. Why the Model Stopped: stop_reason
 

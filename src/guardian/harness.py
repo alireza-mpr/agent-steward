@@ -3,7 +3,7 @@
 The model never acts: it only asks for a tool. The harness passes each request to the MCP server,
 which applies its own checks and runs the tool, and sends the result back to the model. The
 harness holds the Anthropic API key and nothing else: it runs outside the token sidecar's network
-namespace, so it can never get an Entra token (docs/agent-architecture.md).
+namespace, so it can never get an Entra token (docs/agent-steward-architecture.md).
 """
 
 import argparse

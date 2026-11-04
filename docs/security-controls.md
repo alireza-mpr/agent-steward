@@ -2,7 +2,7 @@
 
 This is the project's control register: every security control that is in place, the threat it stops, where it is enforced, and the evidence that it works. Controls that are planned or exist only as written design are listed separately at the end, so nothing here claims more than the code does.
 
-The [threat model](../THREATMODEL.md) works from the other side: it starts from each risk and points to the controls below by their IDs. For the architecture these controls protect, see [Agent architecture](agent-architecture.md).
+The [threat model](../THREATMODEL.md) works from the other side: it starts from each risk and points to the controls below by their IDs. For the architecture these controls protect, see [Agent Steward architecture](agent-steward-architecture.md).
 
 ## Contents
 
@@ -94,7 +94,7 @@ These controls are part of the plan but not built yet. Each moves to [In place](
 
 ## Written design only
 
-These controls belong to the enterprise design and are described in [Agent architecture](agent-architecture.md#architectural-shortcuts-where-the-guardian-differs). This project does not build them.
+These controls belong to the enterprise design and are described in [Agent architecture](agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs). This project does not build them.
 
 | Control | Shortcut it would close |
 |---|---|

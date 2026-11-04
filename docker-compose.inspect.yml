@@ -1,7 +1,7 @@
 # Dev only: lets the MCP Inspector on this machine reach the guardian's MCP server.
 # How to use the Inspector, a Python client or curl against it: docs/mcp.md.
 #
-# Normally the MCP server is reachable only inside the Compose network (docs/agent-architecture.md, D1).
+# Normally the MCP server is reachable only inside the Compose network (docs/agent-steward-architecture.md, D1).
 # This file publishes its port on 127.0.0.1, so only this machine can reach it, and while it is
 # on, any program on this machine can call the tools. Use it only while inspecting:
 #

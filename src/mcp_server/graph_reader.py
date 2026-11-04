@@ -8,7 +8,7 @@ Two layers:
 
 Every read uses the guardian's read-only Graph permissions, and the write uses
 AgentIdentity.EnableDisable.All (setup/bicep/guardian-permissions.bicep).
-The MCP server's tools call these functions; the guardian's harness never does (docs/agent-architecture.md).
+The MCP server's tools call these functions; the guardian's harness never does (docs/agent-steward-architecture.md).
 """
 
 import json

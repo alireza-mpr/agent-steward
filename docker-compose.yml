@@ -82,7 +82,7 @@ services:
 
   # The guardian (FR6): the harness. One run of the agent loop: Claude asks for tools, the MCP
   # server runs them. It holds only the Anthropic API key, and it is NOT in the sidecar's
-  # network namespace, so it cannot get an Entra token (docs/agent-architecture.md).
+  # network namespace, so it cannot get an Entra token (docs/agent-steward-architecture.md).
   # docker compose up runs it once; docker compose run --rm guardian runs it again.
   guardian:
     build: src/guardian

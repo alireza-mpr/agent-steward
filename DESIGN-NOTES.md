@@ -60,7 +60,7 @@ Two of the draft's rules match choices already made here. A tool must not forwar
 
 ## 6. Delegation and On-Behalf-Of (OBO) for agents
 
-This is the design for FR4. The guardian runs in autonomous mode only ([D5](docs/agent-architecture.md#architectural-shortcuts-where-the-guardian-differs)).
+This is the design for FR4. The guardian runs in autonomous mode only ([D5](docs/agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs)).
 
 - **The problem:** a user signs in and asks the agent to act for them. The user's token, Tc, is issued for the blueprint. Graph would refuse it, and forwarding it would be token passthrough. So the agent asks Entra for a new token for the downstream API, and the user stays in that token.
 - **The flow:** request 1 does not change: the blueprint gets T1. Request 2 changes ([Microsoft's flow](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow), [details](docs/authentication.md#part-a-a-workload-proves-itself-to-entra-id)):

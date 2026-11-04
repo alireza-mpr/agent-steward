@@ -2,7 +2,7 @@
 
 It exposes the guardian's registry checks as MCP tools over Streamable HTTP. It is the only part
 of the agent that can get the guardian's tokens: it shares the token sidecar's network namespace,
-and the guardian's harness does not (docs/agent-architecture.md). The harness reaches it at
+and the guardian's harness does not (docs/agent-steward-architecture.md). The harness reaches it at
 http://sidecar:8100/mcp and never sees a token.
 """
 
@@ -306,6 +306,6 @@ if __name__ == "__main__":
         sys.exit(f"The MCP server did not start: {error}")
     audit(event="allow_list_loaded", allowed_tools=sorted(mcp.allowed_tools))
     # 0.0.0.0, because the harness calls from another container. The port is reachable on the
-    # compose network, not from the host (docs/agent-architecture.md, D1).
+    # compose network, not from the host (docs/agent-steward-architecture.md, D1).
     mcp.run(transport="streamable-http", host="0.0.0.0", port=MCP_PORT,
             transport_security=TransportSecuritySettings(allowed_hosts=MCP_ALLOWED_HOSTS))

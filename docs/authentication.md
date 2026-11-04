@@ -2,7 +2,7 @@
 
 Every part of an agent that calls a protected service must prove who it is. This document shows who proves what to whom in the enterprise reference design, one proof at a time, and then how a workload gets its credential and its tokens. The last section gives the Guardian's differences.
 
-For the enterprise design and the Guardian's shortcuts (D1 to D6), see [Agent architecture](agent-architecture.md). For the two Agent ID token requests (T1 and TR), see [Agent ID](agent-id.md#3-getting-a-token-the-agent-autonomous-app-flow), and for the claims in each token, see [Agent tokens](tokens.md).
+For the enterprise design, see [Agent architecture](agent-architecture.md). For the Guardian's shortcuts (D1 to D6), see [Agent Steward architecture](agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs). For the two Agent ID token requests (T1 and TR), see [Agent ID](agent-id.md#3-getting-a-token-the-agent-autonomous-app-flow), and for the claims in each token, see [Agent tokens](tokens.md).
 
 ## Contents
 
@@ -310,7 +310,7 @@ Once a workload has a client credential, some component must use it to get token
 
 ## 4. The Guardian
 
-The Guardian runs locally, so it differs from the design above. The shortcuts D1 to D5 are explained in [Architectural Shortcuts](agent-architecture.md#architectural-shortcuts-where-the-guardian-differs).
+The Guardian runs locally, so it differs from the design above. The shortcuts D1 to D5 are explained in [Architectural Shortcuts](agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs).
 
 | Row | The Guardian today |
 |---|---|
@@ -332,5 +332,5 @@ The Guardian runs locally, so it differs from the design above. The shortcuts D1
 
 **Who gets the tokens:**
 
-* **Locally (today):** A certificate file (layer 1, **D3**) and a **sidecar** (layer 2). Python has no Microsoft library for agent identities, and the sidecar keeps the private key out of every container except its own. Only the MCP server shares the sidecar's network namespace, so only the Guardian's tools can get tokens ([Component Inventory](agent-architecture.md#component-inventory-who-holds-what)). How the sidecar is set up and run: [Local run: the sidecar](infra.md#local-run-the-sidecar).
+* **Locally (today):** A certificate file (layer 1, **D3**) and a **sidecar** (layer 2). Python has no Microsoft library for agent identities, and the sidecar keeps the private key out of every container except its own. Only the MCP server shares the sidecar's network namespace, so only the Guardian's tools can get tokens ([Component Inventory](agent-steward-architecture.md#component-inventory-who-holds-what)). How the sidecar is set up and run: [Local run: the sidecar](infra.md#local-run-the-sidecar).
 * **In the enterprise design:** A managed identity as the client credential, so no file and no vault key exist. The sidecar can stay, or an in-process library can replace it where the language has one.

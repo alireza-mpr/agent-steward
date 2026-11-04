@@ -262,7 +262,7 @@ pwsh ./setup/agent-id/Deploy-BlueprintCertificate.ps1 -TenantId <your-domain>.on
 
 ## Local run: the sidecar
 
-The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). The sidecar is the only container that holds the guardian blueprint's private key, and it makes both token requests (T1 and TR) for the guardian. Only the MCP server shares the sidecar's network namespace, so only the guardian's tools can get its tokens. The guardian's harness, which talks to Claude, runs outside it and never sees a key or a token ([Agent architecture](agent-architecture.md#3-the-guardians-design-today)). For how the sidecar compares with the in-process and token broker patterns, see [Credentials and Tokens](authentication.md#3-credentials-and-tokens-how-a-workload-gets-them).
+The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). The sidecar is the only container that holds the guardian blueprint's private key, and it makes both token requests (T1 and TR) for the guardian. Only the MCP server shares the sidecar's network namespace, so only the guardian's tools can get its tokens. The guardian's harness, which talks to Claude, runs outside it and never sees a key or a token ([Agent architecture](agent-steward-architecture.md#1-the-guardians-design-today)). For how the sidecar compares with the in-process and token broker patterns, see [Credentials and Tokens](authentication.md#3-credentials-and-tokens-how-a-workload-gets-them).
 
 **Before the first run.**
 
