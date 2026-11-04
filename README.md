@@ -9,11 +9,11 @@ The point of this project: demonstrate, end to end, how an autonomous agent can 
 ## Start here
 
 - **[Demo](DEMO.md):** what works, shown with screenshots from the live tenant.
-- **[Delivery status](docs/delivery-status.md):** every requirement, its status, and its evidence.
 - **[Agent Steward architecture](docs/agent-steward-architecture.md):** how the guardian is built, and every shortcut it takes.
-- **[Threat model](THREATMODEL.md):** each OWASP agentic risk, and how it is handled.
 - **[Agent architecture](docs/agent-architecture.md):** the enterprise design the guardian is compared with.
+- **[Threat model](THREATMODEL.md):** each OWASP agentic risk, and how it is handled.
 - **[All documents](docs/):** the reference documents, in the `docs/` folder.
+- **[Delivery status](docs/delivery-status.md):** every requirement, its status, and its evidence.
 
 ## Contents
 
