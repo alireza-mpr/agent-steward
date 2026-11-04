@@ -56,7 +56,7 @@ The model asked to disable each dormant agent. The agent's token can only create
 
 In this live run on 31 October 2026, a person approved one request and denied four.
 
-![The approve command with five decisions](docs/screenshots/fr7-approve-command-decisions.png)
+![The CLI with five decisions](docs/screenshots/fr7-approve-command-decisions.png)
 
 Only the approved agent was disabled, and the four denied agents stayed active. The agent was re-enabled after the test.
 

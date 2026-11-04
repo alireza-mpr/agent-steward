@@ -97,7 +97,7 @@ config/           Policy: the permissions each agent may hold (agent-permissions
 setup/            Tenant setup as code: Bicep + Graph PowerShell (blueprint, identities, fixtures)
 src/identity_api/ Identity API (Python / FastAPI): token validation, audit
 src/guardian/     Guardian's harness (Python): the agent loop between Claude and the MCP server
-src/approve_cli/  The approve command (Python): a person approves or denies a request to disable an agent
+src/approve_cli/  The CLI (Python): a person approves or denies a request to disable an agent
 src/mcp_server/   MCP server (official Python SDK): the guardian's tools, the four rules, Graph reader
 src/worker/       Live worker timer loop (PowerShell)
 tests/            Unit tests, offline (unit/); integration tests against the running stack (integration/): the Identity API with real Entra tokens (identity_api/), and the MCP tools from the guardian's network (mcp_server/); an agent eval that runs the guardian with Claude against a planted prompt injection (agent_eval/)

@@ -1,4 +1,4 @@
-"""Unit tests for the approve command (FR7, NFR8): what the person sees, and what counts as a
+"""Unit tests for the CLI (FR7, NFR8): what the person sees, and what counts as a
 decision. No network and no sign-in."""
 
 import io

@@ -12,7 +12,7 @@ approval service that cannot be reached (fail closed).
 The Identity API's side of the contract:
     POST /agents/{agentId}/disableRequests                 -> 201, the new request (pending)
     GET  /agents/{agentId}/disableRequests/{requestId}     -> the request and its status
-The approver's list and decision go to the Identity API from the approve command (src/approve_cli),
+The approver's list and decision go to the Identity API from the CLI (src/approve_cli),
 never through here. This server's role, AgentDisable.Request, opens only the two calls above.
 """
 

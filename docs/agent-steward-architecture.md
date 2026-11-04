@@ -98,10 +98,10 @@ sequenceDiagram
 
     L-->>H: tool calls: disable_agent(agent 1),<br/>disable_agent(agent 2), ...
 
-    loop For each disable_agent call, one at a time
+    loop Harness iterates through disable_agent calls, one at a time
         H->>M: disable_agent
         M->>G: read the agent and its sign-ins
-        M->>M: check: dormant, not the guardian's own
+        M->>M: checks: 1) dormant, 2) not the guardian's own
         M->>A: create a disable request (facts and reason)
         A-->>M: request pending
 
@@ -150,7 +150,7 @@ sequenceDiagram
     participant M as MCP server
     participant G as Microsoft Graph
     participant A as Identity API
-    participant C as approve command
+    participant C as CLI
     participant E as Entra ID
     actor P as Approver
 
@@ -176,7 +176,7 @@ sequenceDiagram
         C->>P: show the facts, and the reason labelled untrusted
         P->>C: approve or deny
         C->>A: POST .../{requestId}/decision
-        A->>A: check the token (scp, roles, the approve command as client),<br/>store who decided
+        A->>A: check the token (scp, roles, the CLI as client),<br/>store who decided
 
         loop Every 5 seconds, for at most 4 minutes
             M->>A: GET /agents/{agentId}/disableRequests/{requestId}
@@ -201,7 +201,7 @@ sequenceDiagram
 |---|---|---|
 | A domain service does the write, with its own identity | The MCP server writes, as the guardian, which holds `AgentIdentity.EnableDisable.All` | Timebox |
 | A domain service checks the rules and reads the facts itself | The MCP server does both, and the Identity API trusts the facts it sends | Timebox |
-| A notification delivers the request | The approver runs the `approve` command, which lists what is pending | No web page in the timebox |
+| A notification delivers the request | The approver runs the CLI, which lists what is pending | No web page in the timebox |
 | A local listener or a web page catches the sign-in redirect | The person pastes the final address into the terminal | The command runs in a container |
 | A durable store | In memory. A restart loses pending requests, and nothing is disabled (fail closed) | Lab |
 | An approval is refused once nobody is waiting for it | The Identity API still accepts it, and nothing follows. The MCP server writes `disable_abandoned`, so the record explains why | Known limit |
@@ -210,13 +210,13 @@ The next version would use URL-mode elicitation and an approval web page, on the
 
 #### The Approver's Sign-In and Decision, Step by Step
 
-The `approve` command ([approve.py](../src/approve_cli/approve.py)) is the client application `agent-steward-agent-disable-cli`. It gets a delegated token for the Identity API with the authorization code flow and PKCE ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)). No OBO happens: the command calls the Identity API with this token directly.
+The CLI ([approve.py](../src/approve_cli/approve.py)) is the client application `agent-steward-agent-disable-cli`. It gets a delegated token for the Identity API with the authorization code flow and PKCE ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)). No OBO happens: the command calls the Identity API with this token directly.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor P as Approver (and browser)
-    participant C as approve command<br/>(agent-steward-agent-disable-cli)
+    participant C as CLI<br/>(agent-steward-agent-disable-cli)
     participant E as Entra ID
     participant A as Identity API
 

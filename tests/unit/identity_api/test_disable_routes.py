@@ -280,7 +280,7 @@ def test_the_created_line_holds_what_the_approver_will_see(client, capsys):
 def test_the_decided_line_names_the_approver_and_keeps_the_requests_correlation_id(client, capsys):
     request_id = create(client).json()["id"]
 
-    # The approve command sends no correlation ID, and a header cannot move the line to another one.
+    # The CLI sends no correlation ID, and a header cannot move the line to another one.
     client.post(f"/agents/{TARGET}/disableRequests/{request_id}/decision", json={"decision": "approve"},
                 headers={**person(), "X-Correlation-ID": "forged"})
 

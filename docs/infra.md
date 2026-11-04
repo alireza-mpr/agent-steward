@@ -20,7 +20,7 @@ How this project creates tenant objects as code: Bicep, Azure Resource Manager (
   - [The blueprint's credential](#the-blueprints-credential)
   - [Run the Agent ID scripts](#run-the-agent-id-scripts)
 - [Local run: the sidecar](#local-run-the-sidecar)
-- [The approve command](#the-approve-command)
+- [The CLI](#the-cli)
 - [Cost](#cost)
 - [Known issue: Bicep on Apple Silicon](#known-issue-bicep-on-apple-silicon)
 - [Not in scope](#not-in-scope)
@@ -141,7 +141,7 @@ az deployment group create --resource-group rg-agent-steward \
   --query properties.outputs.agentDisableCliAppId.value -o tsv
 ```
 
-It prints the ID of the `approve` command's app. Put it in `.env` as `AGENT_DISABLE_CLI_APP_ID`.
+It prints the ID of the CLI's app. Put it in `.env` as `AGENT_DISABLE_CLI_APP_ID`.
 
 Grant the guardian its Graph permissions:
 
@@ -298,7 +298,7 @@ What the guardian prints, what each trace mode shows, and its settings file ([co
 
 Sources: the sidecar's [security](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/security), [configuration](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/configuration) and [endpoints](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/endpoints) pages (Microsoft Learn, checked 26 October 2026), and its source code ([`LocalCallerRestriction.cs`](https://github.com/AzureAD/microsoft-identity-web/blob/master/src/Microsoft.Identity.Web.Sidecar/LocalCallerRestriction.cs), [`AuthorizationHeaderEndpoint.cs`](https://github.com/AzureAD/microsoft-identity-web/blob/master/src/Microsoft.Identity.Web.Sidecar/Endpoints/AuthorizationHeaderEndpoint.cs)).
 
-## The approve command
+## The CLI
 
 A person approves or denies the guardian's requests to disable an agent (FR7). The command runs on demand, on the `agent` network, because the Identity API is not published to the host:
 

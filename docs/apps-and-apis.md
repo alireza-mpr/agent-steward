@@ -82,7 +82,7 @@ One API can accept calls with a scope, with a role, or with both. Which one the 
 Our Identity API uses both:
 
 - **The guardian** (alone) calls with the role `AgentDisable.Request`.
-- **The `approve` command** (for the signed-in approver) calls with the scope `AgentDisable.Decide` and the approver's role `AgentDisable.Approve`.
+- **The CLI** (for the signed-in approver) calls with the scope `AgentDisable.Decide` and the approver's role `AgentDisable.Approve`.
 
 The running code decides which one each endpoint needs. Entra only writes the claims into the token, and the API reads them. For example, the decision endpoint requires the scope and the role together.
 

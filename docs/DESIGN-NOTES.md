@@ -80,7 +80,7 @@ This is the design for FR4. The guardian runs in autonomous mode only ([D5](agen
   4. The Identity API tells the modes apart from the token: `idtyp` and `scp` for a user, `idtyp` and `roles` for an agent alone.
   5. The audit line names the user and the agent.
 - **The trade-off:** the scan runs with no person present, so it stays autonomous. A write could use OBO, so the guardian would not need an app-only write role, and that would address [A1](../THREATMODEL.md#accepted-risks). The cost is that a write then needs a user who holds the rights, and a signed-in user is not by itself an approval of one action.
-- **What exists today:** the `approve` command uses a person's delegated token, with `scp` and `roles`, and the Identity API checks it. That is delegated access, not OBO: no service exchanges the token.
+- **What exists today:** the CLI uses a person's delegated token, with `scp` and `roles`, and the Identity API checks it. That is delegated access, not OBO: no service exchanges the token.
 
 ## 7. Revoking live tokens
 

@@ -34,7 +34,7 @@ class TokenRejected(Exception):
 class ApiSettings:
     tenant_id: str
     audience: str               # this API's client ID: v2 tokens carry it in aud
-    approver_client_id: str     # the only client app an approver may use: the approve command's
+    approver_client_id: str     # the only client app an approver may use: the CLI's
 
     @property
     def issuer(self) -> str:
@@ -136,7 +136,7 @@ def check_agent(claims: dict, settings: ApiSettings, role: str, now: float) -> C
 
 
 def check_approver(claims: dict, settings: ApiSettings, now: float) -> Approver:
-    """Checks 2 to 4, then that a human uses the approve command and may approve (FR7). A missing
+    """Checks 2 to 4, then that a human uses the CLI and may approve (FR7). A missing
     claim fails: an agent must never be able to approve, not even its own request."""
     check_shared(claims, settings, now)
     client = client_of(claims)
@@ -152,7 +152,7 @@ def check_approver(claims: dict, settings: ApiSettings, now: float) -> Approver:
     # The right app. The scope already limits who can get this token, and this still holds if
     # someone grants that scope to another app by mistake.
     if not settings.approver_client_id or client != settings.approver_client_id:
-        raise TokenRejected(403, "approver: not the approve command's client app", client)
+        raise TokenRejected(403, "approver: not the CLI's client app", client)
 
     # The app may act for the person (scp), and the person may approve (roles).
     if DECIDE_SCOPE not in str(claims.get("scp", "")).split():

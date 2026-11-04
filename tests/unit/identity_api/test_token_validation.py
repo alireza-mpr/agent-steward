@@ -164,7 +164,7 @@ def test_checks_run_in_the_documented_order():
 # The approver (FR7). Built from the docs: no real token of this kind exists until the first live sign-in.
 
 def approver_claims(**changes) -> dict:
-    """A person's token from the approve command. A change to None removes that claim."""
+    """A person's token from the CLI. A change to None removes that claim."""
     return agent_claims(**{"azp": CLI, "oid": PERSON, "sub": "pairwise-subject", "idtyp": "user",
                            "name": "An Approver", "scp": "AgentDisable.Decide",
                            "roles": ["AgentDisable.Approve"], "xms_act_fct": "3 9", "xms_sub_fct": "1 2",
@@ -199,8 +199,8 @@ def test_an_agent_token_cannot_approve():
     ({"idtyp": None}, "approver: idtyp claim is not user"),
     ({"xms_act_fct": "3 11 9"}, "approver: the client is an agent identity"),
     ({"xms_sub_fct": "13 1"}, "approver: the user is an agent's user account"),
-    ({"azp": AGENT}, "approver: not the approve command's client app"),
-    ({"azp": None}, "approver: not the approve command's client app"),
+    ({"azp": AGENT}, "approver: not the CLI's client app"),
+    ({"azp": None}, "approver: not the CLI's client app"),
     ({"scp": None}, "permission: missing scope AgentDisable.Decide"),
     ({"scp": "AgentDisable.DecideAll"}, "permission: missing scope AgentDisable.Decide"),
     ({"roles": None}, "permission: missing app role AgentDisable.Approve"),

@@ -87,7 +87,7 @@ def agent_with_role(role: str) -> Callable[[Request], Caller]:
 
 
 def approver(request: Request) -> Approver:
-    """A route's caller: a person who may approve, using the approve command."""
+    """A route's caller: a person who may approve, using the CLI."""
     return authenticate(request, lambda token, key: verify_approver(token, key, SETTINGS, time.time()))
 
 

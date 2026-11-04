@@ -245,9 +245,9 @@ TR's `azpacr` describes request 2 only. There the client is the agent identity, 
 
 ## The approver's token: a delegated token
 
-**In one line:** this is the token the `approve` command gets after a person signs in through `agent-steward-agent-disable-cli`. It is a delegated access token for the Identity API: the client acts for a signed-in person. No OBO is involved.
+**In one line:** this is the token the CLI gets after a person signs in through `agent-steward-agent-disable-cli`. It is a delegated access token for the Identity API: the client acts for a signed-in person. No OBO is involved.
 
-It was captured on 3 November 2026 with `docker compose run --rm approve python approve.py --show-claims` ([how](infra.md#the-approve-command)), which prints the claims and never the token. The IDs and personal details are replaced with placeholders.
+It was captured on 3 November 2026 with `docker compose run --rm approve python approve.py --show-claims` ([how](infra.md#the-cli)), which prints the claims and never the token. The IDs and personal details are replaced with placeholders.
 
 ### The claims, with placeholders
 
@@ -374,7 +374,7 @@ So the short rule is:
 | Token | `scp` | `roles` | Why |
 |---|---|---|---|
 | The guardian's TR for the Identity API (app only) | none | `Findings.Submit`, `AgentDisable.Request` | No person is signed in, so only roles apply. |
-| The `approve` command's token (a person, through `agent-steward-agent-disable-cli`) | `AgentDisable.Decide` | `AgentDisable.Approve` | A person signs in through a client app, so both apply. |
+| The CLI's token (a person, through `agent-steward-agent-disable-cli`) | `AgentDisable.Decide` | `AgentDisable.Approve` | A person signs in through a client app, so both apply. |
 
 The Identity API needs both claims in the approver's token (FR7):
 

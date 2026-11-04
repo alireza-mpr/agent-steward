@@ -1,5 +1,5 @@
 // The people who may approve disabling an agent (FR7): a security group that holds the Identity
-// API's AgentDisable.Approve role, and the public client app that the `approve` command signs in
+// API's AgentDisable.Approve role, and the public client app that the CLI signs in
 // with (authorization code flow with PKCE, no secret). Deploy identity-api.bicep first: it defines the role and
 // the scope that this file uses.
 //
@@ -50,7 +50,7 @@ resource approversHoldTheApproveRole 'Microsoft.Graph/appRoleAssignedTo@v1.0' = 
   appRoleId: filter(identityApi.appRoles, role => role.value == 'AgentDisable.Approve')[0].id
 }
 
-// The `approve` command's app. It runs on the approver's machine and cannot keep a secret, so it
+// The CLI's app. It runs on the approver's machine and cannot keep a secret, so it
 // is a public client with no credential. It signs in with the authorization code flow and PKCE, so
 // it needs this redirect URI. Public client flows stay off: security defaults block the device code
 // flow anyway. Its own registration gives approvals their own name in the sign-in logs, and their

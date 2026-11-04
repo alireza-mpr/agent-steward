@@ -1,4 +1,4 @@
-"""The approve command (FR7): a person approves or denies the guardian's requests to disable an agent.
+"""The CLI (FR7): a person approves or denies the guardian's requests to disable an agent.
 
     docker compose run --rm approve
 
