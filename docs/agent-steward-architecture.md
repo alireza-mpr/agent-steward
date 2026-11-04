@@ -197,7 +197,7 @@ sequenceDiagram
 
 **Where the guardian differs from [the general practice](agent-architecture.md#human-approval-who-approves-and-how):**
 
-| General practice | The guardian | Why |
+| Enterprise practice | The guardian | Why |
 |---|---|---|
 | A domain service does the write, with its own identity | The MCP server writes, as the guardian, which holds `AgentIdentity.EnableDisable.All` | Timebox |
 | A domain service checks the rules and reads the facts itself | The MCP server does both, and the Identity API trusts the facts it sends | Timebox |
