@@ -6,7 +6,7 @@ This document shows how this project's **Guardian** agent is built today: its pa
 > * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with three tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent, `disable_agent` disables a dormant agent after a human approves) and its tool allow-list, and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an MCP integration test proves it.
 > * **Not built yet:** The correlation-ID scaffold across all components.
 > 
-> *(See the README's [Delivery status](../README.md#delivery-status) for live progress tracking).*
+> *(See [Delivery status](delivery-status.md) for live progress tracking).*
 
 ## Contents
 

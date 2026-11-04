@@ -69,4 +69,4 @@ A disable stops new tokens, but issued tokens work until they expire ([design no
 - **Not built:** OBO ([design](docs/DESIGN-NOTES.md#6-delegation-and-on-behalf-of-obo-for-agents)), revocation of live tokens, Conditional Access for agents, the live worker, and the correlation of traces with Entra sign-in logs.
 - **Known risks:** the [accepted risks](THREATMODEL.md#accepted-risks), each with its fix.
 
-The [delivery status](README.md#delivery-status) has the state of every requirement.
+The [delivery status](docs/delivery-status.md) has the state of every requirement.

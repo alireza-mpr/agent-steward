@@ -319,7 +319,7 @@ The Guardian runs locally, so it differs from the design above. The shortcuts D1
 | 4, 5 | The harness never talks to Entra ID. The sidecar makes requests 1 and 2 for the MCP server, as the Guardian's agent identity, with a certificate file (**D2**, **D3**). |
 | 6 | No token, only network isolation (**D1**). |
 | 7, 8 | The MCP server has no application of its own. It gets its tokens from the sidecar and calls the APIs as the Guardian's agent identity (**D2**). |
-| 9, 11 | The Identity API serves the approval service. The approver signs in with the authorization code flow and PKCE, in the `approve` command's public client app `agent-steward-agent-disable-cli`. Built and run live on 31 October 2026 ([README](../README.md#delivery-status)). |
+| 9, 11 | The Identity API serves the approval service. The approver signs in with the authorization code flow and PKCE, in the `approve` command's public client app `agent-steward-agent-disable-cli`. Built and run live on 31 October 2026 ([Delivery status](delivery-status.md)). |
 | 10, and the delegated options in rows 5 and 7 | Not built (**D5**). |
 
 **The Guardian's credentials, against the enterprise design:**
