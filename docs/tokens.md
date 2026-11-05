@@ -5,6 +5,12 @@ This doc explains why an API must be registered before any token exists for it, 
 ## Contents
 
 - [Why the API must be registered first](#why-the-api-must-be-registered-first)
+- [Who the token is for (`aud`) and who it is about (`sub`)](#who-the-token-is-for-aud-and-who-it-is-about-sub)
+  - [The standard: `aud`](#the-standard-aud)
+  - [The standard: `sub`](#the-standard-sub)
+  - [`sub` in the refresh token grant](#sub-in-the-refresh-token-grant)
+  - [Where Entra differs](#where-entra-differs)
+  - [`aud` and `sub` in the guardian](#aud-and-sub-in-the-guardian)
 - [See a real token](#see-a-real-token)
 - [TR, claim by claim](#tr-claim-by-claim)
   - [Who issued it, for which API, and for how long](#who-issued-it-for-which-api-and-for-how-long)
@@ -45,6 +51,51 @@ The server needs the registration for four reasons:
 4. **Token shape:** The registration tells the server how to build tokens for this API. In Entra, that includes the token version (`requestedAccessTokenVersion`) and the optional claims. In this lab, the agent claims appeared only after the API asked for them. In IdentityServer, the `ApiResource` lists the user claims to include and the allowed signing algorithms.
 
 Token lifetime is not one of these reasons in IdentityServer. There it is a client setting (`AccessTokenLifetime`), not an API setting.
+
+## Who the token is for (`aud`) and who it is about (`sub`)
+
+**In one line:** an access token's `aud` is the API that receives it, never the client, and its `sub` is the user when a user takes part in the grant, or the client when no user does. The API is never the `sub`.
+
+### The standard: `aud`
+
+- **The API, not the client:** `aud` names the resource server that will receive and check the token ([RFC 9068, section 2.2](https://www.rfc-editor.org/rfc/rfc9068#section-2.2)).
+- **The client chooses it:** the client names the API in its token request. The standard parameter is `resource` ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)), and the server can also derive the API from the requested scope ([RFC 9068, section 3](https://www.rfc-editor.org/rfc/rfc9068#section-3)).
+- **Only the API reads it:** the client sends the token as it is. With a bearer token, whoever holds it can use it, with no extra proof ([RFC 6750, section 1.2](https://www.rfc-editor.org/rfc/rfc6750#section-1.2)). So the client keeps it in memory, sends it only over TLS, and never logs it.
+
+### The standard: `sub`
+
+RFC 9068 ([section 2.2](https://www.rfc-editor.org/rfc/rfc9068#section-2.2)) says: when a resource owner is involved, "such as the authorization code grant", `sub` is the resource owner. When no resource owner is involved, "such as the client credentials grant", `sub` identifies the client.
+
+- **The user is the `sub`:** in the authorization code grant (with PKCE), the device code grant ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)), the refresh token grant, token exchange and OBO, and the JWT bearer grant with an assertion that names the user ([RFC 7523](https://www.rfc-editor.org/rfc/rfc7523)). The password (ROPC) and implicit grants also give a user `sub`, but they are deprecated.
+- **The client is the `sub`:** in the client credentials grant, because no user is involved.
+- **The API is never the `sub`:** the API is always in `aud`.
+- **Token exchange keeps the user:** the `sub` stays the user from the incoming token. The middle tier is the actor, in the `act` claim, not the subject ([RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693#section-4.1)).
+
+### `sub` in the refresh token grant
+
+1. **The user signs in once:** with the authorization code grant, the client gets an access token and a refresh token, both tied to that user and that client.
+2. **The access token expires:** after 60 to 90 minutes in Entra.
+3. **The client sends the refresh token:** `grant_type=refresh_token`. The user does not need to be there.
+4. **The server issues a new access token:** for the same user, with the same or narrower scopes ([RFC 6749, section 6](https://www.rfc-editor.org/rfc/rfc6749#section-6)).
+
+So a refresh cannot change the subject. And the client is never the `sub` here: the client credentials grant normally gives no refresh token, because "a refresh token SHOULD NOT be included" ([RFC 6749, section 4.4.3](https://www.rfc-editor.org/rfc/rfc6749#section-4.4.3)). The client can always ask again with its own credential.
+
+### Where Entra differs
+
+- **`aud` comes from the scope:** the v2 endpoint has no `resource` parameter. It reads the API from the scope prefix, the part before the last `/`. So `scope=<IDENTITY_API_APP_ID>/.default` gives `aud` = the Identity API.
+- **The client must not parse the token:** "Although client applications can receive and use access tokens, they should treat them as opaque strings. The client application shouldn't attempt to validate access tokens." Tokens for Microsoft APIs, such as Graph, may not even be a JWT the client can decode ([Access tokens](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens)).
+- **`sub` is pairwise:** each app sees a different `sub` for the same user, and `sub` is read within its tenant. Use `oid` for a stable user ID across the tenant.
+- **App-only tokens:** `sub` equals `oid`, the service principal's object ID (see [Who the client is](#who-the-client-is)).
+- **The agent's own user account:** the agent is the subject. `sub` names that agent user, and `xms_sub_fct` contains `13`.
+- **TR in OBO with an agent:** `sub` and `oid` stay the user, `azp` names the agent identity, and `xms_act_fct` contains `11` ([the OBO flow](agent-architecture.md#the-delegated-flow-obo-step-by-step)).
+- **The refresh token is bound to the user and the client, not to one API:** so one refresh token can get access tokens with a different `aud`, for any API the client has permission for. Its `sub` is still the user. Entra encrypts it, and "only the Microsoft identity platform can read" it. It lives 90 days, or 24 hours for single-page apps ([Refresh tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens)).
+- **A refresh is a non-interactive sign-in:** the user is not there, so the sign-in log records it under **User sign-ins (non-interactive)** ([Investigating agent activity](investigating-agent-activity.md)).
+- **A refresh can be refused:** for example after an admin revokes all refresh tokens for the user. The client must then sign the user in again ([Refresh tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens)).
+
+### `aud` and `sub` in the guardian
+
+- **The approver's token (the CLI):** `aud` is the Identity API, and `sub` is the approver ([the claims](#the-approvers-token-a-delegated-token)).
+- **The guardian's autonomous token (TR):** `aud` is the Identity API or Graph. It is app-only, so `sub` is the agent identity, not a user ([the claims](#tr-claim-by-claim)).
 
 ## See a real token
 
@@ -433,3 +484,4 @@ So check 5 rejects it: its actor facets do not contain `11`.
 - [Token claims reference for agent IDs](https://learn.microsoft.com/en-us/entra/agent-id/agent-token-claims) (Microsoft Learn, updated August 2026, checked 26 October 2026).
 - Real tokens from this lab's guardian agent identity, 26 October 2026.
 - Scopes and app roles: [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749), [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [Overview of permissions and consent](https://learn.microsoft.com/en-us/entra/identity-platform/permissions-consent-overview) (Microsoft Learn), [Okta client credentials](https://developer.okta.com/docs/guides/implement-grant-type/clientcreds/main/) and [Auth0 client grants](https://auth0.com/docs/get-started/applications/application-access-to-apis-client-grants), checked 30 October 2026.
+- `aud` and `sub`: [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749), [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750), [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693), [Access tokens](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens) and [Refresh tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens) (Microsoft Learn), checked 4 November 2026.

@@ -231,6 +231,8 @@ sequenceDiagram
 
 > **Only the token's audience can exchange it.** An OBO request is accepted only when the token sent as `assertion` was issued for the app that makes the request: its `aud` must be that app. So only the blueprint's agent identity can exchange Tc (step 15), and only the MCP server can exchange TR (step 22). Entra rejects any other token with `AADSTS50013`. The client that received a token for an API cannot exchange it, because the token is not for the client.
 
+> **What the client does with Tc (steps 6 to 8).** Nothing but send it. The client does not open Tc or check it, because Tc is for the blueprint. Microsoft says clients "should treat them as opaque strings" ([Access tokens](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens)). Step 7 is one HTTP request to the agent: the user's task goes in the body, and `Authorization: Bearer Tc` goes in the header. The harness then validates Tc (step 8) and exchanges it (step 15). "Bearer" means whoever holds the token can use it ([RFC 6750](https://www.rfc-editor.org/rfc/rfc6750#section-1.2)), so the client keeps Tc in memory and sends it only to the agent, over TLS. For `aud` and `sub` in general, see [Who the token is for and who it is about](tokens.md#who-the-token-is-for-aud-and-who-it-is-about-sub).
+
 **Design points:**
 * **Permissions:** a delegated token has `scp`, so the role-to-tool mapping must also map scopes to tools. The user's own roles, if any, stay in `roles`.
 * **The agent in the downstream token:** `azp` names the MCP server, so the downstream token does not name the agent. The MCP server's audit line records the agent, the user and the tool.
