@@ -1,6 +1,6 @@
 # From Microservices to Agents: What Changes for Non-Human Identities
 
-An engineer who knows microservices, Kafka and APIs already knows most of the identity machinery that agents use. What changes is that a model, not code, decides what the workload does at runtime, from text it reads. This page lists what stays the same, what changes, and how to approach agent identities. Each claim is marked as verified (with its source) or not checked.
+An engineer who knows microservices already knows most of the identity machinery that agents use. What changes is that a model, not code, decides what the workload does at runtime, from text it reads. This page lists what stays the same, what changes, and how to approach agent identities. Each claim is marked as verified (with its source) or not checked.
 
 ## Contents
 
