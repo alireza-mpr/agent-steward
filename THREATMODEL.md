@@ -19,7 +19,7 @@ C numbers are in the [control register](docs/security-controls.md), with their e
 | ASI03 Identity & Privilege Abuse | Mitigated | Human in the loop, token checks, least privilege, one agent identity | C26, C7, C6, C1 | [token_validation.py](src/identity_api/token_validation.py) | 6 Security and Compliance | A1, A2, A7 |
 | ASI04 Agentic Supply Chain Vulnerabilities | Accepted | Pinned versions, but no dependency scanning | C18 | [docker-compose.yml](docker-compose.yml) | 4 Deployment and Infrastructure | - |
 | ASI05 Unexpected Code Execution | Out of scope | No tool runs code | C22 | [tool-allow-list.json](config/tool-allow-list.json) | 4 Deployment and Infrastructure | - |
-| ASI06 Memory & Context Poisoning | Out of scope | No memory survives a run, so a planted instruction cannot come back in a later run. Poisoned text within a run is ASI01 | C29 | [harness.py](src/guardian/harness.py) | 2 Data Operations | - |
+| ASI06 Memory & Context Poisoning | Mitigated | No memory survives a run, so a planted instruction cannot come back in a later run. Poisoned text within a run is ASI01 | C29 | [harness.py](src/guardian/harness.py) | 2 Data Operations | - |
 | ASI07 Insecure Inter-Agent Communication | Out of scope | One agent. The fixture agents are registry entries and run no code | - | - | 7 Agent Ecosystem | - |
 | ASI08 Cascading Failures | Mitigated | A limit on model calls, fail closed on errors | C12, C23 | [harness.py](src/guardian/harness.py) | 3 Agent Frameworks | A6 |
 | ASI09 Human-Agent Trust Exploitation | Accepted | Facts from Graph and the model's text labelled untrusted, but a person can still approve carelessly | C28, C27 | [approve.py](src/approve_cli/approve.py) | 7 Agent Ecosystem | A3, A4, A5 |
