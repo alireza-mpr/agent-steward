@@ -172,6 +172,13 @@ class FakeMsalApp:
             raise self.error
         return self.result
 
+    def get_accounts(self):
+        return [{"home_account_id": "the-person"}] if self.result and "access_token" in self.result else []
+
+    def acquire_token_silent(self, scopes, account):
+        self.silent = (scopes, account)
+        return getattr(self, "silent_result", None)
+
 
 def use_msal(monkeypatch, app):
     monkeypatch.setitem(sys.modules, "msal", types.SimpleNamespace(PublicClientApplication=lambda client_id, authority: app))
@@ -186,7 +193,7 @@ def test_sign_in_shows_the_address_and_redeems_what_the_person_pastes(monkeypatc
     use_msal(monkeypatch, app)
     lines = []
 
-    assert sign_in(typed(LANDED), lines) == "token"
+    assert sign_in(typed(LANDED), lines).token == "token"
     assert app.started == {"scopes": ["api-app/.default"], "redirect_uri": "http://localhost:18400", "prompt": "select_account"}
     assert FLOW["auth_uri"] in lines[0]
     # The flow goes back to MSAL with the pasted values, so it checks the state and sends the PKCE verifier.
@@ -196,7 +203,7 @@ def test_sign_in_shows_the_address_and_redeems_what_the_person_pastes(monkeypatc
 def test_the_pasted_address_may_have_spaces_around_it(monkeypatch):
     use_msal(monkeypatch, FakeMsalApp({"access_token": "token"}))
 
-    assert sign_in(typed(f"  {LANDED}\n")) == "token"
+    assert sign_in(typed(f"  {LANDED}\n")).token == "token"
 
 
 @pytest.mark.parametrize("pasted", ["https://evil.example/?code=x&state=abc", "http://localhost.evil.example/?code=x",
@@ -250,7 +257,7 @@ def test_show_claims_prints_the_claims_never_the_token_and_calls_no_api(monkeypa
     token = fake_jwt({"scp": "AgentDisable.Decide", "roles": ["AgentDisable.Approve"]})
     for name in ("TENANT_ID", "AGENT_DISABLE_CLI_APP_ID", "IDENTITY_API_APP_ID"):
         monkeypatch.setenv(name, "x")
-    monkeypatch.setattr(approve, "sign_in", lambda *arguments: token)
+    monkeypatch.setattr(approve, "sign_in", lambda *arguments: approve.Session(token, None, None))
     def no_api(*arguments):
         raise AssertionError("--show-claims must not call the Identity API")
     monkeypatch.setattr(approve, "IdentityApi", no_api)
@@ -260,3 +267,156 @@ def test_show_claims_prints_the_claims_never_the_token_and_calls_no_api(monkeypa
     assert '"scp": "AgentDisable.Decide"' in shown
     assert token not in shown
     assert token.split(".")[1] not in shown
+
+
+# The token for the guardian's blueprint (Tc), from the same sign-in
+
+def test_token_for_uses_the_same_sign_in_without_asking_again(monkeypatch):
+    app = FakeMsalApp({"access_token": "token"})
+    app.silent_result = {"access_token": "tc"}
+    use_msal(monkeypatch, app)
+    session = sign_in(typed(LANDED))
+
+    assert session.token_for("blueprint/access_as_user") == "tc"
+    assert app.silent == (["blueprint/access_as_user"], {"home_account_id": "the-person"})
+
+
+@pytest.mark.parametrize("silent_result", [None, {"error": "invalid_grant"}])
+def test_no_token_for_the_blueprint_is_a_sign_in_error(silent_result, monkeypatch):
+    app = FakeMsalApp({"access_token": "token"})
+    app.silent_result = silent_result
+    use_msal(monkeypatch, app)
+    session = sign_in(typed(LANDED))
+
+    with pytest.raises(approve.SignInError):
+        session.token_for("blueprint/access_as_user")
+
+
+def test_show_delegation_claims_prints_tc_claims_never_the_token_and_calls_no_api(monkeypatch, capsys):
+    tc = fake_jwt({"aud": "blueprint", "scp": "access_as_user"})
+    for name in ("TENANT_ID", "AGENT_DISABLE_CLI_APP_ID", "IDENTITY_API_APP_ID", "GUARDIAN_BLUEPRINT_APP_ID"):
+        monkeypatch.setenv(name, "x")
+    asked = []
+    class FakeSession:
+        token = "identity-api-token"
+        def token_for(self, scope):
+            asked.append(scope)
+            return tc
+    monkeypatch.setattr(approve, "sign_in", lambda *arguments: FakeSession())
+    def no_api(*arguments):
+        raise AssertionError("--show-delegation-claims must not call the Identity API")
+    monkeypatch.setattr(approve, "IdentityApi", no_api)
+
+    assert approve.main(["--show-delegation-claims"]) == 0
+    shown = capsys.readouterr().out
+    assert asked == ["x/access_as_user"]
+    assert '"scp": "access_as_user"' in shown
+    assert tc not in shown
+    assert tc.split(".")[1] not in shown
+
+
+def test_show_obo_claims_hands_tc_to_the_sidecar_and_prints_only_the_claims(monkeypatch, capsys):
+    tc = fake_jwt({"aud": "blueprint", "scp": "access_as_user"})
+    obo = fake_jwt({"aud": "graph", "scp": "AgentIdentity.EnableDisable.All"})
+    for name in ("TENANT_ID", "AGENT_DISABLE_CLI_APP_ID", "IDENTITY_API_APP_ID", "GUARDIAN_BLUEPRINT_APP_ID"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("SIDECAR_URL", "http://127.0.0.1:5000")
+    monkeypatch.setenv("GUARDIAN_AGENT_APP_ID", "guardian")
+    class FakeSession:
+        token = "identity-api-token"
+        def token_for(self, scope):
+            return tc
+    monkeypatch.setattr(approve, "sign_in", lambda *arguments: FakeSession())
+    sent = []
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+        def __exit__(self, *arguments):
+            return False
+    def fake_urlopen(request, timeout):
+        sent.append(request)
+        return Response(('{"authorizationHeader": "Bearer ' + obo + '"}').encode())
+    monkeypatch.setattr(approve.urllib.request, "urlopen", fake_urlopen)
+
+    assert approve.main(["--show-obo-claims"]) == 0
+    assert sent[0].full_url == "http://127.0.0.1:5000/AuthorizationHeader/graph-delegated?AgentIdentity=guardian"
+    assert sent[0].get_header("Authorization") == f"Bearer {tc}"
+    shown = capsys.readouterr().out
+    assert '"scp": "AgentIdentity.EnableDisable.All"' in shown
+    for token in (tc, obo):
+        assert token not in shown and token.split(".")[1] not in shown
+
+
+# After an approval: the approver's delegation (FR4)
+
+def test_after_an_approval_the_delegation_is_sent_and_its_answer_shown():
+    api, lines, sent = FakeApi(REQUEST), [], []
+    def delegate(request):
+        sent.append(request.request_id)
+        return "disabled"
+
+    review(api, set(), typed("approve"), lines.append, delegate)
+
+    assert sent == ["request-1"]
+    assert lines[-1] == "Disabled, with your own rights."
+
+
+def test_a_denial_sends_no_delegation():
+    def delegate(request):
+        raise AssertionError("a denial must not hand over the person's rights")
+
+    review(FakeApi(REQUEST), set(), typed("deny"), lambda line: None, delegate)
+
+
+def test_a_decision_refused_by_the_identity_api_sends_no_delegation():
+    def delegate(request):
+        raise AssertionError("no delegation for a decision that was not recorded")
+
+    review(FakeApi(REQUEST, decide_error=conflict()), set(), typed("approve"), lambda line: None, delegate)
+
+
+@pytest.mark.parametrize("result, shown", [("not_the_approver", "not the person who approved"),
+                                           ("something\x1b[2Jodd", "Not disabled: something [2Jodd")])
+def test_a_refused_delegation_is_shown_plainly(result, shown):
+    lines = []
+
+    review(FakeApi(REQUEST), set(), typed("approve"), lines.append, lambda request: result)
+
+    assert shown in lines[-1]
+
+
+@pytest.mark.parametrize("failure, shown", [(OSError("refused"), "could not be reached"),
+                                            (approve.SignInError("no token for x: invalid_grant"), "no token")])
+def test_a_delegation_that_cannot_be_made_is_shown_and_the_review_goes_on(failure, shown):
+    lines = []
+    def delegate(request):
+        raise failure
+
+    review(FakeApi(REQUEST), set(), typed("approve"), lines.append, delegate)
+
+    assert shown in lines[-1]
+
+
+def test_send_delegation_posts_tc_to_the_request_and_reads_the_result(monkeypatch):
+    sent = []
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+        def __exit__(self, *arguments):
+            return False
+    def fake_urlopen(call, timeout):
+        sent.append(call)
+        return Response(b'{"result": "disabled"}')
+    monkeypatch.setattr(approve.urllib.request, "urlopen", fake_urlopen)
+
+    assert approve.send_delegation("http://executor-sidecar:8200", REQUEST, "the-tc") == "disabled"
+    assert sent[0].full_url == "http://executor-sidecar:8200/agents/agent-1/disableRequests/request-1/delegation"
+    assert sent[0].get_method() == "POST" and sent[0].get_header("Authorization") == "Bearer the-tc"
+
+
+def test_send_delegation_reads_the_result_of_a_refusal(monkeypatch):
+    def refuse(call, timeout):
+        raise urllib.error.HTTPError(call.full_url, 403, "Forbidden", {}, io.BytesIO(b'{"result": "not_the_approver"}'))
+    monkeypatch.setattr(approve.urllib.request, "urlopen", refuse)
+
+    assert approve.send_delegation("http://executor-sidecar:8200", REQUEST, "the-tc") == "not_the_approver"

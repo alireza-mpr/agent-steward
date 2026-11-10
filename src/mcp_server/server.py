@@ -1,15 +1,18 @@
 """The guardian's MCP server: the agent's hands (FR6).
 
-It exposes the guardian's registry checks as MCP tools over Streamable HTTP. It is the only part
-of the agent that can get the guardian's tokens: it shares the token sidecar's network namespace,
-and the guardian's harness does not (docs/agent-steward-architecture.md). The harness reaches it at
-http://sidecar:8100/mcp and never sees a token.
+It exposes the guardian's registry checks as MCP tools over Streamable HTTP. It gets the guardian's
+app-only tokens from the token sidecar, whose network namespace it shares, and the guardian's harness
+does not (docs/agent-steward-architecture.md). The harness reaches it at http://sidecar:8100/mcp and
+never sees a token.
+
+It can read Graph and ask for a disable, never write: the disable happens in the executor
+(src/executor), with the approver's own rights (FR4). This server never receives the approver's
+token, and it holds no write code.
 """
 
 import asyncio
 import json
 import os
-import re
 import sys
 import urllib.parse
 import urllib.request
@@ -26,20 +29,18 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import INVALID_PARAMS, ToolAnnotations
 
 from allow_list import AllowListError, load_allow_list
-from approval import SERVICE_ERRORS, ApprovalError, DisableRequest, IdentityApiApprovals, wait_for_decision
-from graph_reader import (AgentDetails, GraphClient, disable_agent_identity, fetch_agent_details, fetch_agents,
-                          fetch_blueprints, fetch_last_sign_ins)
-from rules import Agent, Finding, find_dormant, load_permission_policy, run_all_rules
+from approval import SERVICE_ERRORS, ApprovalError, DisableRequest, IdentityApiApprovals
+from disable_checks import GUID, check_can_be_disabled
+from graph_reader import AgentDetails, GraphClient, fetch_agent_details, fetch_agents, fetch_blueprints, fetch_last_sign_ins
+from rules import Finding, load_permission_policy, run_all_rules
 
 SIDECAR_URL = os.environ.get("SIDECAR_URL", "http://127.0.0.1:5000")
-API_URL = os.environ.get("API_URL", "http://api:8000")
+API_URL = os.environ.get("API_URL", "http://identity-api:8000")
 POLICY_PATH = Path(os.environ.get("POLICY_PATH", "/config/agent-permissions.json"))
 ALLOW_LIST_PATH = Path(os.environ.get("ALLOW_LIST_PATH", "/config/tool-allow-list.json"))
 MCP_PORT = int(os.environ.get("MCP_PORT", "8100"))
 # The Host headers the server accepts (DNS rebinding protection): the name the harness uses.
 MCP_ALLOWED_HOSTS = os.environ.get("MCP_ALLOWED_HOSTS", "sidecar:8100").split(",")
-
-GUID = re.compile(r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
 
 
 def token_for(api: str):
@@ -67,21 +68,47 @@ def submit(findings: list[Finding], correlation_id: str) -> dict:
 
 
 @dataclass(frozen=True)
+class RequestStatus:
+    """The latest disable request for a dormant agent, so the model can see what is already asked."""
+    agent_app_id: str
+    request_id: str
+    status: str                 # pending, approved, denied, expired or executed
+    created_at: str | None
+    decided_by: str | None      # the approver's display name, once someone decided
+    decided_at: str | None
+
+
+@dataclass(frozen=True)
 class ScanResult:
     findings: list[Finding]
     accepted: int          # how many findings the Identity API accepted
     correlation_id: str    # the Identity API writes the same ID into its audit line
+    disable_requests: list[RequestStatus]   # the latest request for each dormant agent that has one
+
+
+def latest_requests(findings: list[Finding]) -> list[RequestStatus]:
+    """The latest disable request this server made for each dormant agent, from the Identity API."""
+    service = approval_service()
+    latest = []
+    for agent_app_id in sorted({finding.agent_app_id for finding in findings if finding.check == "dormant"}):
+        requests = service.of_agent(agent_app_id)
+        if requests:
+            newest = requests[0]
+            latest.append(RequestStatus(agent_app_id, newest.request_id, newest.status, newest.created_at,
+                                        newest.decided_by_name, newest.decided_at))
+    return latest
 
 
 def scan() -> ScanResult:
-    """Read the tenant, apply the rules, and report the findings to the Identity API."""
+    """Read the tenant, apply the rules, report the findings to the Identity API, and add the
+    status of the latest disable request for each dormant agent."""
     now = datetime.now(timezone.utc)
     correlation_id = str(uuid.uuid4())
     graph = GraphClient(token_for("graph"))
     findings = run_all_rules(fetch_agents(graph), fetch_blueprints(graph),
                              load_permission_policy(POLICY_PATH), fetch_last_sign_ins(graph, now), now)
     answer = submit(findings, correlation_id)
-    return ScanResult(findings, answer["accepted"], correlation_id)
+    return ScanResult(findings, answer["accepted"], correlation_id, latest_requests(findings))
 
 
 # Sent in every answer's _meta (serverInfo), so logs and clients can tell which build answered.
@@ -152,68 +179,28 @@ def get_agent(app_id: str) -> AgentDetails:
 
 
 @dataclass(frozen=True)
-class DisableResult:
+class SubmittedRequest:
     app_id: str
     name: str
-    approved_by: str | None     # the approver's display name
     request_id: str
-    confirmed: bool             # whether a read already shows the agent as disabled
+    status: str                 # pending: nothing is disabled yet; an approver decides later
+    expires_at: str | None      # when the request stops waiting for an approver
 
 
 # The model reads these. They say what happened, and no internal detail (CWE-209).
-NOT_APPROVED = {
-    "already_waiting": "Not disabled: a request for this agent is already waiting.",
-    "denied": "Not disabled: the approver denied the request.",
-    "expired": "Not disabled: no approver decided in time.",
-    "mismatch": "Not disabled: the approval service's answer did not match the request.",
-    "reused": "Not disabled: this approval was already used.",
-    "unavailable": "Not disabled: the approval service could not be reached.",
+NOT_REQUESTED = {
+    "already_waiting": "Not requested: a request for this agent is already pending.",
+    "unavailable": "Not requested: the approval service could not be reached.",
 }
 MAX_REASON = 500                    # the model's reason is shown to the approver, labelled as untrusted
-used_request_ids: set[str] = set()  # each approval works once
 
 
 def approval_service() -> IdentityApiApprovals:
     return IdentityApiApprovals(API_URL, token_for("identity-api"))
 
 
-def is_protected(graph: GraphClient, agent: AgentDetails) -> bool:
-    """The guardian's own agents: the guardian itself and the others of its blueprint. If the
-    guardian cannot be read, every agent counts as protected (fail closed)."""
-    guardian = fetch_agent_details(graph, os.environ["GUARDIAN_AGENT_APP_ID"])
-    return guardian is None or agent.blueprint_app_id == guardian.blueprint_app_id
-
-
-def dormant_finding(graph: GraphClient, agent: AgentDetails, now: datetime) -> Finding | None:
-    """The same rule as scan_registry, so the tool does not depend on what the model says."""
-    plain = Agent(agent.app_id, agent.name, agent.blueprint_app_id, sponsor_count=0)
-    return next(iter(find_dormant([plain], fetch_last_sign_ins(graph, now), now)), None)
-
-
-def audit_request(event: str, request: DisableRequest, correlation_id: str, **fields) -> None:
+def audit_request(event: str, request: DisableRequest, correlation_id: str | None, **fields) -> None:
     audit(event=event, agent=request.agent_id, request_id=request.request_id, correlation_id=correlation_id, **fields)
-
-
-# The steps of disable_agent. A step reports what happened and raises nothing for an expected
-# outcome, so every decision to stop is in one place: disable_agent itself.
-
-async def check_can_be_disabled(graph: GraphClient, app_id: str) -> tuple[AgentDetails | None, Finding | None, str | None]:
-    """The server's own checks, before anyone is asked. Returns the agent, its dormant finding,
-    and the refusal text, which is None when the agent can be disabled."""
-    # MCP servers must validate every input. app_id goes into a Graph filter, so only a GUID passes.
-    if not GUID.fullmatch(app_id):
-        return None, None, "app_id must be an agent identity's app ID (a GUID)"
-    agent = await asyncio.to_thread(fetch_agent_details, graph, app_id)
-    if agent is None:
-        return None, None, f"No agent identity has the app ID {app_id}"
-    if await asyncio.to_thread(is_protected, graph, agent):
-        audit(event="disable_refused", agent=app_id, reason="protected")
-        return agent, None, "Refused: this agent belongs to the guardian."
-    dormant = await asyncio.to_thread(dormant_finding, graph, agent, datetime.now(timezone.utc))
-    if dormant is None:
-        audit(event="disable_refused", agent=app_id, reason="not dormant")
-        return agent, None, "Refused: this agent signed in within the last 30 days."
-    return agent, dormant, None
 
 
 async def request_approval(service: IdentityApiApprovals, agent: AgentDetails, dormant: Finding, reason: str,
@@ -234,69 +221,26 @@ async def request_approval(service: IdentityApiApprovals, agent: AgentDetails, d
     return request, None
 
 
-async def wait_for_approval(service: IdentityApiApprovals, request: DisableRequest,
-                            correlation_id: str) -> tuple[DisableRequest | None, str | None]:
-    """Wait for the human. Returns the approved request and None, or None and why it was not approved."""
-    try:
-        approved = await wait_for_decision(lambda: asyncio.to_thread(service.get, request.agent_id, request.request_id),
-                                           request, used_request_ids, lambda: datetime.now(timezone.utc),
-                                           asyncio.sleep)
-    except ApprovalError as error:
-        audit_request("disable_decision", request, correlation_id, decision=error.reason)
-        return None, error.reason
-    except asyncio.CancelledError:
-        # The caller left, for example the run was stopped. Nobody will act on this request now, even
-        # if a person still approves it at the Identity API, so the record must say why nothing follows.
-        audit_request("disable_abandoned", request, correlation_id, stage="waiting for approval")
-        raise
-    audit_request("disable_decision", request, correlation_id, decision="approved",
-                  approver_id=approved.decided_by_id, approver_name=approved.decided_by_name)
-    return approved, None
-
-
-async def write_disable(graph: GraphClient, approved: DisableRequest, correlation_id: str) -> bool | None:
-    """The write. Returns whether a read already shows it, or None when the write failed. Its audit
-    lines name the approver, so the action stands on its own (FR7)."""
-    approver = {"approver_id": approved.decided_by_id, "approver_name": approved.decided_by_name}
-    try:
-        confirmed = await asyncio.to_thread(disable_agent_identity, graph, approved.agent_id)
-    except SERVICE_ERRORS:
-        audit_request("disable_failed", approved, correlation_id, **approver)
-        return None
-    except asyncio.CancelledError:
-        # The write runs in its own thread and may still finish, so the outcome is unknown: check the tenant.
-        audit_request("disable_abandoned", approved, correlation_id, stage="writing", **approver)
-        raise
-    audit_request("agent_disabled", approved, correlation_id, confirmed=confirmed, **approver)
-    return confirmed
-
-
-@mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
-async def disable_agent(app_id: str, reason: str) -> DisableResult:
-    """Ask a human to approve disabling one dormant agent identity, and wait up to 4 minutes for
-    the decision. The agent is disabled only if the human approves. Refused for an agent that is
-    not dormant, and for the guardian's own agents. reason: one short sentence for the approver."""
-    graph = GraphClient(token_for("graph"))
-    service = approval_service()
+# Only the guardian's own tool for disabling: it asks, and returns at once. The write is not here:
+# it happens in the executor, with the approver's rights (decision 7: no shortcut around OBO).
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+async def submit_disable_agent_request(app_id: str, reason: str) -> SubmittedRequest:
+    """Ask a human to approve disabling one dormant agent identity. Returns at once with the request,
+    which is pending: nothing is disabled now. If the approver approves, the agent is disabled with
+    the approver's own rights. A later scan_registry shows the request's status. Refused for an
+    agent that is not dormant, for the guardian's own agents, and while a request for the agent is
+    already pending. reason: one short sentence for the approver."""
+    graph = GraphClient(token_for("graph"))   # app-only, read-only: the checks before anyone is asked
     correlation_id = str(uuid.uuid4())
 
-    agent, dormant, refusal = await check_can_be_disabled(graph, app_id)
+    agent, dormant, refusal = await check_can_be_disabled(graph, app_id, os.environ["GUARDIAN_AGENT_APP_ID"], audit)
     if refusal:
         raise ToolError(refusal)
 
-    request, not_created = await request_approval(service, agent, dormant, reason, correlation_id)
+    request, not_created = await request_approval(approval_service(), agent, dormant, reason, correlation_id)
     if not_created:
-        raise ToolError(NOT_APPROVED[not_created])
-
-    approved, not_approved = await wait_for_approval(service, request, correlation_id)
-    if not_approved:
-        raise ToolError(NOT_APPROVED[not_approved])
-
-    confirmed = await write_disable(graph, approved, correlation_id)
-    if confirmed is None:
-        raise ToolError("Not disabled: the approver approved, but the write to Microsoft Graph failed.")
-
-    return DisableResult(app_id, agent.name, approved.decided_by_name, request.request_id, confirmed)
+        raise ToolError(NOT_REQUESTED[not_created])
+    return SubmittedRequest(app_id, agent.name, request.request_id, request.status, request.expires_at)
 
 
 if __name__ == "__main__":

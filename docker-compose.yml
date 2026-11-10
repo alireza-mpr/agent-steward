@@ -5,12 +5,13 @@
 name: agent-steward
 
 services:
-  # Microsoft Entra ID Auth SDK (sidecar). It is the only container that holds the
-  # guardian blueprint's private key, and it makes both token requests (T1, T2).
+  # Microsoft Entra ID Auth SDK (sidecar), for the MCP server. It holds the guardian
+  # blueprint's private key and makes both token requests (T1, T2), app-only.
   # Anyone who can call it can get the guardian's tokens, so it listens on 127.0.0.1 only.
   # Its callers join its network namespace (network_mode: service:sidecar), like
   # containers in one Kubernetes pod. Other containers, and the host, cannot reach it.
   # Since version 1.1 the sidecar also refuses non-loopback callers itself (403).
+  # It has no OBO settings: the MCP server never receives an approver's token, so it cannot write.
   sidecar:
     # Pinned by digest. Microsoft publishes linux/amd64 only. On Apple Silicon, turn on Docker
     # Desktop's Rosetta emulation: under the older QEMU emulation the sidecar fails with 500s.
@@ -25,12 +26,12 @@ services:
       AzureAd__ClientId: ${GUARDIAN_BLUEPRINT_APP_ID:?set GUARDIAN_BLUEPRINT_APP_ID in .env}
       AzureAd__ClientCredentials__0__SourceType: Path
       AzureAd__ClientCredentials__0__CertificateDiskPath: /run/secrets/guardian_blueprint_pfx
-      # Microsoft Graph, app-only: the autonomous flow (FR3).
+      # Microsoft Graph, app-only, read-only: the autonomous flow (FR3).
       DownstreamApis__graph__BaseUrl: https://graph.microsoft.com/v1.0/
       DownstreamApis__graph__Scopes__0: https://graph.microsoft.com/.default
       DownstreamApis__graph__RequestAppToken: "true"
       # The project's Identity API, app-only (FR3, FR5). Its scope is its app ID + /.default.
-      DownstreamApis__identity-api__BaseUrl: http://api:8000/
+      DownstreamApis__identity-api__BaseUrl: http://identity-api:8000/
       DownstreamApis__identity-api__Scopes__0: ${IDENTITY_API_APP_ID:?set IDENTITY_API_APP_ID in .env}/.default
       DownstreamApis__identity-api__RequestAppToken: "true"
       ASPNETCORE_ENVIRONMENT: Production
@@ -45,27 +46,74 @@ services:
     networks:
       - agent
 
+  # A second sidecar, for the executor only (FR4). The same image, certificate and guardian
+  # identity as the one above (keep the two in step), plus the OBO settings: the approver's token
+  # (Tc) comes in on /AuthorizationHeader, and the sidecar exchanges it as the agent identity
+  # named in the call. On the approval network only, so the harness cannot reach it.
+  executor-sidecar:
+    # Pinned by digest. Microsoft publishes linux/amd64 only. On Apple Silicon, turn on Docker
+    # Desktop's Rosetta emulation: under the older QEMU emulation the sidecar fails with 500s.
+    image: mcr.microsoft.com/entra-sdk/auth-sidecar:1.1.2-azurelinux3.0-distroless@sha256:73a8763100c93c3da1a3ed1ba3af2c6122c0517687354dceded30537a1aee97f
+    platform: linux/amd64
+    env_file:
+      - secrets/agent-steward-guardian.sidecar.env   # the PFX password (setup/agent-id/Deploy-BlueprintCertificate.ps1)
+    environment:
+      AzureAd__Instance: https://login.microsoftonline.com/
+      AzureAd__TenantId: ${TENANT_ID:?set TENANT_ID in .env}
+      # The sidecar signs in as the blueprint (request 1), then as the agent identity named in each call (request 2).
+      AzureAd__ClientId: ${GUARDIAN_BLUEPRINT_APP_ID:?set GUARDIAN_BLUEPRINT_APP_ID in .env}
+      AzureAd__ClientCredentials__0__SourceType: Path
+      AzureAd__ClientCredentials__0__CertificateDiskPath: /run/secrets/guardian_blueprint_pfx
+      # Microsoft Graph, app-only, read-only: the autonomous flow (FR3).
+      DownstreamApis__graph__BaseUrl: https://graph.microsoft.com/v1.0/
+      DownstreamApis__graph__Scopes__0: https://graph.microsoft.com/.default
+      DownstreamApis__graph__RequestAppToken: "true"
+      # The project's Identity API, app-only (FR3, FR5). Its scope is its app ID + /.default.
+      DownstreamApis__identity-api__BaseUrl: http://identity-api:8000/
+      DownstreamApis__identity-api__Scopes__0: ${IDENTITY_API_APP_ID:?set IDENTITY_API_APP_ID in .env}/.default
+      DownstreamApis__identity-api__RequestAppToken: "true"
+      # Microsoft Graph, delegated: OBO for the approved disable (FR4). Tc's expected audience is
+      # the blueprint's bare app ID, because the blueprint issues v2 tokens and has no App ID URI
+      # (the default would be api://<ClientId>).
+      AzureAd__Audience: ${GUARDIAN_BLUEPRINT_APP_ID:?set GUARDIAN_BLUEPRINT_APP_ID in .env}
+      AzureAd__Scopes: access_as_user
+      DownstreamApis__graph-delegated__BaseUrl: https://graph.microsoft.com/v1.0/
+      DownstreamApis__graph-delegated__Scopes__0: https://graph.microsoft.com/AgentIdentity.EnableDisable.All
+      DownstreamApis__graph-delegated__RequestAppToken: "false"
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://127.0.0.1:5000
+      # Lets the caller name the agent identity (AgentIdentity=...) on the app-only route.
+      # Off by default, and then the sidecar silently returns the blueprint's own token
+      # instead. This also allows other optionsOverride.* parameters, which is acceptable
+      # only because the caller must share the sidecar's loopback.
+      Sidecar__AllowOverrides__GetAuthorizationHeaderUnauthenticated: "true"
+    secrets:
+      - guardian_blueprint_pfx
+    networks:
+      - approval
+
   # The Identity API (FR5): checks every token (docs/tokens.md) and writes one audit line
-  # per decision (FR8). No port is published: callers reach it as http://api:8000.
-  api:
+  # per decision (FR8). No port is published: callers reach it as http://identity-api:8000.
+  identity-api:
     build: src/identity_api
     environment:
       TENANT_ID: ${TENANT_ID:?set TENANT_ID in .env}
       IDENTITY_API_APP_ID: ${IDENTITY_API_APP_ID:?set IDENTITY_API_APP_ID in .env}
       AGENT_DISABLE_CLI_APP_ID: ${AGENT_DISABLE_CLI_APP_ID:?set AGENT_DISABLE_CLI_APP_ID in .env}
     networks:
-      - agent
+      - agent      # the MCP server's sidecar
+      - approval   # the executor's sidecar and the approve CLI
 
-  # The MCP server (FR6): the agent's hands. Its tools read Graph, apply the four rules (FR3) and
-  # report to the Identity API. It is the only part of the agent that can get the guardian's
-  # tokens, because it shares the sidecar's network namespace. It listens for MCP on port 8100,
+  # The MCP server (FR6): the agent's hands. Its tools read Graph, apply the four rules (FR3),
+  # report to the Identity API and ask for a disable. It gets the guardian's app-only tokens,
+  # because it shares the sidecar's network namespace. It never writes: the executor does. It listens for MCP on port 8100,
   # which the guardian reaches as http://sidecar:8100/mcp.
   mcp-server:
     build: src/mcp_server
     network_mode: "service:sidecar"   # It mirrors how containers inside a Kubernetes Pod communicate. MCP's tokens come from the sidecar's loopback; it never sees the key
     environment:
       SIDECAR_URL: http://127.0.0.1:5000
-      API_URL: http://api:8000
+      API_URL: http://identity-api:8000
       GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
       POLICY_PATH: /config/agent-permissions.json
       ALLOW_LIST_PATH: /config/tool-allow-list.json
@@ -78,7 +126,24 @@ services:
       - ./config:/config:ro   # the permission policy and the tool allow-list: edit, then restart, no rebuild
     depends_on:
       - sidecar
-      - api
+      - identity-api
+
+  # The executor (FR4, FR7): the only service that disables an agent. The approve CLI sends it the
+  # approver's token (Tc) right after an approval, and it exchanges Tc with OBO and writes with the
+  # approver's own rights. It shares the executor sidecar's network namespace, so its tokens come
+  # from that sidecar's loopback. The CLI reaches it as http://executor-sidecar:8200.
+  executor:
+    build:
+      context: src                       # it reuses three of the MCP server's modules (its Dockerfile says which)
+      dockerfile: executor/Dockerfile
+    network_mode: "service:executor-sidecar"
+    environment:
+      SIDECAR_URL: http://127.0.0.1:5000
+      API_URL: http://identity-api:8000
+      GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
+    depends_on:
+      - executor-sidecar
+      - identity-api
 
   # The guardian (FR6): the harness. One run of the agent loop: Claude asks for tools, the MCP
   # server runs them. It holds only the Anthropic API key, and it is NOT in the sidecar's
@@ -111,7 +176,7 @@ services:
         required: false
     environment:
       SIDECAR_URL: http://127.0.0.1:5000
-      API_URL: http://api:8000
+      API_URL: http://identity-api:8000
       TENANT_ID: ${TENANT_ID:-}
       IDENTITY_API_APP_ID: ${IDENTITY_API_APP_ID:-}
       GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:-}
@@ -122,7 +187,7 @@ services:
     command: ["pytest", "-v", "-m", "integration", "-p", "no:cacheprovider", "/tests/identity_api"]
     depends_on:
       - sidecar
-      - api
+      - identity-api
 
   # MCP integration tests (FR3, FR6): call the real MCP server from where the guardian sits, so the
   # tools run against the tenant and the Identity API, and check that the sidecar is out of reach.
@@ -177,9 +242,30 @@ services:
     depends_on:
       - sidecar
 
+  # Dev check for the OBO design (FR4): the CLI's sign-in, run inside the executor sidecar's network namespace,
+  # hands the approver's token (Tc) to the sidecar and prints the claims of the token the sidecar
+  # exchanges it for. It never prints a token. Runs only on demand (profile "tools"):
+  #   docker compose run --rm --build obo-claims
+  obo-claims:
+    build: src/approve_cli
+    profiles: ["tools"]
+    stdin_open: true
+    tty: true
+    network_mode: "service:executor-sidecar"   # shares the executor sidecar's loopback
+    environment:
+      TENANT_ID: ${TENANT_ID:?set TENANT_ID in .env}
+      AGENT_DISABLE_CLI_APP_ID: ${AGENT_DISABLE_CLI_APP_ID:?set AGENT_DISABLE_CLI_APP_ID in .env}
+      IDENTITY_API_APP_ID: ${IDENTITY_API_APP_ID:?set IDENTITY_API_APP_ID in .env}
+      GUARDIAN_BLUEPRINT_APP_ID: ${GUARDIAN_BLUEPRINT_APP_ID:?set GUARDIAN_BLUEPRINT_APP_ID in .env}
+      GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
+      SIDECAR_URL: http://127.0.0.1:5000
+    command: ["python", "approve.py", "--show-obo-claims"]
+    depends_on:
+      - executor-sidecar
+
   # The CLI (FR7): a person signs in with the authorization code flow, then approves or
-  # denies the guardian's requests to disable an agent. On the agent network, because the Identity
-  # API is not published to the host. No secret: it is a public client, and the token stays in
+  # denies the guardian's requests to disable an agent. On the approval network, because the
+  # Identity API and the executor are not published to the host. No secret: it is a public client, and the token stays in
   # memory. Runs only on demand (profile "tools"): docker compose run --rm approve
   approve:
     build: src/approve_cli
@@ -190,16 +276,25 @@ services:
       TENANT_ID: ${TENANT_ID:?set TENANT_ID in .env}
       AGENT_DISABLE_CLI_APP_ID: ${AGENT_DISABLE_CLI_APP_ID:?set AGENT_DISABLE_CLI_APP_ID in .env}
       IDENTITY_API_APP_ID: ${IDENTITY_API_APP_ID:?set IDENTITY_API_APP_ID in .env}
-      API_URL: http://api:8000
+      # The audience of the token the guardian exchanges with OBO for the approved disable (FR4).
+      GUARDIAN_BLUEPRINT_APP_ID: ${GUARDIAN_BLUEPRINT_APP_ID:?set GUARDIAN_BLUEPRINT_APP_ID in .env}
+      API_URL: http://identity-api:8000
+      # The guardian's executor, which receives that token right after an approval (FR4).
+      EXECUTOR_URL: http://executor-sidecar:8200
     networks:
-      - agent
+      - approval
     depends_on:
-      - api
+      - identity-api
 
 secrets:
   guardian_blueprint_pfx:
     file: secrets/agent-steward-guardian.pfx
 
 networks:
+  # The harness, the MCP server's sidecar and the Identity API.
   agent:
+    driver: bridge
+  # The approval path: the approve CLI, the executor's sidecar and the Identity API. The harness
+  # is not on it, so it cannot reach the executor.
+  approval:
     driver: bridge

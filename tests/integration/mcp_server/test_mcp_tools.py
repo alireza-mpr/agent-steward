@@ -4,7 +4,7 @@ the test is the MCP client, and calls the tool the model would ask for, from the
 network. (End-to-end, in this project, means the whole chain with the model.)
 
 Runs inside docker compose, on the guardian's network (outside the sidecar's namespace):
-    docker compose up -d sidecar api mcp-server
+    docker compose up -d sidecar identity-api mcp-server
     docker compose run --rm mcp-integration-tests
 """
 
@@ -101,7 +101,7 @@ def test_get_agent_rejects_an_input_that_is_not_a_guid():
 
 def test_tools_list_returns_only_the_tools_on_the_allow_list():
     # config/tool-allow-list.json, as the running server loaded it at start.
-    assert list_tools() == {"scan_registry", "get_agent", "disable_agent"}
+    assert list_tools() == {"scan_registry", "get_agent", "submit_disable_agent_request"}
 
 
 def test_a_tool_off_the_allow_list_is_refused_with_the_specs_unknown_tool_error():

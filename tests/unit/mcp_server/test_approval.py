@@ -1,86 +1,16 @@
-"""Unit tests for the approval gate's waiting and its checks on the answer (FR7, NFR8). No network,
-and the clock is fake, so the 4-minute limit takes no time."""
+"""Unit tests for the approval gate's client (FR7, FR4, NFR8): its reading of the Identity API's
+answers, and its errors. No network."""
 
-import asyncio
 import io
+import json
 import urllib.error
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from approval import (POLL_EVERY, WAIT_FOR_APPROVAL, ApprovalError, DisableRequest, IdentityApiApprovals, parse_request,
-                      wait_for_decision)
+from approval import ApprovalError, DisableRequest, IdentityApiApprovals, parse_request
 
 CREATED = DisableRequest("request-1", "agent-1", "pending")
 APPROVED = DisableRequest("request-1", "agent-1", "approved", "approver-oid", "An Approver")
-
-
-class FakeClock:
-    def __init__(self):
-        self.time = datetime(2026, 10, 31, tzinfo=timezone.utc)
-
-    def now(self):
-        return self.time
-
-    async def sleep(self, seconds):
-        self.time += timedelta(seconds=seconds)
-
-
-def wait(answers, used=None, clock=None):
-    """Run the wait against scripted answers. The last answer repeats. An exception is raised."""
-    clock = clock or FakeClock()
-    answers = list(answers)
-    async def poll():
-        answer = answers.pop(0) if len(answers) > 1 else answers[0]
-        if isinstance(answer, Exception):
-            raise answer
-        return answer
-    return asyncio.run(wait_for_decision(poll, CREATED, set() if used is None else used, clock.now, clock.sleep))
-
-
-def reason_of(answers, **kwargs):
-    with pytest.raises(ApprovalError) as error:
-        wait(answers, **kwargs)
-    return error.value.reason
-
-
-def test_an_approval_returns_the_request_with_its_approver():
-    assert wait([CREATED, CREATED, APPROVED]) == APPROVED
-
-
-def test_a_denial_stops_the_wait():
-    assert reason_of([CREATED, DisableRequest("request-1", "agent-1", "denied", "approver-oid", "An Approver")]) == "denied"
-
-
-def test_a_request_the_service_expired_stops_the_wait():
-    assert reason_of([DisableRequest("request-1", "agent-1", "expired")]) == "expired"
-
-
-def test_no_answer_in_time_fails_closed_at_four_minutes():
-    clock = FakeClock()
-    start = clock.time
-
-    assert reason_of([CREATED], clock=clock) == "expired"
-    assert WAIT_FOR_APPROVAL <= clock.time - start <= WAIT_FOR_APPROVAL + POLL_EVERY
-
-
-@pytest.mark.parametrize("answer", [
-    DisableRequest("request-2", "agent-1", "approved", "approver-oid", "An Approver"),   # another request
-    DisableRequest("request-1", "agent-2", "approved", "approver-oid", "An Approver"),   # another agent
-])
-def test_an_approval_for_something_else_is_refused(answer):
-    assert reason_of([answer]) == "mismatch"
-
-
-def test_an_approval_works_only_once():
-    used = set()
-    assert wait([APPROVED], used=used) == APPROVED
-    assert reason_of([APPROVED], used=used) == "reused"
-
-
-@pytest.mark.parametrize("failure", [OSError("connection refused"), TimeoutError(), ValueError("not a disable request")])
-def test_a_failed_poll_fails_closed(failure):
-    assert reason_of([CREATED, failure]) == "unavailable"
 
 
 def test_parse_request_reads_the_contract():
@@ -129,3 +59,56 @@ def test_any_other_refusal_on_create_stays_a_service_error(monkeypatch):
 
     with pytest.raises(OSError):
         service.create("agent-1", "reason", {}, "correlation-1")
+
+
+# Listing and executing
+
+class Answer(io.BytesIO):
+    def __enter__(self):
+        return self
+    def __exit__(self, *arguments):
+        return False
+
+
+def answering(monkeypatch, body):
+    sent = []
+    def reply(request, timeout):
+        sent.append(request)
+        return Answer(json.dumps(body).encode())
+    monkeypatch.setattr("approval.urllib.request.urlopen", reply)
+    return IdentityApiApprovals("http://api", lambda: "token"), sent
+
+
+def test_of_agent_reads_the_list_newest_first(monkeypatch):
+    service, sent = answering(monkeypatch, {"value": [
+        {"id": "request-2", "agentId": "agent-1", "status": "pending", "createdAt": "2026-11-10T06:00:00+00:00"},
+        {"id": "request-1", "agentId": "agent-1", "status": "denied", "decidedBy": {"id": "a", "name": "An Approver"}}]})
+
+    found = service.of_agent("agent-1")
+
+    assert [(request.request_id, request.status) for request in found] == [("request-2", "pending"), ("request-1", "denied")]
+    assert sent[0].full_url == "http://api/agents/agent-1/disableRequests" and sent[0].get_method() == "GET"
+
+
+def test_of_agent_refuses_an_answer_that_is_not_a_list(monkeypatch):
+    service, _ = answering(monkeypatch, {"value": "nope"})
+
+    with pytest.raises(ValueError):
+        service.of_agent("agent-1")
+
+
+def test_execute_sends_the_delegating_user(monkeypatch):
+    service, sent = answering(monkeypatch, {"id": "request-1", "agentId": "agent-1", "status": "executed",
+                                            "decidedBy": {"id": "approver-oid", "name": "An Approver"}})
+
+    assert service.execute("agent-1", "request-1", "approver-oid").status == "executed"
+    assert sent[0].full_url == "http://api/agents/agent-1/disableRequests/request-1/execution"
+    assert json.loads(sent[0].data) == {"delegatingUser": "approver-oid"}
+
+
+def test_a_409_on_execute_means_the_request_cannot_be_executed(monkeypatch):
+    service = creating_answers(monkeypatch, 409)
+
+    with pytest.raises(ApprovalError) as error:
+        service.execute("agent-1", "request-1", "approver-oid")
+    assert error.value.reason == "not_executable"

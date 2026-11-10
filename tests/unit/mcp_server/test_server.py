@@ -6,13 +6,13 @@ No network: Graph and the Identity API are replaced where a test needs them.
 
 import asyncio
 import json
-import time
 from pathlib import Path
 
 import pytest
 from mcp import Client, MCPError
 from mcp.types import INVALID_PARAMS
 
+import disable_checks
 import server
 from allow_list import load_allow_list
 from approval import ApprovalError, DisableRequest
@@ -59,7 +59,7 @@ def list_tools():
 
 
 def test_the_server_offers_exactly_the_three_tools():
-    assert set(list_tools()) == {"scan_registry", "get_agent", "disable_agent"}
+    assert set(list_tools()) == {"scan_registry", "get_agent", "submit_disable_agent_request"}
 
 
 def test_scan_registry_is_not_marked_read_only_because_it_writes_the_audit_log():
@@ -69,15 +69,17 @@ def test_scan_registry_is_not_marked_read_only_because_it_writes_the_audit_log()
     assert tools["get_agent"].annotations.read_only_hint is True
 
 
-def test_disable_agent_is_marked_destructive():
-    assert list_tools()["disable_agent"].annotations.destructive_hint is True
+def test_the_request_tool_only_asks_so_it_is_not_marked_destructive():
+    # It creates a request and returns. The write needs an approver's own token (decision 7).
+    annotations = list_tools()["submit_disable_agent_request"].annotations
+    assert annotations.read_only_hint is False and annotations.destructive_hint is False
 
 
 @pytest.mark.parametrize("app_id", ["not-a-guid", "x' or appId ne 'x", AGENT.app_id + "/../owners", ""])
 def test_get_agent_rejects_an_input_that_is_not_a_guid_before_calling_graph(app_id, monkeypatch):
     def must_not_run(*args):
         raise AssertionError("Graph was called with an unchecked input")
-    monkeypatch.setattr(server, "fetch_agent_details", must_not_run)
+    set_agents(monkeypatch, must_not_run)
 
     outcome = call("get_agent", {"app_id": app_id})
 
@@ -86,7 +88,7 @@ def test_get_agent_rejects_an_input_that_is_not_a_guid_before_calling_graph(app_
 
 
 def test_get_agent_returns_the_agent_with_its_description(monkeypatch):
-    monkeypatch.setattr(server, "fetch_agent_details", lambda client, app_id: AGENT)
+    set_agents(monkeypatch, lambda client, app_id: AGENT)
 
     outcome = call("get_agent", {"app_id": AGENT.app_id})
 
@@ -95,7 +97,7 @@ def test_get_agent_returns_the_agent_with_its_description(monkeypatch):
 
 
 def test_get_agent_reports_an_unknown_agent_as_a_tool_error(monkeypatch):
-    monkeypatch.setattr(server, "fetch_agent_details", lambda client, app_id: None)
+    set_agents(monkeypatch, lambda client, app_id: None)
 
     outcome = call("get_agent", {"app_id": AGENT.app_id})
 
@@ -114,7 +116,7 @@ def test_a_tool_off_the_allow_list_is_refused_before_it_runs_and_the_refusal_is_
     monkeypatch.setattr(server.mcp, "allowed_tools", frozenset({"scan_registry"}))
     def must_not_run(*args):
         raise AssertionError("a tool off the allow-list ran")
-    monkeypatch.setattr(server, "fetch_agent_details", must_not_run)
+    set_agents(monkeypatch, must_not_run)
 
     with pytest.raises(MCPError) as refusal:
         call("get_agent", {"app_id": AGENT.app_id})
@@ -138,7 +140,7 @@ def test_a_blocked_tool_and_a_made_up_name_get_the_same_answer(monkeypatch):
 
 
 def test_an_allowed_tool_runs_and_is_logged_without_its_arguments(monkeypatch, capsys):
-    monkeypatch.setattr(server, "fetch_agent_details", lambda client, app_id: AGENT)
+    set_agents(monkeypatch, lambda client, app_id: AGENT)
 
     outcome = call("get_agent", {"app_id": AGENT.app_id})
 
@@ -162,237 +164,198 @@ def test_before_the_allow_list_is_loaded_the_server_offers_and_runs_nothing(monk
         call("scan_registry", {})
 
 
-# disable_agent (FR7). Graph and the approval service are replaced: nothing here can disable anything.
+# submit_disable_agent_request (FR7): the agent proposes. Graph and the approval service are
+# replaced: nothing here can disable anything.
 
 GUARDIAN = AgentDetails("99999999-2222-3333-4444-555555555555", "agent-steward-guardian-01",
                         "aaaaaaaa-7777-8888-9999-000000000000", "")
 DORMANT = Finding(AGENT.app_id, AGENT.name, "dormant", "no sign-in in the last 30 days")
+REQUEST_ID = "12345678-aaaa-bbbb-cccc-1234567890ab"
+APPROVER = "dddddddd-1111-2222-3333-444444444444"
 
 
 class FakeApprovals:
-    """Answers each poll with the next status. The last one repeats."""
+    """The Identity API's requests, in memory. get answers with the request in its current state."""
 
-    def __init__(self, *statuses: str):
-        self.statuses = list(statuses)
+    def __init__(self, status="pending", decided_by=APPROVER, create_error=None, execute_error=None):
+        self.status, self.decided_by = status, decided_by
+        self.create_error, self.execute_error = create_error, execute_error
         self.created: list[tuple] = []
+        self.executed: list[tuple] = []
+
+    def request(self, agent_id):
+        decided = (self.decided_by, "An Approver") if self.status not in ("pending", "expired") else (None, None)
+        return DisableRequest(REQUEST_ID, agent_id, self.status, *decided, correlation_id="correlation-1",
+                              expires_at="2026-11-11T06:00:00+00:00")
 
     def create(self, agent_id, reason, facts, correlation_id):
+        if self.create_error:
+            raise self.create_error
         self.created.append((agent_id, reason, facts))
-        return DisableRequest("request-1", agent_id, "pending")
+        return self.request(agent_id)
 
     def get(self, agent_id, request_id):
-        status = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
-        if status == "unreachable":
+        if self.status == "unreachable":
             raise OSError("connection refused")
-        decided = ("approver-oid", "An Approver") if status in ("approved", "denied") else (None, None)
-        return DisableRequest(request_id, agent_id, status, *decided)
+        return self.request(agent_id)
+
+    def of_agent(self, agent_id):
+        return [self.request(agent_id)]
+
+    def execute(self, agent_id, request_id, delegating_user):
+        if self.execute_error:
+            raise self.execute_error
+        self.executed.append((agent_id, request_id, delegating_user))
+        self.status = "executed"
+        return self.request(agent_id)
+
+
+def set_agents(monkeypatch, read):
+    """Graph's answer for one agent, for both readers: get_agent's and the shared disable checks'."""
+    monkeypatch.setattr(server, "fetch_agent_details", read)
+    monkeypatch.setattr(disable_checks, "fetch_agent_details", read)
 
 
 @pytest.fixture
 def disable_setup(monkeypatch):
-    """A dormant agent that is not the guardian's. Records every real disable."""
+    """A dormant agent that is not the guardian's. Returns use(approvals), which puts in a fake
+    approval service. The MCP server holds no write code, so nothing here can disable anything."""
     monkeypatch.setenv("GUARDIAN_AGENT_APP_ID", GUARDIAN.app_id)
-    monkeypatch.setattr(server, "fetch_agent_details",
-                        lambda client, app_id: GUARDIAN if app_id == GUARDIAN.app_id else AGENT)
-    monkeypatch.setattr(server, "dormant_finding", lambda graph, agent, now: DORMANT)
-    monkeypatch.setattr(server, "used_request_ids", set())
-    async def no_wait(seconds):
-        return None
-    monkeypatch.setattr(server.asyncio, "sleep", no_wait)
-    disabled = []
-    def fake_disable(graph, app_id):
-        disabled.append(app_id)
-        return True
-    monkeypatch.setattr(server, "disable_agent_identity", fake_disable)
+    set_agents(monkeypatch, lambda client, app_id: GUARDIAN if app_id == GUARDIAN.app_id else AGENT)
+    monkeypatch.setattr(disable_checks, "dormant_finding", lambda graph, agent, now: DORMANT)
     def use(approvals):
         monkeypatch.setattr(server, "approval_service", lambda: approvals)
         return approvals
-    return disabled, use
+    return use
 
 
-def disable(app_id=AGENT.app_id):
-    return call("disable_agent", {"app_id": app_id, "reason": "It is dormant."})
+def submit(app_id=AGENT.app_id, reason="It is dormant."):
+    return call("submit_disable_agent_request", {"app_id": app_id, "reason": reason})
 
 
 @pytest.mark.parametrize("app_id", ["not-a-guid", "x' or appId ne 'x", AGENT.app_id + "/../owners", ""])
-def test_disable_agent_rejects_an_input_that_is_not_a_guid_before_calling_graph(app_id, monkeypatch):
+def test_the_request_tool_rejects_an_input_that_is_not_a_guid_before_calling_graph(app_id, monkeypatch):
     def must_not_run(*args):
         raise AssertionError("Graph was called with an unchecked input")
-    monkeypatch.setattr(server, "fetch_agent_details", must_not_run)
+    set_agents(monkeypatch, must_not_run)
 
-    assert disable(app_id).is_error
+    assert submit(app_id).is_error
 
 
-def test_disable_agent_reports_an_unknown_agent_as_a_tool_error(disable_setup, monkeypatch):
-    disabled, use = disable_setup
-    approvals = use(FakeApprovals("approved"))
-    monkeypatch.setattr(server, "fetch_agent_details", lambda client, app_id: None)
+def test_a_request_returns_pending_at_once_and_disables_nothing(disable_setup, capsys):
+    use = disable_setup
+    approvals = use(FakeApprovals("pending"))
 
-    assert disable().is_error
-    assert approvals.created == [] and disabled == []
+    outcome = submit()
+
+    assert not outcome.is_error
+    assert (outcome.structured_content["status"], outcome.structured_content["request_id"]) == ("pending", REQUEST_ID)
+    assert approvals.executed == []
+    assert "disable_requested" in [line["event"] for line in audit_lines(capsys)]
+
+
+def test_the_request_tool_reports_an_unknown_agent_as_a_tool_error(disable_setup, monkeypatch):
+    use = disable_setup
+    approvals = use(FakeApprovals())
+    set_agents(monkeypatch, lambda client, app_id: None)
+
+    assert submit().is_error
+    assert approvals.created == []
 
 
 @pytest.mark.parametrize("target", [GUARDIAN, AgentDetails("bbbbbbbb-2222-3333-4444-555555555555",
                                                            "agent-steward-guardian-norole-01",
                                                            GUARDIAN.blueprint_app_id, "")])
-def test_disable_agent_refuses_the_guardians_own_agents_and_asks_nobody(target, disable_setup, monkeypatch, capsys):
-    disabled, use = disable_setup
-    approvals = use(FakeApprovals("approved"))
-    monkeypatch.setattr(server, "fetch_agent_details",
-                        lambda client, app_id: GUARDIAN if app_id == GUARDIAN.app_id else target)
+def test_the_request_tool_refuses_the_guardians_own_agents_and_asks_nobody(target, disable_setup, monkeypatch, capsys):
+    use = disable_setup
+    approvals = use(FakeApprovals())
+    set_agents(monkeypatch, lambda client, app_id: GUARDIAN if app_id == GUARDIAN.app_id else target)
 
-    outcome = disable(target.app_id)
+    outcome = submit(target.app_id)
 
     assert outcome.is_error and "guardian" in outcome.content[0].text
-    assert approvals.created == [] and disabled == []
+    assert approvals.created == []
     assert {"event": "disable_refused", "agent": target.app_id, "reason": "protected"} in audit_lines(capsys)
 
 
-def test_disable_agent_refuses_everything_when_the_guardian_cannot_be_read(disable_setup, monkeypatch):
-    disabled, use = disable_setup
-    approvals = use(FakeApprovals("approved"))
-    monkeypatch.setattr(server, "fetch_agent_details",
-                        lambda client, app_id: None if app_id == GUARDIAN.app_id else AGENT)
+def test_the_request_tool_refuses_everything_when_the_guardian_cannot_be_read(disable_setup, monkeypatch):
+    use = disable_setup
+    approvals = use(FakeApprovals())
+    set_agents(monkeypatch, lambda client, app_id: None if app_id == GUARDIAN.app_id else AGENT)
 
-    assert disable().is_error
-    assert approvals.created == [] and disabled == []
+    assert submit().is_error
+    assert approvals.created == []
 
 
-def test_disable_agent_refuses_an_agent_that_is_not_dormant_and_asks_nobody(disable_setup, monkeypatch, capsys):
-    disabled, use = disable_setup
-    approvals = use(FakeApprovals("approved"))
-    monkeypatch.setattr(server, "dormant_finding", lambda graph, agent, now: None)
+def test_the_request_tool_refuses_an_agent_that_is_not_dormant_and_asks_nobody(disable_setup, monkeypatch, capsys):
+    use = disable_setup
+    approvals = use(FakeApprovals())
+    monkeypatch.setattr(disable_checks, "dormant_finding", lambda graph, agent, now: None)
 
-    outcome = disable()
+    outcome = submit()
 
     assert outcome.is_error and "30 days" in outcome.content[0].text
-    assert approvals.created == [] and disabled == []
+    assert approvals.created == []
     assert {"event": "disable_refused", "agent": AGENT.app_id, "reason": "not dormant"} in audit_lines(capsys)
 
 
-def test_disable_agent_disables_only_after_an_approval_and_records_the_approver(disable_setup, capsys):
-    disabled, use = disable_setup
-    use(FakeApprovals("pending", "pending", "approved"))
+def test_a_second_request_while_one_is_pending_is_refused_by_the_identity_api(disable_setup, capsys):
+    use = disable_setup
+    use(FakeApprovals(create_error=ApprovalError("already_waiting")))
 
-    outcome = disable()
+    outcome = submit()
 
-    assert not outcome.is_error
-    assert disabled == [AGENT.app_id]
-    assert outcome.structured_content["approved_by"] == "An Approver"
-    lines = audit_lines(capsys)
-    [decision] = [line for line in lines if line["event"] == "disable_decision"]
-    assert (decision["decision"], decision["approver_id"], decision["approver_name"]) == ("approved", "approver-oid", "An Approver")
-    # The order is the control: the decision is on record before the write.
-    events = [line["event"] for line in lines]
-    assert events.index("disable_requested") < events.index("disable_decision") < events.index("agent_disabled")
-
-
-@pytest.mark.parametrize("status, text", [("denied", "denied"), ("expired", "in time"), ("unreachable", "reached")])
-def test_disable_agent_disables_nothing_without_an_approval(status, text, disable_setup):
-    disabled, use = disable_setup
-    use(FakeApprovals("pending", status))
-
-    outcome = disable()
-
-    assert outcome.is_error and text in outcome.content[0].text
-    assert disabled == []
-
-
-def test_disable_agent_fails_closed_when_the_request_cannot_be_created(disable_setup, capsys):
-    disabled, use = disable_setup
-    class Down(FakeApprovals):
-        def create(self, *args):
-            raise OSError("connection refused")
-    use(Down("approved"))
-
-    outcome = disable()
-
-    assert outcome.is_error and "reached" in outcome.content[0].text
-    assert disabled == []
-    assert {"event": "disable_refused", "agent": AGENT.app_id, "reason": "unavailable"} in audit_lines(capsys)
-
-
-def test_the_write_is_on_record_with_the_approver(disable_setup, capsys):
-    _, use = disable_setup
-    use(FakeApprovals("approved"))
-
-    disable()
-
-    [line] = [line for line in audit_lines(capsys) if line["event"] == "agent_disabled"]
-    assert (line["approver_id"], line["approver_name"], line["confirmed"]) == ("approver-oid", "An Approver", True)
-
-
-def test_a_second_request_for_an_agent_gets_its_own_message(disable_setup, capsys):
-    disabled, use = disable_setup
-    class Waiting(FakeApprovals):
-        def create(self, *args):
-            raise ApprovalError("already_waiting")
-    use(Waiting("approved"))
-
-    outcome = disable()
-
-    assert outcome.is_error and "already waiting" in outcome.content[0].text
-    assert disabled == []
+    assert outcome.is_error and "already pending" in outcome.content[0].text
     assert {"event": "disable_refused", "agent": AGENT.app_id, "reason": "already_waiting"} in audit_lines(capsys)
 
 
-def cancel_while_running(coroutine):
-    """Start the coroutine, let it reach its wait, then cancel it, as a caller that leaves does."""
-    async def run():
-        task = asyncio.create_task(coroutine)
-        await real_sleep(0.05)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-    asyncio.run(run())
+def test_the_request_tool_fails_closed_when_the_request_cannot_be_created(disable_setup, capsys):
+    use = disable_setup
+    use(FakeApprovals(create_error=OSError("connection refused")))
+
+    outcome = submit()
+
+    assert outcome.is_error and "reached" in outcome.content[0].text
+    assert {"event": "disable_refused", "agent": AGENT.app_id, "reason": "unavailable"} in audit_lines(capsys)
 
 
-REQUEST = DisableRequest("request-1", AGENT.app_id, "pending")
-real_sleep = asyncio.sleep
+def test_the_approver_gets_facts_from_graph_and_the_models_reason_is_cut(disable_setup):
+    use = disable_setup
+    approvals = use(FakeApprovals())
 
-
-def test_a_caller_that_leaves_during_the_wait_is_on_record(capsys):
-    cancel_while_running(server.wait_for_approval(FakeApprovals("pending"), REQUEST, "correlation-1"))
-
-    [line] = [line for line in audit_lines(capsys) if line["event"] == "disable_abandoned"]
-    assert line == {"event": "disable_abandoned", "agent": AGENT.app_id, "request_id": "request-1",
-                    "correlation_id": "correlation-1", "stage": "waiting for approval"}
-
-
-def test_a_caller_that_leaves_during_the_write_is_on_record_with_the_approver(monkeypatch, capsys):
-    def slow_write(graph, app_id):
-        time.sleep(0.2)
-        return True
-    monkeypatch.setattr(server, "disable_agent_identity", slow_write)
-    approved = DisableRequest("request-1", AGENT.app_id, "approved", "approver-oid", "An Approver")
-
-    cancel_while_running(server.write_disable(None, approved, "correlation-1"))
-
-    [line] = [line for line in audit_lines(capsys) if line["event"] == "disable_abandoned"]
-    assert (line["stage"], line["approver_id"]) == ("writing", "approver-oid")
-
-
-def test_disable_agent_reports_and_audits_a_failed_write_after_an_approval(disable_setup, monkeypatch, capsys):
-    _, use = disable_setup
-    use(FakeApprovals("approved"))
-    def write_fails(graph, app_id):
-        raise OSError("HTTP Error 403: Forbidden")
-    monkeypatch.setattr(server, "disable_agent_identity", write_fails)
-
-    outcome = disable()
-
-    assert outcome.is_error and "write to Microsoft Graph failed" in outcome.content[0].text
-    assert "403" not in outcome.content[0].text   # no internal detail for the model (CWE-209)
-    events = [line["event"] for line in audit_lines(capsys)]
-    assert "disable_failed" in events and "agent_disabled" not in events
-
-
-def test_disable_agent_gives_the_approver_facts_from_graph_and_cuts_the_models_reason(disable_setup):
-    _, use = disable_setup
-    approvals = use(FakeApprovals("denied"))
-
-    call("disable_agent", {"app_id": AGENT.app_id, "reason": "x" * 5000})
+    submit(reason="x" * 5000)
 
     [(agent_id, reason, facts)] = approvals.created
     assert agent_id == AGENT.app_id and len(reason) == server.MAX_REASON
     assert facts["name"] == AGENT.name and facts["flaw"] == DORMANT.detail
+
+
+# The scan shows each dormant agent's latest request, so the model can see what is already asked.
+
+def test_the_scan_adds_the_latest_request_of_each_dormant_agent(monkeypatch):
+    approvals = FakeApprovals("pending")
+    monkeypatch.setattr(server, "approval_service", lambda: approvals)
+    findings = [DORMANT, Finding("eeeeeeee-2222-3333-4444-555555555555", "x", "orphan", "no sponsor")]
+
+    [latest] = server.latest_requests(findings)
+
+    assert (latest.agent_app_id, latest.request_id, latest.status) == (AGENT.app_id, REQUEST_ID, "pending")
+
+
+def test_a_dormant_agent_with_no_request_has_no_entry(monkeypatch):
+    class Empty(FakeApprovals):
+        def of_agent(self, agent_id):
+            return []
+    monkeypatch.setattr(server, "approval_service", lambda: Empty())
+
+    assert server.latest_requests([DORMANT]) == []
+
+
+# The write is not here (FR4): the MCP server has no write code and no door for the approver's token.
+
+def test_the_mcp_server_holds_no_write_and_takes_no_approver_token():
+    for name in ("accept_delegation", "write_disable", "obo_token", "validate_user_token", "disable_agent_identity"):
+        assert not hasattr(server, name), name
+    import graph_reader
+    assert not hasattr(graph_reader, "disable_agent_identity")
+    assert not hasattr(graph_reader.GraphClient, "patch")

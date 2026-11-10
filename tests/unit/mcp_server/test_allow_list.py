@@ -11,7 +11,7 @@ import pytest
 from allow_list import AllowListError, load_allow_list
 
 REAL_ALLOW_LIST = Path(__file__).parents[3] / "config" / "tool-allow-list.json"
-TOOLS_IN_CODE = {"scan_registry", "get_agent", "disable_agent"}
+TOOLS_IN_CODE = {"scan_registry", "get_agent", "submit_disable_agent_request"}
 
 
 def write(tmp_path: Path, content) -> Path:
@@ -21,7 +21,7 @@ def write(tmp_path: Path, content) -> Path:
 
 
 def test_the_real_allow_list_holds_the_guardians_three_tools():
-    assert load_allow_list(REAL_ALLOW_LIST, TOOLS_IN_CODE) == {"scan_registry", "get_agent", "disable_agent"}
+    assert load_allow_list(REAL_ALLOW_LIST, TOOLS_IN_CODE) == {"scan_registry", "get_agent", "submit_disable_agent_request"}
 
 
 def test_an_empty_list_is_valid_and_allows_nothing(tmp_path):

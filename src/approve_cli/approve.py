@@ -15,10 +15,19 @@ Everything shown here is data, never instructions. The reason comes from the mod
 as untrusted. An agent's name comes from whoever registered it. Both have their control characters
 removed, so they cannot move the cursor or rewrite what the terminal shows.
 
+After an approval, the same sign-in gives a second token, for the guardian's blueprint (Tc), and the
+CLI sends it to the guardian's executor. The executor exchanges it with OBO and disables the agent
+with the approver's own rights (FR4): the agent proposes, and the approver decides. Tc never goes to
+the MCP server, which runs the model's tool calls. A denial sends nothing. Tc is used for that one
+call and is never written to a file or a log either.
+
 The Identity API's side of the contract:
     GET  /disableRequests?status=pending                          -> {"value": [the pending requests]}
     POST /agents/{agentId}/disableRequests/{requestId}/decision   -> {"decision": "approve" or "deny"}
                                                                      409 if it was already decided
+The executor's side:
+    POST /agents/{agentId}/disableRequests/{requestId}/delegation -> {"result": "disabled" or why not}
+                                                                     with Tc as the Bearer token
 """
 
 import base64
@@ -31,6 +40,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 POLL_EVERY_SECONDS = 5
 # Registered on the client app without a port (setup/bicep/agent-disable-approvers.bicep): Entra ignores
@@ -118,8 +128,38 @@ class IdentityApi:
                            f"{urllib.parse.quote(request_id)}/decision", {"decision": decision})
 
 
-def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[str], None]) -> None:
-    """Ask about every pending request, once each. A request the person skipped is not asked again."""
+# What the executor's answer means for the person. Anything else is shown as it came, as plain text.
+DELEGATION_RESULTS = {
+    "disabled": "Disabled, with your own rights.",
+    "not_the_approver": "Not disabled: the guardian refused, because you are not the person who approved.",
+    "not_approved": "Not disabled: the request is not approved.",
+    "already_executed": "Not disabled now: this request was already carried out.",
+    "no_longer_allowed": "Not disabled: the agent is no longer dormant, or it belongs to the guardian.",
+    "not_executable": "Not disabled: the approval can no longer be used.",
+    "write_failed": "Not disabled: the write to Microsoft Graph failed. Check the executor's audit log.",
+}
+
+
+def send_delegation(executor_url: str, request: "PendingRequest", tc: str) -> str:
+    """Hand Tc to the guardian's executor for one approved request. Returns its result word."""
+    url = (f"{executor_url}/agents/{urllib.parse.quote(request.agent_id)}/disableRequests/"
+           f"{urllib.parse.quote(request.request_id)}/delegation")
+    call = urllib.request.Request(url, method="POST", data=b"", headers={"Authorization": f"Bearer {tc}"})
+    try:
+        with urllib.request.urlopen(call, timeout=120) as response:
+            return str(json.load(response)["result"])
+    except urllib.error.HTTPError as error:
+        try:
+            return str(json.load(error)["result"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return f"HTTP {error.code}"
+
+
+def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[str], None],
+           delegate: Callable[["PendingRequest"], str] | None = None) -> None:
+    """Ask about every pending request, once each. A request the person skipped is not asked again.
+    After an approval, delegate hands the person's rights to the guardian for that one request and
+    returns what the guardian answered."""
     for request in api.pending():
         if request.request_id in skipped:
             continue
@@ -136,6 +176,17 @@ def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[
             if error.code != 409:
                 raise
             write("Not sent: this request was already decided, or it expired.")
+            continue
+        if choice == "approve" and delegate is not None:
+            try:
+                result = delegate(request)
+            except SignInError as error:
+                write(f"Not disabled: {plain(error)}")
+                continue
+            except OSError:
+                write("Not disabled: the guardian's executor could not be reached.")
+                continue
+            write(DELEGATION_RESULTS.get(result, f"Not disabled: {plain(result)}"))
 
 
 def parse_redirect(pasted: str) -> dict[str, str]:
@@ -146,8 +197,25 @@ def parse_redirect(pasted: str) -> dict[str, str]:
     return {name: value for name, value in urllib.parse.parse_qsl(url.query)}
 
 
+@dataclass
+class Session:
+    """The person's sign-in: a token for the Identity API, and more tokens on request."""
+    token: str            # for the Identity API
+    app: Any              # MSAL's app, which holds the sign-in in its in-memory cache
+    account: dict | None
+
+    def token_for(self, scope: str) -> str:
+        """A token for another API, from the same sign-in: MSAL redeems the refresh token, so the
+        person does not sign in again. Raises SignInError if Entra issues none."""
+        result = self.app.acquire_token_silent([scope], account=self.account) if self.account else None
+        if not result or "access_token" not in result:
+            error = (result or {}).get("error", "no cached sign-in to use")
+            raise SignInError(f"no token for {scope}: {error}")
+        return result["access_token"]
+
+
 def sign_in(tenant_id: str, client_id: str, api_app_id: str, read: Callable[[str], str],
-            write: Callable[[str], None]) -> str:
+            write: Callable[[str], None]) -> Session:
     """The authorization code flow with PKCE: MSAL makes the verifier and checks the state. Its
     default token cache is in memory only."""
     import msal   # here, so the offline tests of the rest need no MSAL
@@ -167,7 +235,8 @@ def sign_in(tenant_id: str, client_id: str, api_app_id: str, read: Callable[[str
         raise SignInError("that address does not belong to this sign-in") from None
     if "access_token" not in result:
         raise SignInError(f"sign-in failed: {result.get('error', 'unknown error')}")
-    return result["access_token"]
+    accounts = app.get_accounts()
+    return Session(result["access_token"], app, accounts[0] if accounts else None)
 
 
 def refusal_text(error: urllib.error.HTTPError) -> str:
@@ -185,27 +254,59 @@ def decode_claims(token: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(payload))
 
 
+def obo_token(sidecar_url: str, agent_id: str, tc: str) -> str:
+    """Dev check for the OBO design (FR4): hand Tc to the sidecar and get back the token it exchanges
+    it for, for Graph's delegated disable permission, as the guardian's agent identity. Works only
+    from inside the sidecar's network namespace (the obo-claims service)."""
+    query = urllib.parse.urlencode({"AgentIdentity": agent_id})
+    request = urllib.request.Request(f"{sidecar_url}/AuthorizationHeader/graph-delegated?{query}",
+                                     headers={"Authorization": f"Bearer {tc}"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return json.load(response)["authorizationHeader"].partition(" ")[2]
+
+
 def main(argv: list[str] | None = None) -> int:
-    # --show-claims: a dev option. It prints the approver's token claims after sign-in, then stops.
-    # It never prints the token itself, so the output cannot be replayed. The claims hold real
-    # tenant and object IDs: redact them before they go anywhere.
-    show_claims = "--show-claims" in (sys.argv[1:] if argv is None else argv)
+    # Dev options. Each prints one token's claims after sign-in, then stops. They never print the
+    # token itself, so the output cannot be replayed. The claims hold real tenant and object IDs:
+    # redact them before they go anywhere.
+    #   --show-claims             the token for the Identity API
+    #   --show-delegation-claims  the token for the guardian's blueprint (Tc), which the guardian
+    #                             will exchange with OBO for the approved disable (FR4)
+    #   --show-obo-claims         the token the sidecar exchanges Tc for: Graph, delegated, as the
+    #                             guardian. Only in the obo-claims service, which shares the
+    #                             executor's sidecar's loopback.
+    options = sys.argv[1:] if argv is None else argv
     try:
-        token = sign_in(os.environ["TENANT_ID"], os.environ["AGENT_DISABLE_CLI_APP_ID"],
-                        os.environ["IDENTITY_API_APP_ID"], input, print)
+        session = sign_in(os.environ["TENANT_ID"], os.environ["AGENT_DISABLE_CLI_APP_ID"],
+                          os.environ["IDENTITY_API_APP_ID"], input, print)
+        if "--show-delegation-claims" in options or "--show-obo-claims" in options:
+            # A v2 token: the scope is named by the blueprint's app ID, and aud is that app ID.
+            tc = session.token_for(f"{os.environ['GUARDIAN_BLUEPRINT_APP_ID']}/access_as_user")
+            if "--show-obo-claims" in options:
+                tc = obo_token(os.environ["SIDECAR_URL"], os.environ["GUARDIAN_AGENT_APP_ID"], tc)
+            print(json.dumps(decode_claims(tc), indent=2, sort_keys=True))
+            return 0
     except SignInError as error:
         print(f"Not signed in: {error}", file=sys.stderr)
         return 1
-    if show_claims:
-        print(json.dumps(decode_claims(token), indent=2, sort_keys=True))
+    except urllib.error.HTTPError as error:
+        print(f"The sidecar refused the exchange: HTTP {error.code}: "
+              f"{plain(error.read().decode(errors='replace'))}", file=sys.stderr)
+        return 1
+    if "--show-claims" in options:
+        print(json.dumps(decode_claims(session.token), indent=2, sort_keys=True))
         return 0
-    api = IdentityApi(os.environ.get("API_URL", "http://api:8000"), token)
+    api = IdentityApi(os.environ.get("API_URL", "http://identity-api:8000"), session.token)
+    blueprint_scope = f"{os.environ['GUARDIAN_BLUEPRINT_APP_ID']}/access_as_user"
+    executor_url = os.environ.get("EXECUTOR_URL", "http://executor-sidecar:8200")
+    def delegate(request: PendingRequest) -> str:
+        return send_delegation(executor_url, request, session.token_for(blueprint_scope))
     skipped: set[str] = set()
     print("Waiting for requests. Press Ctrl+C to stop.", flush=True)
     try:
         while True:
             # The guardian asks one agent at a time, so the next request can arrive after this decision.
-            review(api, skipped, input, print)
+            review(api, skipped, input, print, delegate)
             time.sleep(POLL_EVERY_SECONDS)
     except KeyboardInterrupt:
         return 0

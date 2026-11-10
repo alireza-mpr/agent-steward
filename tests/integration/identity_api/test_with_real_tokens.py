@@ -1,8 +1,8 @@
 """Integration tests for the Identity API (FR5, NFR8): real tokens from Entra, against the running API.
 
-They need the sidecar's loopback (for agent tokens) and http://api:8000, so they run inside
+They need the sidecar's loopback (for agent tokens) and http://identity-api:8000, so they run inside
 docker compose:
-    docker compose up -d sidecar api
+    docker compose up -d sidecar identity-api
     docker compose run --rm integration-tests
 """
 

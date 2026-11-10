@@ -15,7 +15,8 @@ each conversation in its own sections:
 The trace holds real tenant data (agent names, IDs), so keep it out of git (run*.txt is ignored)
 and redact it in any screenshot.
 
-By default a run only reports. To also ask a human to approve disabling each dormant agent (FR7):
+By default a run only reports. To also ask a human to approve disabling each dormant agent (FR7),
+which returns at once with a pending request (the approver's decision and the disable come later):
     docker compose run --rm guardian python main.py --disable-dormant
 """
 

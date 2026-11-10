@@ -1,6 +1,9 @@
-// The guardian's Microsoft Graph permissions (FR3, FR7, NFR1): four read-only ones, and one
-// write permission that only disable_agent uses, behind the human approval gate. One app role
-// assignment per permission, on Microsoft Graph's service principal.
+// The guardian's Microsoft Graph application permissions (FR3, NFR1): four read-only ones, for the
+// autonomous scan. One app role assignment per permission, on Microsoft Graph's service principal.
+// The guardian holds no write permission of its own (locked decision 7: no shortcut around OBO):
+// a disable runs only with an approver's rights, through the delegated grant in
+// approver-delegation.bicep. An earlier version assigned the app-only AgentIdentity.EnableDisable.All
+// here; Bicep does not delete it when it leaves this file, so Deploy-ApproverDelegation.ps1 removes it.
 //
 // Deploy (signed in with `az login`, lab subscription selected):
 //   az deployment group create --resource-group rg-agent-steward \
@@ -22,9 +25,6 @@ var graphPermissions = [
   'AgentIdentityBlueprint.Read.All'   // blueprints and their credentials: the expiring check
   'Application.Read.All'              // app role assignments: the over-permissioned check
   'AuditLog.Read.All'                 // the sign-in log: the dormant check
-  // The only write: enable or disable agent identities (accountEnabled). Used only by the
-  // disable_agent tool, after a human approves (FR7).
-  'AgentIdentity.EnableDisable.All'
 ]
 
 // Microsoft Graph's appId is a public constant, the same in every tenant.
