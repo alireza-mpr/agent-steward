@@ -20,6 +20,7 @@ How a request to an OAuth token endpoint is built, and how to read any JWT in it
   - [D. The Three Values on the Wire](#d-the-three-values-on-the-wire)
   - [E. The Three Roles: the Full Map](#e-the-three-roles-the-full-map)
   - [F. OBO in Detail](#f-obo-in-detail)
+  - [G. When OBO Fits](#g-when-obo-fits)
   - [Sources](#sources)
 
 ---
@@ -302,13 +303,6 @@ One pairing has no legitimate example here: issuer = subject, but a different re
 - ❌ **Parameters:** OBO sends the incoming token in `assertion` and adds `requested_token_use=on_behalf_of` ([source](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). RFC 8693 uses `subject_token`, `subject_token_type`, `actor_token` and `requested_token_type`. So a client written for RFC 8693 does not work against Entra's OBO without changes.
 - ❌ **Actor:** RFC 8693 can record "A acts for B", with `actor_token` in the request and the `act` claim in the new token. OBO has neither. Its new token names the user as the subject and the middle-tier app as the client (`azp`). For agents, Entra adds its own actor facts in `xms_act_fct` ([Agent tokens](tokens.md#what-kind-of-caller-vs-what-it-may-do)).
 
-#### When OBO Fits
-
-OBO only makes sense when a service sits between the person and the API. The person's token is for that service, and the service needs a new token to call the next API as that person.
-
-- ✅ **Fits: the executor.** The approve CLI sends Tc, a token for the guardian's blueprint, to the executor. The executor must call Microsoft Graph with the approver's rights, and Tc is not a token for Graph, so it exchanges Tc with OBO ([the flow](agent-steward-architecture.md#the-human-approval-flow-propose-approve-execute)).
-- ❌ **Does not fit: the approve CLI's own calls.** The CLI lists the pending requests and sends each decision straight to the Identity API, with the approver's own delegated token for that API. Nothing sits in the middle, so there is nothing to exchange. Sending these calls through a service would add a hop, a delegated permission and more code, and the Identity API would still see the same person.
-
 #### Why OBO Is Not RFC 8693: the History
 
 Microsoft did not break away from a standard: when it built OBO, no token exchange standard existed.
@@ -321,6 +315,22 @@ Microsoft did not break away from a standard: when it built OBO, no token exchan
 #### Microsoft's Wording
 
 Microsoft's own wording adds to the confusion. It calls request 2 of the agent flow a "token exchange request", and T1's audience is `api://AzureADTokenExchange`. Neither is RFC 8693: request 2 uses `client_credentials`, or the JWT bearer grant for OBO, with T1 as a client assertion ([Clarifying Misconceptions](agent-id.md#clarifying-misconceptions)). So when a source lists "token exchange" as a JWT bearer use case, it means vendor flows like OBO, not the RFC 8693 standard.
+
+### G. When OBO Fits
+
+OBO makes sense only when two things are true. First, a service sits between the person and the API: the person's token is for that service, and the service needs a new token to call the next API as that person. Second, the next service makes its own access decision per user, for example "may this person disable agents?" or "may this person read this mailbox?"
+
+#### The Rule: When OBO Is Worth It
+
+- **The resource authorizes per user:** Graph checks what this person may do. So the token must carry the person (`scp`, and the user as the subject).
+- **The middle tier must not act with more than the user's rights:** OBO caps the agent at what the person may do. A delegated permission "can't exceed that user's access" ([Authorization in Agent ID](https://learn.microsoft.com/en-us/entra/agent-id/authorization-agent-id#delegated-microsoft-graph-permissions)).
+- **The audit must show the person:** the resource's own logs then name the user.
+
+#### In This Project
+
+- ✅ **Fits: the executor's write.** The approve CLI sends Tc, a token for the guardian's blueprint, to the executor. The executor must call Microsoft Graph, and Graph decides per user whether this person may disable agents: an Agent ID Administrator, a Cloud Application Administrator, or the agent's owner. Tc is not a token for Graph, so the executor exchanges it with OBO ([the flow](agent-steward-architecture.md#the-human-approval-flow-propose-approve-execute)).
+- ❌ **Does not fit: the approve CLI's own calls.** The CLI lists the pending requests and sends each decision straight to the Identity API, with the approver's own delegated token for that API. Nothing sits in the middle, so there is nothing to exchange. Sending these calls through a service would add a hop, a delegated permission and more code, and the Identity API would still see the same person.
+- ❌ **Does not fit: the scan.** It reads the whole registry with no person present, and what it sees must not depend on who is signed in. So it reads with the guardian's own app-only, read-only token ([why](agent-steward-architecture.md#why-the-guardian-runs-as-itself-not-on-behalf-of-a-user)).
 
 ### Sources
 
