@@ -320,7 +320,7 @@ The Guardian runs locally, so it differs from the design above. The shortcuts D1
 | 6 | No token, only network isolation (**D1**). |
 | 7, 8 | The MCP server has no application of its own. It gets its tokens from the sidecar and calls the APIs as the Guardian's agent identity (**D2**). |
 | 9, 11 | The Identity API serves the approval service. The approver signs in with the authorization code flow and PKCE, in the CLI's public client app `agent-steward-agent-disable-cli`. Built and run live on 31 October 2026 ([Delivery status](delivery-status.md)). |
-| 10 | Built for the approved disable, with one difference: the approver's CLI sends Tc to the executor, not to the harness, and only after the approval. The executor checks Tc's signature, audience and `scp`, and that its `oid` is the approver. Not run live end to end yet (**D5**). |
+| 10 | Built for the approved disable, with one difference: the approver's CLI sends Tc to the executor, not to the harness, and only after the approval. The executor checks Tc's signature, audience and `scp`, and that its `oid` is the approver. Run live end to end on 10 November 2026 (**D5**). |
 | The delegated option in row 7 | Not built: the MCP server has no application of its own (**D2**). |
 
 **The Guardian's credentials, against the enterprise design:**

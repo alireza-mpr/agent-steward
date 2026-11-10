@@ -16,7 +16,7 @@ For the architecture these decisions belong to, see [Agent Steward architecture]
 
 > **Decision: the `scan_registry` tool computes the findings and sends them to the Identity API itself, inside the MCP server. The findings never pass through the model on their way to the audit log.**
 
-**Status:** Accepted, 28 October 2026. Not built yet: it is built together with the MCP server.
+**Status:** Accepted, 28 October 2026. Built with the MCP server, and run live on 28 October 2026 ([C11](security-controls.md#the-mcp-server)).
 
 **Context.** The guardian's registry scan produces findings: orphan, expiring credential, over-permissioned and dormant agents. The findings must reach the Identity API, which writes one audit line per decision (FR8). There were two ways to get them there:
 
@@ -72,7 +72,7 @@ For the architecture these decisions belong to, see [Agent Steward architecture]
 
 > **Decision: after an approval, the approver's CLI sends the approver's token (Tc) to the executor, a separate service. The executor exchanges Tc with OBO and disables the agent with the approver's rights. The MCP server only asks, and holds no write code.**
 
-**Status:** Accepted, 10 November 2026. Built and unit-tested. The OBO exchange was tested live; the whole chain has not run live yet.
+**Status:** Accepted, 10 November 2026. Built, unit-tested, and run live end to end on 10 November 2026.
 
 **Context.** The disable moved to OBO (FR4), so the guardian holds no app-only write permission. For OBO, Tc must reach a service that can act as the guardian's agent identity, because only the token's audience may exchange it. The MCP server was the only such service, but it also runs the model's tool calls, so it handles untrusted input. There were three options:
 

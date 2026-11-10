@@ -10,6 +10,7 @@ This doc explains why an API must be registered before any token exists for it, 
   - [The standard: `sub`](#the-standard-sub)
   - [`sub` in the refresh token grant](#sub-in-the-refresh-token-grant)
   - [Where Entra differs](#where-entra-differs)
+  - [Deviation: one refresh token, many APIs](#deviation-one-refresh-token-many-apis)
   - [`aud` and `sub` in the guardian](#aud-and-sub-in-the-guardian)
 - [See a real token](#see-a-real-token)
 - [TR, claim by claim](#tr-claim-by-claim)
@@ -88,14 +89,49 @@ So a refresh cannot change the subject. And the client is never the `sub` here: 
 - **App-only tokens:** `sub` equals `oid`, the service principal's object ID (see [Who the client is](#who-the-client-is)).
 - **The agent's own user account:** the agent is the subject. `sub` names that agent user, and `xms_sub_fct` contains `13`.
 - **TR in OBO with an agent:** `sub` and `oid` stay the user, `azp` names the agent identity, and `xms_act_fct` contains `11` ([the OBO flow](agent-architecture.md#the-delegated-flow-obo-step-by-step)).
-- **The refresh token is bound to the user and the client, not to one API:** so one refresh token can get access tokens with a different `aud`, for any API the client has permission for. Its `sub` is still the user. Entra encrypts it, and "only the Microsoft identity platform can read" it. It lives 90 days, or 24 hours for single-page apps ([Refresh tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens)).
+- **The refresh token is bound to the user and the client, not to one API:** so one refresh token can get access tokens with a different `aud`, for any API the client has permission for. This breaks the standard, and the guardian depends on it: see [Deviation: one refresh token, many APIs](#deviation-one-refresh-token-many-apis). Its `sub` is still the user. Entra encrypts it, and "only the Microsoft identity platform can read" it. It lives 90 days, or 24 hours for single-page apps ([Refresh tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens)).
 - **A refresh is a non-interactive sign-in:** the user is not there, so the sign-in log records it under **User sign-ins (non-interactive)** ([Investigating agent activity](investigating-agent-activity.md)).
 - **A refresh can be refused:** for example after an admin revokes all refresh tokens for the user. The client must then sign the user in again ([Refresh tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens)).
+
+### Deviation: one refresh token, many APIs
+
+> **⚠️ Entra breaks the OAuth standard here, on purpose, and the guardian relies on it.** A standard refresh token can only renew or narrow the access it was issued with. An Entra refresh token can get an access token for a *different API*.
+
+**The standard.** When a client refreshes, "the requested scope MUST NOT include any scope not originally granted by the resource owner" ([RFC 6749, section 6](https://www.rfc-editor.org/rfc/rfc6749#section-6), checked 10 November 2026). So a refresh can renew the first token, or narrow it. It cannot get a token for another API.
+
+**Entra.** "Refresh tokens are also used to acquire extra access tokens for other resources. Refresh tokens are bound to a combination of user and client, but aren't tied to a resource or tenant. A client can use a refresh token to acquire access tokens across any combination of resource and tenant where it has permission to do so." And: "Refresh tokens replace themselves with a fresh token upon every use." ([Refresh tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens), Microsoft Learn, checked 10 November 2026.)
+
+**Where the guardian uses it: the approve CLI gets Tc this way.**
+
+1. **The sign-in (authorization code grant with PKCE):** the CLI asks for `<IDENTITY_API_APP_ID>/.default openid profile offline_access`. Entra returns three tokens: an access token for the Identity API, an ID token, and a refresh token (from `offline_access`).
+2. **The list and the decision:** the CLI calls the Identity API with that access token.
+3. **After "approve" (the refresh token grant):** the CLI sends the refresh token with a scope for a different API, `<GUARDIAN_BLUEPRINT_APP_ID>/access_as_user`. Entra returns Tc, an access token whose `aud` is the guardian's blueprint, plus a new refresh token. The person sees no second prompt.
+4. **Tc goes to the executor,** which exchanges it with OBO for a Graph token.
+
+```text
+CLI ──(authorization code + PKCE)──────────────────────────→ Entra
+CLI ←── access token (aud: Identity API) + ID token + refresh token
+CLI ──(access token for the Identity API)──────────────────→ Identity API   (list, decide)
+CLI ──(refresh_token grant, scope: <blueprint>/access_as_user)→ Entra        ⚠️ a different API
+CLI ←── Tc (aud: the blueprint, scp: access_as_user) + a new refresh token
+CLI ──(Tc)─────────────────────────────────────────────────→ executor       (then OBO, for Graph)
+```
+
+**The proof:**
+
+- **MSAL's code:** in MSAL for Python 1.39.0, the version in the approve CLI's image, `acquire_token_silent` finds a cached refresh token that belongs to this client and calls `obtain_token_by_refresh_token` with the new scope (read from its source on 10 November 2026). The CLI calls it in `Session.token_for` ([approve.py](../src/approve_cli/approve.py)).
+- **Live:** on 10 November 2026, one sign-in gave Tc with `aud` = the guardian's blueprint and `scp: access_as_user`, with no second prompt.
+
+**Why Entra allows it here:** "where it has permission to do so". The approve CLI holds an admin consent for `access_as_user` on the guardian's blueprint ([approver-delegation.bicep](../setup/bicep/approver-delegation.bicep)). Without that consent, the refresh would be refused.
+
+**The security consequence:** a stolen refresh token is worth more than in the standard. It can get access tokens for *every* API the client has consent for, for up to 90 days. So the CLI keeps all its tokens in MSAL's in-memory cache only, never writes one to a file or a log, and loses them when the command exits.
 
 ### `aud` and `sub` in the guardian
 
 - **The approver's token (the CLI):** `aud` is the Identity API, and `sub` is the approver ([the claims](#the-approvers-token-a-delegated-token)).
 - **The guardian's autonomous token (TR):** `aud` is the Identity API or Graph. It is app-only, so `sub` is the agent identity, not a user ([the claims](#tr-claim-by-claim)).
+- **The approver's second token (Tc):** `aud` is the guardian's blueprint, and the person is the user (`oid`). The CLI gets it after an approval with the refresh token grant ([the deviation](#deviation-one-refresh-token-many-apis)) and sends it to the executor (seen live on 10 November 2026: `scp` was `access_as_user`, `azp` the CLI, version 2.0).
+- **The OBO token for the disable:** `aud` is Graph. The user is still the approver (`oid`), and the client is the guardian's agent identity (`appid`), with `xms_par_app_azp` naming the blueprint (seen live on 10 November 2026, version 1.0).
 
 ## See a real token
 
@@ -426,6 +462,8 @@ So the short rule is:
 |---|---|---|---|
 | The guardian's TR for the Identity API (app only) | none | `Findings.Submit`, `AgentDisable.Request` | No person is signed in, so only roles apply. |
 | The CLI's token (a person, through `agent-steward-agent-disable-cli`) | `AgentDisable.Decide` | `AgentDisable.Approve` | A person signs in through a client app, so both apply. |
+| Tc, the CLI's second token, for the guardian's blueprint | `access_as_user` | none | The executor checks the scope and that the person is the approver. |
+| The OBO token for Graph (the guardian, for the approver) | `AgentIdentity.EnableDisable.All` (seen with `profile openid`) | none | A delegated permission, limited by what the approver may do. |
 
 The Identity API needs both claims in the approver's token (FR7):
 

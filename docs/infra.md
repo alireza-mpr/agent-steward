@@ -92,6 +92,7 @@ The first deploy also made Entra create a service principal for Microsoft's "Mic
 | [`setup/bicep/phase0-smoke.bicep`](../setup/bicep/phase0-smoke.bicep) | Phase 0 smoke test: one security group. Proves the toolchain works end to end. Safe to delete. |
 | [`setup/bicep/identity-api.bicep`](../setup/bicep/identity-api.bicep) | The Identity API's app registration (app role `Findings.Submit`, v2 tokens, the agent claims as optional claims, an owner), its service principal, and the role assigned to the guardian's agent identity (FR3, FR5). For the agent-disable approval (FR7) it also defines the guardian's app role `AgentDisable.Request` (assigned here), the user app role `AgentDisable.Approve` and the delegated scope `AgentDisable.Decide` |
 | [`setup/bicep/agent-disable-approvers.bicep`](../setup/bicep/agent-disable-approvers.bicep) | The people who may approve disabling an agent (FR7): the security group `agent-steward-agent-disable-approvers`, which holds the `AgentDisable.Approve` role, and the public client app `agent-steward-agent-disable-cli` (authorization code flow with PKCE, no secret) with admin consent for `AgentDisable.Decide` |
+| [`setup/bicep/test-client.bicep`](../setup/bicep/test-client.bicep) | A plain test client, not an agent, for the live negative test of the Identity API (FR5): it holds `Findings.Submit`, so only the agent check can reject it. Test only |
 | [`setup/bicep/guardian-permissions.bicep`](../setup/bicep/guardian-permissions.bicep) | The guardian's Microsoft Graph permissions, one app role assignment each: read-only `AgentIdentity.Read.All`, `AgentIdentityBlueprint.Read.All`, `Application.Read.All`, `AuditLog.Read.All` (FR3, NFR1), and no write permission (FR4: a disable uses the approver's rights) |
 | [`setup/bicep/approver-delegation.bicep`](../setup/bicep/approver-delegation.bicep) | The admin consents for OBO on the approved disable (FR4): the delegated `AgentIdentity.EnableDisable.All` on the guardian's agent identity, and the approve CLI's grant for the blueprint's `access_as_user` scope |
 | [`setup/agent-id/AgentIdHelpers.ps1`](../setup/agent-id/AgentIdHelpers.ps1) | Shared helpers: Graph calls, permission scopes, and one safe-to-rerun `Set-*` function per object type |
@@ -155,6 +156,17 @@ az deployment group create --resource-group rg-agent-steward \
 ```
 
 The sidecar caches tokens, so restart it (`docker compose restart sidecar`) to get a token with the new roles. Then restart the MCP server too (`docker compose restart mcp-server`): it lives in the sidecar's network namespace, so it loses its network when the sidecar restarts (seen 30 October 2026: every MCP call failed to connect until the MCP server restarted). The executor and its sidecar work the same way: `docker compose restart executor-sidecar executor`.
+
+Then set up OBO for the approved disable (FR4). The script prepares the guardian's blueprint (the `access_as_user` scope, nothing inheritable from Graph, and the old app-only write role removed), and prints the blueprint principal's object ID that the Bicep file needs:
+
+```sh
+pwsh ./setup/agent-id/Deploy-ApproverDelegation.ps1 -TenantId <your-domain>.onmicrosoft.com
+az deployment group create --resource-group rg-agent-steward \
+  --template-file setup/bicep/approver-delegation.bicep \
+  --parameters guardianAgentId=$GUARDIAN_AGENT_APP_ID blueprintPrincipalId=<printed by the script>
+```
+
+The delegated permission never goes beyond the approver's own rights, so the approver must also be allowed to disable agents in Entra, for example as Agent ID Administrator or Cloud Application Administrator, or as the agent's owner.
 
 If the app was deleted in the last 30 days, the deploy fails with an error about `owners`. The cause is that the deleted app still holds its unique name. So first restore it (`POST /directory/deletedItems/{id}/restore`), or delete it for good (`DELETE /directory/deletedItems/{id}`).
 

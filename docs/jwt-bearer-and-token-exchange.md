@@ -328,7 +328,7 @@ OBO makes sense only when two things are true. First, a service sits between the
 
 #### In This Project
 
-- ✅ **Fits: the executor's write.** The approve CLI sends Tc, a token for the guardian's blueprint, to the executor. The executor must call Microsoft Graph, and Graph decides per user whether this person may disable agents: an Agent ID Administrator, a Cloud Application Administrator, or the agent's owner. Tc is not a token for Graph, so the executor exchanges it with OBO ([the flow](agent-steward-architecture.md#the-human-approval-flow-propose-approve-execute)).
+- ✅ **Fits: the executor's write.** The approve CLI sends Tc, a token for the guardian's blueprint, to the executor. The executor must call Microsoft Graph, and Graph decides per user whether this person may disable agents: an Agent ID Administrator, a Cloud Application Administrator, or the agent's owner. Tc is not a token for Graph, so the executor exchanges it with OBO ([the flow](agent-steward-architecture.md#the-two-phases-propose-then-approve)).
 - ❌ **Does not fit: the approve CLI's own calls.** The CLI lists the pending requests and sends each decision straight to the Identity API, with the approver's own delegated token for that API. Nothing sits in the middle, so there is nothing to exchange. Sending these calls through a service would add a hop, a delegated permission and more code, and the Identity API would still see the same person.
 - ❌ **Does not fit: the scan.** It reads the whole registry with no person present, and what it sees must not depend on who is signed in. So it reads with the guardian's own app-only, read-only token ([why](agent-steward-architecture.md#why-the-guardian-runs-as-itself-not-on-behalf-of-a-user)).
 

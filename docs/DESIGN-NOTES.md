@@ -1,6 +1,6 @@
 # DESIGN-NOTES
 
-Patterns that belong to a production version of this system but were deliberately kept out of code in the timebox. None of them is built. Each section says what the pattern is, why it matters for agents, and how it would attach to this architecture.
+Patterns that belong to a production version of this system but were deliberately kept out of code in the timebox. None of them is built, except section 6: OBO is now built for the approved disable. Each section says what the pattern is, why it matters for agents, and how it would attach to this architecture.
 
 ## Contents
 
@@ -32,11 +32,11 @@ The mapping below is this project's own reading of the draft:
 | Identifier | Each agent identity's `appId` | Not a WIMSE or SPIFFE identifier |
 | Credentials and provisioning | The blueprint's credential, and short-lived tokens | The certificate and the model key are files ([A7](../THREATMODEL.md#accepted-risks)). The draft treats static API keys as an antipattern. |
 | Authentication | Entra's two token requests | The harness to MCP server hop has no token ([A2](../THREATMODEL.md#accepted-risks)) |
-| Authorization | OAuth, with roles checked at each API | No delegated mode ([section 6](#6-delegation-and-on-behalf-of-obo-for-agents)) |
+| Authorization | OAuth, with roles checked at each API, and OBO for the approved disable | Delegated mode for that one fix only ([section 6](#6-delegation-and-on-behalf-of-obo-for-agents)) |
 | Observability and remediation | Audit lines, and a disable path with human approval | No detection of an active agent misbehaving |
 | Policy and compliance | The registry rules and the permission policy file | Local files, not a central policy service |
 
-Two of the draft's rules match choices already made here. A tool must not forward a token it received, and an agent must not treat local UI confirmation alone as authorization. In this project, the approval is a decision checked by the Identity API, from a person's own token.
+Two of the draft's rules match choices already made here. A tool must not forward a token it received, and an agent must not treat local UI confirmation alone as authorization. In this project, the approval is a decision checked by the Identity API, from a person's own token, and the executor writes only with that person's own token.
 
 ## 3. Agent 365 governance
 
@@ -79,7 +79,7 @@ This is the general design for FR4. The guardian's scan runs autonomously, and t
   3. **The scope and the consents:** built. The blueprint exposes `access_as_user`, the CLI is granted it, and the delegated Graph permission is granted on the guardian's agent identity directly.
   4. **Telling the modes apart:** the executor checks Tc itself (`scp`, and the approver's `oid`). The Identity API sees only the guardian's app-only tokens, so it has no OBO mode to detect.
   5. **The audit line:** the executor's `agent_disabled` line has `mode: obo`, the agent identity that acted (`agent_app_id`), the delegating user and the approver.
-- **The trade-off:** the scan runs with no person present, so it stays autonomous. A write could use OBO, so the guardian would not need an app-only write role, and that would address [A1](../THREATMODEL.md#accepted-risks). This is now built for the approved disable, in the executor ([the flow](agent-steward-architecture.md#the-human-approval-flow-propose-approve-execute)). The cost is that a write then needs a user who holds the rights, and a signed-in user is not by itself an approval of one action.
+- **The trade-off:** the scan runs with no person present, so it stays autonomous. A write could use OBO, so the guardian would not need an app-only write role, and that would address [A1](../THREATMODEL.md#accepted-risks). This is now built for the approved disable, in the executor ([the flow](agent-steward-architecture.md#the-two-phases-propose-then-approve)). The cost is that a write then needs a user who holds the rights, and a signed-in user is not by itself an approval of one action.
 - **What exists today:** the CLI uses a person's delegated token, with `scp` and `roles`, and the Identity API checks it: that alone is delegated access, not OBO. After an approval, the executor exchanges the person's second token, Tc, with OBO, so the disable is OBO.
 
 ## 7. Revoking live tokens

@@ -42,7 +42,7 @@ resource guardianDisablesForTheApprover 'Microsoft.Graph/oauth2PermissionGrants@
 }
 
 // 2. The approve CLI may ask for a token to the guardian's blueprint (Tc), which the guardian then
-// exchanges with OBO. Consent alone approves nothing: the MCP server only uses Tc for a request
+// exchanges with OBO. Consent alone approves nothing: the executor only uses Tc for a request
 // that this same person approved at the Identity API.
 resource cliGetsTokensForTheGuardian 'Microsoft.Graph/oauth2PermissionGrants@v1.0' = {
   clientId: agentDisableCliPrincipal.id

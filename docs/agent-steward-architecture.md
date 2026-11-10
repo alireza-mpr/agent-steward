@@ -4,7 +4,7 @@ This document shows how this project's **Guardian** agent is built today: its pa
 
 > **Current Implementation Status: Partly Built**
 > * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with three tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent, `submit_disable_agent_request` asks a human to approve disabling a dormant agent) and its tool allow-list, the executor, which does an approved disable with the approver's own rights (OBO), and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an MCP integration test proves it.
-> * **Not run live yet:** the OBO disable end to end. The OBO exchange alone was tested live on 10 November 2026.
+> * **Run live:** both phases end to end, with the OBO disable, on 10 November 2026 ([the approve phase](#the-approve-phase)).
 > * **Not built yet:** The correlation-ID scaffold across all components.
 > 
 > *(See [Delivery status](delivery-status.md) for live progress tracking).*
@@ -15,8 +15,9 @@ This document shows how this project's **Guardian** agent is built today: its pa
   * [Why the Guardian Uses a Model](#why-the-guardian-uses-a-model)
   * [Why the Guardian Runs as Itself, Not On Behalf of a User](#why-the-guardian-runs-as-itself-not-on-behalf-of-a-user)
   * [Component Inventory: Who Holds What?](#component-inventory-who-holds-what)
-  * [The Main Flow at a Glance](#the-main-flow-at-a-glance)
-  * [The Human Approval Flow: Propose, Approve, Execute](#the-human-approval-flow-propose-approve-execute)
+  * [The Two Phases: Propose, Then Approve](#the-two-phases-propose-then-approve)
+  * [The Propose Phase](#the-propose-phase)
+  * [The Approve Phase](#the-approve-phase)
   * [Architectural Shortcuts (Where the Guardian Differs)](#architectural-shortcuts-where-the-guardian-differs)
 * [2. Blast Radius](#2-blast-radius)
 
@@ -73,9 +74,9 @@ The scan runs as the guardian's own agent identity (autonomous mode, client cred
 
 Running as itself also keeps the scan consistent and least-privileged. With delegated permissions, the agent "can't exceed that user's access" ([Authorization in Agent ID](https://learn.microsoft.com/en-us/entra/agent-id/authorization-agent-id#delegated-microsoft-graph-permissions)), so what the scan sees would change with who signed in. As itself, the guardian always holds the same application permissions: four read-only Graph permissions for the scan, and no write permission: an approved disable runs with the approver's rights (below). So every run sees the same picture, and the Entra sign-in logs show every token request under the agent identity.
 
-OBO still has a place in the design, but for the fixes, not the scan. **The agent proposes, and the approver decides.** No person starts a fix: the guardian proposes it from the scan, and the approver decides. So one person is enough for separation of duties: the agent is the proposer, and the approver is the decider.
+OBO still has a place in the design, but in the approve phase, not the propose phase ([the two phases](#the-two-phases-propose-then-approve)). **The agent proposes, and the approver decides.** No person starts a fix: the guardian proposes it from the scan, and the approver decides. So one person is enough for separation of duties: the agent is the proposer, and the approver is the decider.
 
-So the approval also carries delegation. It is built and unit-tested, and the OBO exchange was tested live on 10 November 2026. The whole chain has not run live yet:
+So the approve phase also carries delegation. It was run live end to end on 10 November 2026:
 
 1. **The approver signs in:** the approve CLI gets the usual token for the Identity API, and a second token for the blueprint's scope (Tc).
 2. **The decision:** recorded at the Identity API.
@@ -110,9 +111,28 @@ To verify our security posture, here is exactly what each container holds and wh
 
 *(Transport Note: The communication between the harness and the MCP server uses **MCP over Streamable HTTP**, the standard transport for standalone networked MCP services. The client sends each MCP message as an HTTP POST to a single `/mcp` endpoint, and the server either replies with a standard JSON payload or streams the response back over the same connection).*
 
-### The Main Flow at a Glance
+### The Two Phases: Propose, Then Approve
 
-One run of the guardian on the `--disable-dormant` task, then the approver's decision later. Sign-in and tokens are left out: they are in [Authentication](authentication.md) and in the next section.
+The guardian's work has two phases, and each runs with different rights:
+
+1. **The propose phase:** the autonomous part. The guardian scans the registry as itself, sends the findings to the audit log, and, on the `--disable-dormant` task, submits a disable request for each dormant agent. Nobody is signed in, and nothing in the tenant changes: the strongest thing this phase can do is ask.
+2. **The approve phase:** the human part. Later, within 24 hours, an approver reviews each pending request in the CLI and approves, denies or skips it. Only an approval leads to a write: the executor disables the agent with the approver's own rights (OBO).
+
+The two phases meet only at the Identity API, which stores the findings, the requests and the decisions. The propose phase does not wait for the approver: a later scan shows each request's status (pending, approved, denied, expired or executed).
+
+### The Propose Phase
+
+One run of the guardian on the `--disable-dormant` task. Every token is the guardian's own app-only token. On the default task, the run ends after the report, with no requests.
+
+Who calls whom (an arrow points from the caller to the one it calls):
+
+```text
+Harness → MCP server → Graph           (reads the agent: app-only token)
+          MCP server → Identity API    (creates the request: app-only token)
+Harness ← MCP server                   ("pending", the tool returns at once)
+```
+
+The run ends there. Nothing waits. The same steps in detail:
 
 ```mermaid
 sequenceDiagram
@@ -122,94 +142,109 @@ sequenceDiagram
     participant M as MCP server
     participant G as Microsoft Graph
     participant A as Identity API
-    actor P as Approver (CLI)
-    participant X as Executor
 
     O->>H: start a run (--disable-dormant)
     H->>M: tools/list
     M-->>H: the tools on the allow-list
     H->>L: task and tool list
     L-->>H: call scan_registry
-    H->>M: scan_registry
-    M->>G: read agents, blueprints, sign-ins
+    H->>M: tools/call scan_registry
+    M->>G: read agents, blueprints, sign-ins<br/>Bearer: the guardian's app-only token
     G-->>M: the data
     M->>M: run the four rules
-    M->>A: send the findings (audit log)
-    M->>A: read each dormant agent's latest disable request
-    M-->>H: the findings, and those requests
+    M->>A: POST /findings<br/>Bearer: the guardian's app-only token (Findings.Submit)
+    M->>A: GET /agents/{agentId}/disableRequests, for each dormant agent<br/>Bearer: the guardian's app-only token (AgentDisable.Request)
+    M-->>H: the findings, the audit's correlation ID,<br/>and each dormant agent's latest request
     H->>L: the findings
 
     L-->>H: submit_disable_agent_request for each dormant agent
     loop Harness runs the calls one at a time
-        H->>M: submit_disable_agent_request
-        M->>G: read the agent and its sign-ins
-        M->>M: checks: 1) dormant, 2) not the guardian's own
-        M->>A: create a disable request (facts and reason)
-        A-->>M: request pending
-        M-->>H: pending: nothing is disabled now
+        H->>M: tools/call submit_disable_agent_request(app_id, reason)
+        M->>M: check the allow-list and that app_id is a GUID
+        M->>G: read the agent and its sign-ins<br/>Bearer: the guardian's app-only token
+        G-->>M: the facts
+        alt The agent is unknown, is the guardian's own, or is not dormant
+            M-->>H: tool error: refused, and nobody is asked
+        else The agent can be disabled
+            M->>A: POST /agents/{agentId}/disableRequests<br/>Bearer: the guardian's app-only token (AgentDisable.Request)<br/>body: facts from Graph, the model's reason
+            A-->>M: 201, pending for 24 hours<br/>(409 if one is already pending: tool error)
+            M-->>H: pending: nothing is disabled now
+        end
     end
     H->>L: all the results
     L-->>H: the final report (requests pending)
-
-    Note over P,X: Later, within 24 hours
-    P->>A: list pending requests, then approve or deny
-    P->>X: after an approval: Tc, the approver's token for the blueprint
-    X->>A: is the request approved, and by this person?
-    X->>G: read the agent again: dormant, not the guardian's own
-    X->>A: claim the request (once, within 10 minutes)
-    X->>G: PATCH accountEnabled = false with the OBO token,<br/>then read it back
-    X-->>P: disabled, with your own rights
 ```
 
-* **The MCP server reads and asks.** It never writes, and it never sees the approver's token.
-* **The executor does the one write,** with the approver's rights, after its own checks.
-* **The Identity API only stores things:** findings, requests and decisions. It lets an approved request be executed once.
-* **The run does not wait for the approver.** A later scan shows each request's status: pending, approved, denied, expired or executed.
+* **Autonomous:** no person is signed in, so the guardian acts as itself (FR3).
+* **It only asks:** the MCP server reads Graph and writes only to the Identity API. It holds no write code and never sees an approver's token.
+* **The model chooses, the harness loops:** the model can ask for several requests in one answer, and the harness runs the calls one at a time.
 
-### The Human Approval Flow: Propose, Approve, Execute
+### The Approve Phase
 
-`submit_disable_agent_request` asks to disable one dormant agent identity (FR7). The MCP server checks and asks, and returns at once. A person decides later with the CLI, and lends their own rights for that one request (FR4). The executor does the write. The model only asks, and the Identity API records who decided.
+A person reviews the pending requests in the CLI, within 24 hours, and answers each one (FR7):
+
+* **Approve:** the Identity API records the decision. Then the CLI lends the person's rights for that one request: it sends Tc to the executor, which disables the agent with OBO (FR4).
+* **Deny:** the Identity API records the decision, and nothing else happens. A later propose phase may ask again.
+* **Skip:** nothing is sent. The request stays pending, the CLI does not ask about it again in this session, and it expires after 24 hours if nobody decides.
+
+Who calls whom after an approval (an arrow points from the caller to the one it calls):
+
+```text
+CLI → Entra              (sign-in, authorization code grant: returns an access token for the
+                          Identity API, an ID token and a refresh token)
+CLI → Identity API       (lists the requests, sends the decision: the access token for the Identity API)
+CLI → Entra              (after "approve", refresh token grant with scope <blueprint>/access_as_user:
+                          returns Tc and a new refresh token. ⚠️ A different API: an Entra deviation)
+CLI → executor           (Tc)
+      executor → executor sidecar   (validates Tc)
+      executor → Identity API       (reads the request, then claims it: app-only token)
+      executor → Graph              (re-checks the agent, reads back: app-only token)
+      executor → executor sidecar → Entra   (exchanges Tc with OBO)
+      executor → Graph              (the write: the OBO token, with the approver's rights)
+CLI ← executor           ("disabled", or why not)
+```
+
+Four different tokens appear here. All four are access tokens, and each goes only where its audience allows:
+
+* **The approver's token for the Identity API:** from the CLI to the Identity API, for the list and the decision. The sign-in returns it together with an ID token and a refresh token, because the CLI asks for `openid profile offline_access` too ([the sign-in](#the-approvers-sign-in-and-decision-step-by-step)).
+* **Tc, the approver's token for the guardian's blueprint:** an access token like the others, with the blueprint as its audience and `scp: access_as_user`. The CLI gets it after an approval from the same sign-in: MSAL sends the sign-in's refresh token with a scope for the blueprint, so there is no second prompt. **That is an Entra deviation from the OAuth standard**, where a refresh can never reach a different API ([Deviation: one refresh token, many APIs](tokens.md#deviation-one-refresh-token-many-apis), with the references). It goes from the CLI to the executor, and from the executor to its sidecar. No resource ever receives it: Graph and the Identity API would reject it, because its audience is the blueprint, not them. OBO does not turn Tc into an access token, because it already is one: OBO exchanges it for another access token, for Graph.
+* **The guardian's app-only tokens:** from the executor to the Identity API (to read and claim the request) and to Graph (to read the agent).
+* **The OBO token:** from the executor to Graph, for the one write. It carries the approver and the guardian's delegated permission.
+
+The same steps in detail:
 
 > **Run live end to end on 10 November 2026, with this design:** the guardian asked for six dormant agents and got "pending" at once. One approval disabled `agent-steward-fixture-overperm-01` with the approver's rights: the executor's audit line says `mode: obo`, with the approver as `delegating_user` and `confirmed: true`, and the Entra admin center shows the agent as Disabled. Earlier, on 31 October 2026, the first design (one `disable_agent` tool that waited up to 4 minutes, and the guardian's own write role) disabled a fixture the same way.
 
 ```mermaid
 sequenceDiagram
-    participant H as Harness and model
-    participant M as MCP server
-    participant G as Microsoft Graph
-    participant A as Identity API
+    actor P as Approver
     participant C as CLI
     participant E as Entra ID
+    participant A as Identity API
     participant X as Executor
     participant S as Executor sidecar
-    actor P as Approver
-
-    H->>M: tools/call submit_disable_agent_request(app_id, reason)
-    M->>M: check the allow-list and that app_id is a GUID
-    M->>G: read the agent and its sign-ins (app-only token)
-    G-->>M: the facts
-    alt The agent is unknown, is the guardian's own, or is not dormant
-        M-->>H: tool error: refused, and nobody is asked
-    else The agent can be disabled
-        M->>A: POST /agents/{agentId}/disableRequests<br/>Bearer: the guardian's app-only token (AgentDisable.Request)<br/>body: facts from Graph, the model's reason
-        A-->>M: 201, pending for 24 hours<br/>(409 if one is already pending: tool error)
-        M-->>H: pending: nothing is disabled now
-    end
+    participant G as Microsoft Graph
 
     P->>C: docker compose run --rm approve
     C->>E: authorization code flow with PKCE
-    E-->>C: the approver's token for the Identity API
-    C->>A: GET /disableRequests?status=pending<br/>Bearer: the approver's token
+    E-->>C: an access token for the Identity API,<br/>plus an ID token and a refresh token (offline_access)
+    C->>A: GET /disableRequests?status=pending<br/>Bearer: the access token for the Identity API
     A-->>C: pending requests
     C->>P: show the facts, and the reason labelled untrusted
-    P->>C: approve or deny
-    C->>A: POST .../{requestId}/decision<br/>Bearer: the approver's token
-    A->>A: check the token, decide once, store who decided
-    A-->>C: the decision
+    P->>C: approve, deny or skip
 
-    opt Approved
-        C->>E: from the same sign-in, with no new prompt:<br/>a token for the blueprint's access_as_user scope
-        E-->>C: Tc (aud: the blueprint, scp: access_as_user)
+    alt Skip
+        C->>P: Skipped: nothing was decided (the request stays pending)
+    else Deny
+        C->>A: POST .../{requestId}/decision (deny)<br/>Bearer: the access token for the Identity API
+        A->>A: check the token, decide once, store who decided
+        A-->>C: denied: nothing else happens
+    else Approve
+        C->>A: POST .../{requestId}/decision (approve)<br/>Bearer: the access token for the Identity API
+        A->>A: check the token, decide once, store who decided
+        A-->>C: approved
+        C->>E: POST /token: grant_type=refresh_token,<br/>the sign-in's refresh token, scope=#lt;blueprint app ID#gt;/access_as_user<br/>(no new prompt. A different API: an Entra deviation from RFC 6749)
+        E-->>C: Tc (aud: the blueprint, scp: access_as_user),<br/>plus a new refresh token
         C->>X: POST .../{requestId}/delegation<br/>Bearer: Tc
         X->>S: GET /Validate<br/>Bearer: Tc
         S-->>X: Tc's claims, after the signature, audience and scope checks
@@ -268,7 +303,7 @@ sequenceDiagram
     P->>C: paste the address
     C->>E: POST /token: grant_type=authorization_code,<br/>client_id, code, code_verifier, redirect_uri<br/>(MSAL first checks that state matches)
     E->>E: check code_verifier against code_challenge
-    E-->>C: the approver's access token<br/>(aud: the Identity API, azp: the CLI, oid: the person, idtyp: user,<br/>scp: AgentDisable.Decide, roles: AgentDisable.Approve)
+    E-->>C: the approver's access token<br/>(aud: the Identity API, azp: the CLI, oid: the person, idtyp: user,<br/>scp: AgentDisable.Decide, roles: AgentDisable.Approve),<br/>plus an ID token and a refresh token, in MSAL's in-memory cache
 
     loop Every 5 seconds, until Ctrl+C
         C->>A: GET /disableRequests?status=pending + Bearer token
@@ -293,7 +328,7 @@ The token answers two questions: `scp` says the CLI may send decisions for this 
 | **D2** | The MCP server has its own Entra identity and serves multiple agents. | **Shared Identity:** The MCP server serves *only* the Guardian and fetches tokens using the Guardian's identity (it acts as the Guardian itself). | Keeping one identity and one sidecar is simpler, and ensures no Entra token ever reaches the harness. | The MCP server cannot be shared with other agents. If compromised, it can request tokens for *any* agent identity under the blueprint (since the sidecar lets callers specify which agent identity they want). |
 | **D3** | The blueprint authenticates via an Azure Managed Identity (zero keys on disk). | **Certificate File:** A certificate file is mounted only into the two sidecar containers: the MCP server's and the executor's ([details](infra.md#the-blueprints-credential)). | The demo runs locally in Docker, not in Azure. | If the certificate file is stolen from disk, every agent identity tied to the blueprint is exposed. |
 | **D4** | No static model key: the harness authenticates to the model provider with workload identity federation (or, failing that, reads a key from a cloud vault). | **API Key File:** An Anthropic service account API key in `secrets/anthropic.env` (the folder is excluded via `.gitignore`), given only to the guardian container. | Local demo environment, with no managed identity to federate. | The Anthropic API key sits unencrypted on the host disk. |
-| **D5** | Supports Delegated mode with OBO when a human user is present. | **Autonomous scan, OBO for the approved disable:** the scan runs as the guardian, and the disable runs with the approver's rights, in the executor. Built; not run live end to end yet. | The scan needs no user ([why](#why-the-guardian-runs-as-itself-not-on-behalf-of-a-user)). | Only the disable uses OBO. The other fixes in FR4 (remove a permission, assign a sponsor) are not built. |
+| **D5** | Supports Delegated mode with OBO when a human user is present. | **Autonomous propose phase, OBO in the approve phase:** the scan runs as the guardian, and the disable runs with the approver's rights, in the executor. Built, and run live on 10 November 2026. | The scan needs no user ([why](#why-the-guardian-runs-as-itself-not-on-behalf-of-a-user)). | Only the disable uses OBO. The other fixes in FR4 (remove a permission, assign a sponsor) are not built. |
 | **D6** | Audit logs and distributed traces ship to a central SIEM/sink. | **Local Logs:** Audit lines and traces are written locally. One trace ID across the Guardian, the MCP server and the Identity API is planned (FR8). | Project timebox. | All audit logs reside on the same single machine. |
 
 For the credential options behind D2, D3 and D4, and how to move from the Guardian's shortcuts to the enterprise design, see [Credentials and Tokens](authentication.md#3-credentials-and-tokens-how-a-workload-gets-them).

@@ -64,11 +64,11 @@ Only the approved agent was disabled, and the four denied agents stayed active. 
 
 A disable stops new tokens, but issued tokens work until they expire ([design note](docs/DESIGN-NOTES.md#7-revoking-live-tokens)).
 
-Since this run, the disable runs with the approver's own rights (OBO), in a separate executor, and the guardian holds no write permission of its own. That version is not shown here yet: it has not run live end to end.
+Since this run, the disable runs with the approver's own rights (OBO), in a separate executor, and the guardian holds no write permission of its own. That version ran live end to end on 10 November 2026 ([delivery status, FR4](docs/delivery-status.md)), but its screenshots are not on this page yet.
 
 ## What this page does not show
 
-- **Not shown yet:** OBO for the approved disable, which is built but not yet run live end to end ([design](docs/DESIGN-NOTES.md#6-delegation-and-on-behalf-of-obo-for-agents)).
+- **Not shown yet:** screenshots of OBO for the approved disable, which ran live on 10 November 2026 ([design](docs/DESIGN-NOTES.md#6-delegation-and-on-behalf-of-obo-for-agents)).
 - **Not built:** revocation of live tokens, Conditional Access for agents, the live worker, and the correlation of traces with Entra sign-in logs.
 - **Known risks:** the [accepted risks](THREATMODEL.md#accepted-risks), each with its fix.
 
