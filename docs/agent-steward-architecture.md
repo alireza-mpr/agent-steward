@@ -170,7 +170,7 @@ sequenceDiagram
 
 `submit_disable_agent_request` asks to disable one dormant agent identity (FR7). The MCP server checks and asks, and returns at once. A person decides later with the CLI, and lends their own rights for that one request (FR4). The executor does the write. The model only asks, and the Identity API records who decided.
 
-> **Run live on 31 October 2026, with the earlier design** (one `disable_agent` tool that waited up to 4 minutes, and the guardian's own write role): one approval disabled a fixture, and a read confirmed it. Four denials left their fixtures enabled. The current design has not run end to end yet. The OBO exchange alone was tested live on 10 November 2026.
+> **Run live end to end on 10 November 2026, with this design:** the guardian asked for six dormant agents and got "pending" at once. One approval disabled `agent-steward-fixture-overperm-01` with the approver's rights: the executor's audit line says `mode: obo`, with the approver as `delegating_user` and `confirmed: true`, and the Entra admin center shows the agent as Disabled. Earlier, on 31 October 2026, the first design (one `disable_agent` tool that waited up to 4 minutes, and the guardian's own write role) disabled a fixture the same way.
 
 ```mermaid
 sequenceDiagram
@@ -191,7 +191,7 @@ sequenceDiagram
     alt The agent is unknown, is the guardian's own, or is not dormant
         M-->>H: tool error: refused, and nobody is asked
     else The agent can be disabled
-        M->>A: POST /agents/{agentId}/disableRequests<br/>(facts from Graph, the model's reason)
+        M->>A: POST /agents/{agentId}/disableRequests<br/>Bearer: the guardian's app-only token (AgentDisable.Request)<br/>body: facts from Graph, the model's reason
         A-->>M: 201, pending for 24 hours<br/>(409 if one is already pending: tool error)
         M-->>H: pending: nothing is disabled now
     end
@@ -199,25 +199,34 @@ sequenceDiagram
     P->>C: docker compose run --rm approve
     C->>E: authorization code flow with PKCE
     E-->>C: the approver's token for the Identity API
-    C->>A: GET /disableRequests?status=pending
+    C->>A: GET /disableRequests?status=pending<br/>Bearer: the approver's token
     A-->>C: pending requests
     C->>P: show the facts, and the reason labelled untrusted
     P->>C: approve or deny
-    C->>A: POST .../{requestId}/decision
+    C->>A: POST .../{requestId}/decision<br/>Bearer: the approver's token
     A->>A: check the token, decide once, store who decided
+    A-->>C: the decision
 
     opt Approved
         C->>E: from the same sign-in, with no new prompt:<br/>a token for the blueprint's access_as_user scope
         E-->>C: Tc (aud: the blueprint, scp: access_as_user)
-        C->>X: POST .../{requestId}/delegation + Bearer Tc
-        X->>S: validate Tc (signature, audience, scope)
-        X->>A: GET the request: approved, and decided by Tc's oid?
-        X->>G: read the agent again (app-only): dormant, not the guardian's own
-        X->>A: POST .../{requestId}/execution<br/>(once, within 10 minutes, only for the approver)
-        X->>S: exchange Tc with OBO
+        C->>X: POST .../{requestId}/delegation<br/>Bearer: Tc
+        X->>S: GET /Validate<br/>Bearer: Tc
+        S-->>X: Tc's claims, after the signature, audience and scope checks
+        X->>A: GET the request<br/>Bearer: the guardian's app-only token (AgentDisable.Request)
+        A-->>X: approved, and decided by Tc's oid?
+        X->>G: read the agent again<br/>Bearer: the guardian's app-only token
+        G-->>X: the facts: dormant, not the guardian's own?
+        X->>A: POST .../{requestId}/execution<br/>Bearer: the guardian's app-only token (AgentDisable.Request)<br/>body: delegatingUser = Tc's oid
+        A-->>X: executed (409 unless approved, within 10 minutes, by this person)
+        X->>S: GET /AuthorizationHeader/graph-delegated<br/>Bearer: Tc
         S->>E: OBO request, as the guardian's agent identity
         E-->>S: Graph token: the approver's oid,<br/>scp AgentIdentity.EnableDisable.All
-        X->>G: PATCH accountEnabled = false, then read it back
+        S-->>X: the OBO token
+        X->>G: PATCH accountEnabled = false<br/>Bearer: the OBO token
+        G-->>X: 204
+        X->>G: read accountEnabled back<br/>Bearer: the guardian's app-only token
+        G-->>X: false
         X-->>C: disabled, or why not
         C->>P: Disabled, with your own rights.
     end
