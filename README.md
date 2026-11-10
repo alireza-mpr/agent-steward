@@ -2,7 +2,7 @@
 
 An AI agent that governs other AI agents in a Microsoft Entra tenant.
 
-The guardian has its own Entra agent identity (created from an agent identity blueprint). It autonomously finds badly governed agents - no owner, no sponsor, expiring credentials, excessive permissions, dormant - and reports them. Fixing a problem (disabling an agent, removing a permission, assigning a sponsor) is a privileged operation: it runs on behalf of a signed-in admin (OBO), behind a human approval gate, through an allow-listed MCP tool, and every action is attributed and audited.
+The guardian has its own Entra agent identity (created from an agent identity blueprint). It autonomously finds badly governed agents - no owner, no sponsor, expiring credentials, excessive permissions, dormant - and reports them. Fixing a problem is a privileged operation, so **the agent proposes, and the approver decides**. The guardian asks for a fix through an allow-listed MCP tool, a person approves that exact action, and every action is attributed and audited. Today the one fix is disabling a dormant agent: after approval, it runs with the guardian's own write permission. In progress: the disable runs on behalf of the approver (OBO), so it uses the approver's rights and the guardian holds no standing write permission.
 
 The point of this project: demonstrate, end to end, how an autonomous agent can be **identified, authenticated, authorized, constrained, observed and revoked** using Microsoft Entra Agent ID - with Zero Trust and least privilege applied at every step.
 
@@ -45,7 +45,7 @@ flowchart LR
 
 | Agent | Role |
 |---|---|
-| **Guardian** | The only agent that uses a model (an LLM). Reads the registry autonomously; performs privileged fixes via OBO + approval. |
+| **Guardian** | The only agent that uses a model (an LLM). Reads the registry autonomously; proposes privileged fixes, which a person approves (OBO for the fix is in progress). |
 | **Live worker** | A tiny timer loop with its own agent identity. Calls one read-only endpoint every few minutes. Exists to produce real sign-in logs, to be blocked by Conditional Access, and to be killed live in the revocation demo. No LLM. |
 | **Fixture agents (3-4)** | Registry entries with deliberate flaws: one without a sponsor, one with an expiring credential, one over-permissioned, one dormant. They run no code. The guardian finds them. |
 
@@ -54,7 +54,7 @@ flowchart LR
 - **FR1 - Agent identity.** The guardian runs under an Entra agent identity created from an agent identity blueprint. No shared user account, no plain service principal.
 - **FR2 - Ownership.** Every agent identity has a named owner (technical) and sponsor (business), set in Entra.
 - **FR3 - Autonomous mode.** For read-only registry checks (orphan agents, expiring credentials, over-permissioned agents, dormant agents), the guardian gets a token via its blueprint using client credentials and calls the Identity API.
-- **FR4 - On-behalf-of mode.** An admin signs in. For privileged fixes (disable agent, remove permission, assign sponsor), the guardian calls the Identity API on behalf of that admin using the OBO flow. The API tells the two modes apart from token claims.
+- **FR4 - On-behalf-of mode.** For privileged fixes (disable agent, remove permission, assign sponsor), the agent proposes and the approver decides. The approver's sign-in gives a token that the guardian exchanges with the OBO flow, so the fix runs with the approver's rights, limited by the guardian's delegated permissions, and the guardian holds no standing write permission. The API tells the two modes apart from token claims.
 - **FR5 - Token validation.** The Identity API rejects any token not issued to a registered agent identity, and rejects agent tokens for scopes the agent was not granted. Negative tests included.
 - **FR6 - Tool layer via MCP.** The guardian's tools are exposed through an MCP server. Only allow-listed tools can be called. A call to an unknown tool is refused and logged.
 - **FR7 - Human approval.** Privileged tools require explicit human approval before execution. The approver's identity is recorded with the action.
