@@ -2,8 +2,9 @@
 
 Receives the guardian's findings and accepts them only from an agent identity that holds
 the app role Findings.Submit. It also serves the approval of a request to disable an agent:
-the guardian's MCP server creates and reads requests, and a person decides with the approve
-command. Every decision becomes one JSON audit line on stdout.
+the guardian's MCP server creates and reads requests, a person decides with the approve
+CLI, and the guardian's executor claims an approved request before it writes. Every decision
+becomes one JSON audit line on stdout.
 
 Run: uvicorn main:app --host 0.0.0.0 --port 8000
 """
@@ -21,7 +22,7 @@ import jwt
 from fastapi import Depends, FastAPI, HTTPException, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from disable_requests import AlreadyFinal, AlreadyPending, DisableRequest, DisableRequestStore, NotFound
+from disable_requests import AlreadyFinal, AlreadyPending, DisableRequest, DisableRequestStore, NotExecutable, NotFound
 from token_validation import ApiSettings, Approver, Caller, TokenRejected, verify_agent, verify_approver
 
 SETTINGS = ApiSettings(
@@ -126,7 +127,8 @@ def submit_findings(report: FindingsReport, request: Request,
     return {"accepted": len(report.findings), "correlation_id": correlation_id}
 
 
-# The approval of a request to disable an agent (FR7). Each caller has exactly two routes.
+# The approval of a request to disable an agent (FR7, FR4): the agent proposes, and the approver
+# decides. The agent creates, reads and executes its own requests; a person lists and decides.
 
 GUID_PATTERN = r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$"
 AgentId = Annotated[str, Path(pattern=GUID_PATTERN)]
@@ -162,10 +164,23 @@ class Decision(BaseModel):
     decision: Literal["approve", "deny"]   # the approver's identity comes only from the token
 
 
+class Execution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # The oid of the person whose rights the write uses (OBO). The executor took it from that
+    # person's token, which it validated. It must be the approver's.
+    delegatingUser: str = Field(pattern=r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
+
+
+def iso(moment: datetime | None) -> str | None:
+    return moment.isoformat() if moment else None
+
+
 def as_json(request: DisableRequest) -> dict:
     decided_by = {"id": request.decided_by_id, "name": request.decided_by_name} if request.decided_by_id else None
     return {"id": request.id, "agentId": request.agent_id, "status": request.status, "reason": request.reason,
-            "facts": request.facts, "expiresAt": request.expires_at.isoformat(), "decidedBy": decided_by}
+            "facts": request.facts, "correlationId": request.correlation_id,
+            "createdAt": iso(request.created_at), "expiresAt": iso(request.expires_at),
+            "decidedBy": decided_by, "decidedAt": iso(request.decided_at), "executedAt": iso(request.executed_at)}
 
 
 @app.post("/agents/{agent_id}/disableRequests", status_code=201)
@@ -195,6 +210,36 @@ def read_disable_request(agent_id: AgentId, request_id: str, caller: Caller = De
     if found.requested_by != caller.agent_app_id:
         raise HTTPException(404, detail="no such request")
     return as_json(found)
+
+
+@app.get("/agents/{agent_id}/disableRequests")
+def list_agent_disable_requests(agent_id: AgentId, caller: Caller = Depends(can_request)) -> dict:
+    """The caller's own requests for one agent, the newest first: the guardian's scan shows their status."""
+    return {"value": [as_json(found) for found in STORE.of_agent(agent_id, caller.agent_app_id)]}
+
+
+@app.post("/agents/{agent_id}/disableRequests/{request_id}/execution")
+def execute_disable_request(agent_id: AgentId, request_id: str, body: Execution, request: Request,
+                            caller: Caller = Depends(can_request)) -> dict:
+    """The executor claims an approved request right before its one write, with the approver's
+    rights. Only the agent that asked, once, soon after the approval, and only for the approver."""
+    try:
+        found = STORE.get(agent_id, request_id)
+    except NotFound:
+        raise HTTPException(404, detail="no such request") from None
+    if found.requested_by != caller.agent_app_id:
+        raise HTTPException(404, detail="no such request")
+    try:
+        executed = STORE.execute(agent_id, request_id, body.delegatingUser)
+    except NotExecutable as refusal:
+        audit(event="disable_execution_refused", correlation_id=found.correlation_id, request_id=request_id,
+              target_agent=agent_id, agent_app_id=caller.agent_app_id, delegating_user=body.delegatingUser,
+              reason=refusal.reason)
+        raise HTTPException(409, detail=f"this request cannot be executed: {refusal.reason}") from None
+    audit(event="disable_request_executed", correlation_id=executed.correlation_id, request_id=request_id,
+          target_agent=agent_id, agent_app_id=caller.agent_app_id, mode="obo", delegating_user=body.delegatingUser,
+          approver_id=executed.decided_by_id, approver_name=executed.decided_by_name)
+    return as_json(executed)
 
 
 @app.get("/disableRequests")

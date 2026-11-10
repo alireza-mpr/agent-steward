@@ -5,7 +5,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from disable_requests import EXPIRES_AFTER, AlreadyFinal, AlreadyPending, DisableRequestStore, NotFound
+from disable_requests import (EXECUTE_WITHIN, EXPIRES_AFTER, AlreadyFinal, AlreadyPending, DisableRequestStore,
+                              NotExecutable, NotFound)
 
 
 class Clock:
@@ -151,3 +152,72 @@ def test_when_decisions_race_only_one_wins(store):
         thread.join()
 
     assert outcomes.count("won") == 1 and outcomes.count("refused") == 15
+
+
+# Execution (FR4): an approved request is executed at most once, soon, and only for the approver.
+
+def approved(store, agent="agent-1"):
+    request = create(store, agent)
+    store.decide(agent, request.id, "approved", "approver-oid", "An Approver")
+    return request
+
+
+def test_an_approved_request_is_executed_once_for_the_approver(store, clock):
+    request = approved(store)
+
+    executed = store.execute("agent-1", request.id, "approver-oid")
+
+    assert (executed.status, executed.executed_at) == ("executed", clock.time)
+    with pytest.raises(NotExecutable, match="already executed"):
+        store.execute("agent-1", request.id, "approver-oid")
+
+
+@pytest.mark.parametrize("status", [None, "denied"])
+def test_a_request_that_is_not_approved_cannot_be_executed(status, store):
+    request = create(store)
+    if status:
+        store.decide("agent-1", request.id, status, "approver-oid", "An Approver")
+
+    with pytest.raises(NotExecutable, match="not approved"):
+        store.execute("agent-1", request.id, "approver-oid")
+
+
+def test_only_the_approver_can_lend_their_rights(store):
+    request = approved(store)
+
+    with pytest.raises(NotExecutable, match="not the approver"):
+        store.execute("agent-1", request.id, "someone-else")
+    assert store.get("agent-1", request.id).status == "approved"
+
+
+def test_an_approval_can_be_executed_only_soon_after_the_decision(store, clock):
+    request = approved(store)
+    clock.time += EXECUTE_WITHIN + timedelta(seconds=1)
+
+    with pytest.raises(NotExecutable, match="too late"):
+        store.execute("agent-1", request.id, "approver-oid")
+
+
+def test_execution_is_only_through_the_requests_own_agent(store):
+    request = approved(store)
+
+    with pytest.raises(NotFound):
+        store.execute("agent-2", request.id, "approver-oid")
+
+
+def test_an_executed_request_does_not_block_a_new_one(store):
+    request = approved(store)
+    store.execute("agent-1", request.id, "approver-oid")
+
+    assert create(store).status == "pending"
+
+
+def test_of_agent_lists_one_requesters_requests_for_one_agent_newest_first(store, clock):
+    first = create(store)
+    store.decide("agent-1", first.id, "denied", "approver-oid", "An Approver")
+    clock.time += timedelta(minutes=1)
+    second = create(store)
+    create(store, "agent-2")
+
+    assert [request.id for request in store.of_agent("agent-1", "guardian")] == [second.id, first.id]
+    assert store.of_agent("agent-1", "another-requester") == []

@@ -103,7 +103,8 @@ resource guardianCanSubmit 'Microsoft.Graph/appRoleAssignedTo@v1.0' = {
   appRoleId: findingsSubmitRole.id
 }
 
-// The MCP server's disable_agent tool creates and reads its requests as the guardian (FR7).
+// The guardian's disable requests (FR7, FR4): the MCP server creates and lists them, and the
+// executor reads one and claims it before the write. Both call as the guardian.
 resource guardianCanRequestDisable 'Microsoft.Graph/appRoleAssignedTo@v1.0' = {
   principalId: guardianAgentId
   resourceId: identityApiPrincipal.id

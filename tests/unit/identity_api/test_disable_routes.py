@@ -296,3 +296,68 @@ def test_no_audit_line_holds_a_token(client, capsys):
     decide(client, request_id, headers=guardian())
 
     assert headers["Authorization"].split()[1] not in capsys.readouterr().out
+
+
+# Execution (FR4) and the requester's list
+
+def approve_one(client):
+    request_id = create(client).json()["id"]
+    decide(client, request_id)
+    return request_id
+
+
+def execute(client, request_id, user=PERSON, headers=None, agent=TARGET):
+    return client.post(f"/agents/{agent}/disableRequests/{request_id}/execution", json={"delegatingUser": user},
+                       headers=headers or guardian())
+
+
+def test_the_agent_that_asked_executes_an_approved_request_once(client, capsys):
+    request_id = approve_one(client)
+
+    first, second = execute(client, request_id), execute(client, request_id)
+
+    assert first.status_code == 200 and first.json()["status"] == "executed"
+    assert second.status_code == 409
+    [line] = audit_lines(capsys, "disable_request_executed")
+    assert (line["mode"], line["delegating_user"], line["approver_id"]) == ("obo", PERSON, PERSON)
+
+
+def test_execution_for_someone_other_than_the_approver_is_refused_and_audited(client, capsys):
+    request_id = approve_one(client)
+
+    answer = execute(client, request_id, user="00000000-0000-0000-0000-0000000000d2")
+
+    assert answer.status_code == 409 and "not the approver" in answer.json()["detail"]
+    [line] = audit_lines(capsys, "disable_execution_refused")
+    assert line["reason"] == "not the approver"
+
+
+def test_a_pending_request_cannot_be_executed(client):
+    request_id = create(client).json()["id"]
+
+    assert execute(client, request_id).status_code == 409
+
+
+def test_a_person_or_another_agent_cannot_execute(client):
+    request_id = approve_one(client)
+
+    assert execute(client, request_id, headers=person()).status_code in (401, 403)
+    assert execute(client, request_id, headers=guardian(azp=OTHER_AGENT, oid=OTHER_AGENT)).status_code == 404
+
+
+def test_execution_needs_a_delegating_user_that_is_an_object_id(client):
+    request_id = approve_one(client)
+
+    assert execute(client, request_id, user="not-an-oid").status_code == 422
+
+
+def test_the_requester_lists_its_own_requests_for_one_agent(client):
+    request_id = approve_one(client)
+
+    mine = client.get(f"/agents/{TARGET}/disableRequests", headers=guardian())
+    theirs = client.get(f"/agents/{TARGET}/disableRequests", headers=guardian(azp=OTHER_AGENT, oid=OTHER_AGENT))
+
+    assert [(item["id"], item["status"]) for item in mine.json()["value"]] == [(request_id, "approved")]
+    assert mine.json()["value"][0]["decidedAt"] is not None
+    assert theirs.json()["value"] == []
+    assert client.get(f"/agents/{TARGET}/disableRequests", headers=person()).status_code in (401, 403)
