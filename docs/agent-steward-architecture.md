@@ -249,7 +249,7 @@ The next version would use URL-mode elicitation and an approval web page, on the
 
 #### The Approver's Sign-In and Decision, Step by Step
 
-The CLI ([approve.py](../src/approve_cli/approve.py)) is the client application `agent-steward-agent-disable-cli`. It gets a delegated token for the Identity API with the authorization code flow and PKCE ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)). The CLI itself does no OBO. It calls the Identity API with this token directly. After an approval, it gets a second token, Tc, from the same sign-in, and hands it to the executor (the flow above).
+The CLI ([approve.py](../src/approve_cli/approve.py)) is the client application `agent-steward-agent-disable-cli`. It gets a delegated token for the Identity API with the authorization code flow and PKCE ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)). The CLI itself does no OBO. It calls the Identity API with this token directly: OBO only makes sense when a service sits between the person and the API ([when OBO fits](jwt-bearer-and-token-exchange.md#when-obo-fits)). After an approval, it gets a second token, Tc, from the same sign-in, and hands it to the executor (the flow above).
 
 ```mermaid
 sequenceDiagram

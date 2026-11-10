@@ -302,6 +302,13 @@ One pairing has no legitimate example here: issuer = subject, but a different re
 - ❌ **Parameters:** OBO sends the incoming token in `assertion` and adds `requested_token_use=on_behalf_of` ([source](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). RFC 8693 uses `subject_token`, `subject_token_type`, `actor_token` and `requested_token_type`. So a client written for RFC 8693 does not work against Entra's OBO without changes.
 - ❌ **Actor:** RFC 8693 can record "A acts for B", with `actor_token` in the request and the `act` claim in the new token. OBO has neither. Its new token names the user as the subject and the middle-tier app as the client (`azp`). For agents, Entra adds its own actor facts in `xms_act_fct` ([Agent tokens](tokens.md#what-kind-of-caller-vs-what-it-may-do)).
 
+#### When OBO Fits
+
+OBO only makes sense when a service sits between the person and the API. The person's token is for that service, and the service needs a new token to call the next API as that person.
+
+- ✅ **Fits: the executor.** The approve CLI sends Tc, a token for the guardian's blueprint, to the executor. The executor must call Microsoft Graph with the approver's rights, and Tc is not a token for Graph, so it exchanges Tc with OBO ([the flow](agent-steward-architecture.md#the-human-approval-flow-propose-approve-execute)).
+- ❌ **Does not fit: the approve CLI's own calls.** The CLI lists the pending requests and sends each decision straight to the Identity API, with the approver's own delegated token for that API. Nothing sits in the middle, so there is nothing to exchange. Sending these calls through a service would add a hop, a delegated permission and more code, and the Identity API would still see the same person.
+
 #### Why OBO Is Not RFC 8693: the History
 
 Microsoft did not break away from a standard: when it built OBO, no token exchange standard existed.
