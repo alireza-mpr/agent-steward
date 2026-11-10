@@ -49,8 +49,8 @@ sequenceDiagram
         alt tool not on the allow-list
             M-->>G: error -32602 (Unknown tool), logged.<br/>The harness stops the run.
         else tool allowed
-            opt privileged tool
-                M->>M: wait for a human's approval
+            opt submit_disable_agent_request
+                M->>M: checks, then a request for a human:<br/>returns at once, nothing is disabled
             end
             M->>S: token for the API, as the agent identity
             S->>E: request 1 (T1), then request 2 (TR)
@@ -77,7 +77,7 @@ A run only reports by default. To also ask a human to approve disabling each dor
 docker compose run --rm guardian python main.py --disable-dormant
 ```
 
-Only the command line chooses the task, so nothing the model reads can change it. The rule that the model must not use `disable_agent` on the default task is only a prompt rule. If a tricked model calls the tool anyway, the server's checks and the human still stop it ([the flow](agent-steward-architecture.md#the-human-approval-flow-disable_agent)).
+Only the command line chooses the task, so nothing the model reads can change it. The rule that the model must not use `submit_disable_agent_request` on the default task is only a prompt rule. If a tricked model calls the tool anyway, the server's checks and the human still stop it ([the flow](agent-steward-architecture.md#the-human-approval-flow-propose-approve-execute)).
 
 ## 2. Why the Model Stopped: stop_reason
 
@@ -147,7 +147,7 @@ Errors go to stderr. A run without a trace prints lines like these (the IDs are 
 
 ```
 [harness] settings: model=claude-opus-5-5, effort=medium, max_rounds=10, strict_tool_inputs=True, refusal_fallback=True
-[mcp]     tools/list: scan_registry, get_agent, disable_agent
+[mcp]     tools/list: scan_registry, get_agent, submit_disable_agent_request
 [model]   round 1: claude-opus-5-5 stopped with tool_use, asks for scan_registry
 [mcp]     round 1: tools/call scan_registry({}) succeeded
 [model]   round 2: claude-opus-5-5 stopped with tool_use, asks for get_agent

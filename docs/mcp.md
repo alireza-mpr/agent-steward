@@ -169,7 +169,7 @@ Content-Type: application/json
 | Accepted names (`Host` header) | `sidecar:8100` only, as protection against DNS rebinding. The Inspector override adds `localhost:8100` and `127.0.0.1:8100`. |
 | `scan_registry()` | Runs the four registry rules on Graph data, sends the findings to the Identity API's audit log itself ([ADR-001](decisions.md#adr-001-the-mcp-server-sends-the-findings-to-the-identity-api-never-the-model)), and returns the findings with the audit's correlation ID. Not read-only: every call writes to the audit log. |
 | `get_agent(app_id)` | Returns one agent identity's name, blueprint and description. Read-only. It refuses any `app_id` that is not a GUID, before it calls Graph. |
-| `disable_agent(app_id, reason)` | Asks a human to approve disabling one dormant agent identity, waits up to 4 minutes, and disables it only after an approval. It refuses the guardian's own agents and any agent that is not dormant, before anyone is asked ([the flow](agent-steward-architecture.md#the-human-approval-flow-disable_agent)). |
+| `submit_disable_agent_request(app_id, reason)` | Asks a human to approve disabling one dormant agent identity, and returns at once with the pending request: nothing is disabled now. It refuses the guardian's own agents and any agent that is not dormant, before anyone is asked. The disable happens later, in the executor, with the approver's own rights ([the flow](agent-steward-architecture.md#the-human-approval-flow-propose-approve-execute)). |
 
 ## 5. Calling it from your machine
 

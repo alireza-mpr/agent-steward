@@ -388,7 +388,7 @@ A picture to remember it: you may drive your car, so that is your role. A valet 
 
 **Roles cannot be narrowed, scopes can:**
 
-- **`roles`, app-only:** the client asks for `.default`, so the token carries every app role the client holds on that API. The guardian's Graph token always carries its write role for this reason ([A1](../THREATMODEL.md#accepted-risks)).
+- **`roles`, app-only:** the client asks for `.default`, so the token carries every app role the client holds on that API. For this reason, the guardian's Graph token carried its write role until that role was removed on 10 November 2026 ([A1](../THREATMODEL.md#accepted-risks)). A disable now uses a delegated token, through OBO.
 - **`roles`, delegated:** the token carries every role the user holds on that API. The client cannot ask for fewer.
 - **`scp`:** a client can ask for one named scope instead of `.default`, and gets only that scope.
 - **The ways around it:** separate identities (for example one to read and one to write), or separate APIs, so a token for one API carries no roles for the other.

@@ -2,7 +2,7 @@
 
 An AI agent that governs other AI agents in a Microsoft Entra tenant.
 
-The guardian has its own Entra agent identity (created from an agent identity blueprint). It autonomously finds badly governed agents - no owner, no sponsor, expiring credentials, excessive permissions, dormant - and reports them. Fixing a problem is a privileged operation, so **the agent proposes, and the approver decides**. The guardian asks for a fix through an allow-listed MCP tool, a person approves that exact action, and every action is attributed and audited. Today the one fix is disabling a dormant agent: after approval, it runs with the guardian's own write permission. In progress: the disable runs on behalf of the approver (OBO), so it uses the approver's rights and the guardian holds no standing write permission.
+The guardian has its own Entra agent identity (created from an agent identity blueprint). It autonomously finds badly governed agents - no owner, no sponsor, expiring credentials, excessive permissions, dormant - and reports them. Fixing a problem is a privileged operation, so **the agent proposes, and the approver decides**. The guardian asks for a fix through an allow-listed MCP tool, a person approves that exact action, and every action is attributed and audited. Today the one fix is disabling a dormant agent. After approval, it runs on behalf of the approver (OBO), in a separate executor service, so it uses the approver's rights and the guardian holds no standing write permission. This path is built and unit-tested, and the OBO exchange was tested live; a live disable end to end is still to come.
 
 The point of this project: demonstrate, end to end, how an autonomous agent can be **identified, authenticated, authorized, constrained, observed and revoked** using Microsoft Entra Agent ID - with Zero Trust and least privilege applied at every step.
 
@@ -45,7 +45,7 @@ flowchart LR
 
 | Agent | Role |
 |---|---|
-| **Guardian** | The only agent that uses a model (an LLM). Reads the registry autonomously; proposes privileged fixes, which a person approves (OBO for the fix is in progress). |
+| **Guardian** | The only agent that uses a model (an LLM). Reads the registry autonomously; proposes privileged fixes, which a person approves; the approved disable runs with the approver's rights (OBO). |
 | **Live worker** | A tiny timer loop with its own agent identity. Calls one read-only endpoint every few minutes. Exists to produce real sign-in logs, to be blocked by Conditional Access, and to be killed live in the revocation demo. No LLM. |
 | **Fixture agents (3-4)** | Registry entries with deliberate flaws: one without a sponsor, one with an expiring credential, one over-permissioned, one dormant. They run no code. The guardian finds them. |
 

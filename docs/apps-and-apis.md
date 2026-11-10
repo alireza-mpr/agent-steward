@@ -180,7 +180,9 @@ flowchart LR
     C -- "is granted scope:<br/>- AgentDisable.Decide<br/>for all users" --> A
     T -- "holds role:<br/>- Findings.Submit" --> A
     G -- "holds roles:<br/>- Findings.Submit<br/>- AgentDisable.Request" --> A
-    G -- "holds roles:<br/>- AgentIdentity.Read.All<br/>- AgentIdentityBlueprint.Read.All<br/>- Application.Read.All<br/>- AuditLog.Read.All<br/>- AgentIdentity.EnableDisable.All" --> MG
+    G -- "holds roles:<br/>- AgentIdentity.Read.All<br/>- AgentIdentityBlueprint.Read.All<br/>- Application.Read.All<br/>- AuditLog.Read.All" --> MG
+    G -- "is granted scope, for all users,<br/>used only through OBO:<br/>- AgentIdentity.EnableDisable.All" --> MG
+    C -- "is granted scope:<br/>- access_as_user<br/>for all users" --> BG
     OP -- "holds role:<br/>- User.Read.All" --> MG
     BG -- "holds role:<br/>- AgentIdentity.CreateAsManager" --> MG
     BF -- "holds role:<br/>- AgentIdentity.CreateAsManager" --> MG
@@ -194,7 +196,9 @@ flowchart LR
 | disable CLI → identity API | Delegated permission grant (`oauth2PermissionGrant`) | `scope`: `AgentDisable.Decide`, `consentType`: `AllPrincipals` |
 | test client → identity API | App role assignment | `appRoleId`: `Findings.Submit` |
 | guardian → identity API | App role assignment | `appRoleId`: `Findings.Submit`, `AgentDisable.Request` |
-| guardian → Microsoft Graph | App role assignment | `appRoleId`: 4 read roles and `AgentIdentity.EnableDisable.All` |
+| guardian → Microsoft Graph | App role assignment | `appRoleId`: 4 read roles |
+| guardian → Microsoft Graph | Delegated permission grant | `scope`: `AgentIdentity.EnableDisable.All`, `consentType`: `AllPrincipals`. Granted on the agent identity itself, not inherited from the blueprint, and used only through OBO with an approver's token |
+| disable CLI → guardian blueprint principal | Delegated permission grant | `scope`: `access_as_user`, `consentType`: `AllPrincipals`, so the CLI can get Tc for the blueprint |
 | overperm fixture → Microsoft Graph | App role assignment | `appRoleId`: `User.Read.All`, the deliberate flaw the guardian must find |
 | each blueprint principal → Microsoft Graph | App role assignment | `appRoleId`: `AgentIdentity.CreateAsManager`, so the blueprint can create its own agent identities |
 

@@ -8,6 +8,7 @@ For the architecture these decisions belong to, see [Agent Steward architecture]
 
 - [ADR-001: The MCP server sends the findings to the Identity API, never the model](#adr-001-the-mcp-server-sends-the-findings-to-the-identity-api-never-the-model)
 - [ADR-002: The approver signs in with the authorization code flow, not the device code flow](#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)
+- [ADR-003: The approved disable runs in a separate executor, with its own sidecar](#adr-003-the-approved-disable-runs-in-a-separate-executor-with-its-own-sidecar)
 
 ---
 
@@ -64,4 +65,33 @@ For the architecture these decisions belong to, see [Agent Steward architecture]
 - **A manual step.** The command runs in a container and has no listener, so the person pastes the final address into the terminal. This is a lab shortcut. An enterprise tool would catch the redirect itself, or use a web page.
 - **A fixed local port.** The command uses `http://localhost:18400`, because the author's machine had a web server on port 80. Entra ignores the port when it matches a `localhost` redirect URI ([Learn](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url)), so the registered `http://localhost` covers it.
 - **Public client flows are off** on the client app, because nothing needs them now.
+
+---
+
+## ADR-003: The approved disable runs in a separate executor, with its own sidecar
+
+> **Decision: after an approval, the approver's CLI sends the approver's token (Tc) to the executor, a separate service. The executor exchanges Tc with OBO and disables the agent with the approver's rights. The MCP server only asks, and holds no write code.**
+
+**Status:** Accepted, 10 November 2026. Built and unit-tested. The OBO exchange was tested live; the whole chain has not run live yet.
+
+**Context.** The disable moved to OBO (FR4), so the guardian holds no app-only write permission. For OBO, Tc must reach a service that can act as the guardian's agent identity, because only the token's audience may exchange it. The MCP server was the only such service, but it also runs the model's tool calls, so it handles untrusted input. There were three options:
+
+- **Option A: a separate executor, as the same guardian identity, with its own sidecar.**
+- **Option B: a separate executor with its own blueprint and agent identity.**
+- **Option C: keep the delegation route in the MCP server.**
+
+**Decision.** Option A.
+
+**Why:**
+
+1. **The write is away from the model's tools.** Only the executor holds the write code and receives Tc, and only its sidecar has the OBO settings. A bug or an injection path in the MCP server cannot reach the write.
+2. **The harness cannot reach it.** The executor is on the approval network, with the CLI and the Identity API only.
+3. **The tenant setup stays on one agent.** The blueprint's `access_as_user` scope, the CLI's grant and the delegated Graph grant all target the guardian. With Option B they would move to a new identity, and the guardian would act no more: the executor would. The guardian's own-agent protection covers only its own blueprint, so the guardian could also propose disabling its own executor.
+
+**Consequences:**
+
+- **Two copies of the certificate.** The blueprint's certificate is mounted into both sidecars ([D3](agent-steward-architecture.md#architectural-shortcuts-where-the-guardian-differs)).
+- **The executor is now the most trusted part.** It receives each approver's token, which is valid for its whole lifetime, not for one action ([A8](../THREATMODEL.md#accepted-risks)). So its code is kept to one route and one write.
+- **The checks are shared.** The executor runs the MCP server's checks again before the write, from one module ([disable_checks.py](../src/mcp_server/disable_checks.py)), so they cannot drift apart.
+- **CIBA would remove the CLI-to-executor hop,** because the authorization server would send the token straight to the agent. Entra's OpenID metadata has no `backchannel_authentication_endpoint` (checked 10 November 2026), so it is not an option.
 

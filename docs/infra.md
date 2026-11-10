@@ -92,11 +92,13 @@ The first deploy also made Entra create a service principal for Microsoft's "Mic
 | [`setup/bicep/phase0-smoke.bicep`](../setup/bicep/phase0-smoke.bicep) | Phase 0 smoke test: one security group. Proves the toolchain works end to end. Safe to delete. |
 | [`setup/bicep/identity-api.bicep`](../setup/bicep/identity-api.bicep) | The Identity API's app registration (app role `Findings.Submit`, v2 tokens, the agent claims as optional claims, an owner), its service principal, and the role assigned to the guardian's agent identity (FR3, FR5). For the agent-disable approval (FR7) it also defines the guardian's app role `AgentDisable.Request` (assigned here), the user app role `AgentDisable.Approve` and the delegated scope `AgentDisable.Decide` |
 | [`setup/bicep/agent-disable-approvers.bicep`](../setup/bicep/agent-disable-approvers.bicep) | The people who may approve disabling an agent (FR7): the security group `agent-steward-agent-disable-approvers`, which holds the `AgentDisable.Approve` role, and the public client app `agent-steward-agent-disable-cli` (authorization code flow with PKCE, no secret) with admin consent for `AgentDisable.Decide` |
-| [`setup/bicep/guardian-permissions.bicep`](../setup/bicep/guardian-permissions.bicep) | The guardian's Microsoft Graph permissions, one app role assignment each: read-only `AgentIdentity.Read.All`, `AgentIdentityBlueprint.Read.All`, `Application.Read.All`, `AuditLog.Read.All` (FR3, NFR1), and the one write, `AgentIdentity.EnableDisable.All`, for the approval-gated `disable_agent` tool (FR7) |
+| [`setup/bicep/guardian-permissions.bicep`](../setup/bicep/guardian-permissions.bicep) | The guardian's Microsoft Graph permissions, one app role assignment each: read-only `AgentIdentity.Read.All`, `AgentIdentityBlueprint.Read.All`, `Application.Read.All`, `AuditLog.Read.All` (FR3, NFR1), and no write permission (FR4: a disable uses the approver's rights) |
+| [`setup/bicep/approver-delegation.bicep`](../setup/bicep/approver-delegation.bicep) | The admin consents for OBO on the approved disable (FR4): the delegated `AgentIdentity.EnableDisable.All` on the guardian's agent identity, and the approve CLI's grant for the blueprint's `access_as_user` scope |
 | [`setup/agent-id/AgentIdHelpers.ps1`](../setup/agent-id/AgentIdHelpers.ps1) | Shared helpers: Graph calls, permission scopes, and one safe-to-rerun `Set-*` function per object type |
 | [`setup/agent-id/Deploy-AgentIdentities.ps1`](../setup/agent-id/Deploy-AgentIdentities.ps1) | Creates the project's blueprints, blueprint principals and agent identities, plus a stand-in sponsor user |
 | [`setup/agent-id/Deploy-Fixtures.ps1`](../setup/agent-id/Deploy-Fixtures.ps1) | Creates the fixture agents with deliberate governance flaws (FR3) |
 | [`setup/agent-id/Deploy-BlueprintCertificate.ps1`](../setup/agent-id/Deploy-BlueprintCertificate.ps1) | Gives the guardian's blueprint a certificate credential: creates the key pair locally and uploads only the public certificate (FR10) |
+| [`setup/agent-id/Deploy-ApproverDelegation.ps1`](../setup/agent-id/Deploy-ApproverDelegation.ps1) | Prepares the guardian's blueprint for OBO on the approved disable (FR4): exposes the delegated scope `access_as_user` (v2 tokens), makes nothing from Graph inheritable, and removes the guardian's old app-only `AgentIdentity.EnableDisable.All` |
 
 ## Run it
 
@@ -152,7 +154,7 @@ az deployment group create --resource-group rg-agent-steward \
   --query properties.provisioningState -o tsv
 ```
 
-The sidecar caches tokens, so restart it (`docker compose restart sidecar`) to get a token with the new roles. Then restart the MCP server too (`docker compose restart mcp-server`): it lives in the sidecar's network namespace, so it loses its network when the sidecar restarts (seen 30 October 2026: every MCP call failed to connect until the MCP server restarted).
+The sidecar caches tokens, so restart it (`docker compose restart sidecar`) to get a token with the new roles. Then restart the MCP server too (`docker compose restart mcp-server`): it lives in the sidecar's network namespace, so it loses its network when the sidecar restarts (seen 30 October 2026: every MCP call failed to connect until the MCP server restarted). The executor and its sidecar work the same way: `docker compose restart executor-sidecar executor`.
 
 If the app was deleted in the last 30 days, the deploy fails with an error about `owners`. The cause is that the deleted app still holds its unique name. So first restore it (`POST /directory/deletedItems/{id}/restore`), or delete it for good (`DELETE /directory/deletedItems/{id}`).
 
@@ -262,7 +264,7 @@ pwsh ./setup/agent-id/Deploy-BlueprintCertificate.ps1 -TenantId <your-domain>.on
 
 ## Local run: the sidecar
 
-The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). The sidecar is the only container that holds the guardian blueprint's private key, and it makes both token requests (T1 and TR) for the guardian. Only the MCP server shares the sidecar's network namespace, so only the guardian's tools can get its tokens. The guardian's harness, which talks to Claude, runs outside it and never sees a key or a token ([Agent architecture](agent-steward-architecture.md#1-the-guardians-design-today)). For how the sidecar compares with the in-process and token broker patterns, see [Credentials and Tokens](authentication.md#3-credentials-and-tokens-how-a-workload-gets-them).
+The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`), which runs next to it in Docker Compose ([docker-compose.yml](../docker-compose.yml)). Two sidecars hold the guardian blueprint's private key, and each makes both token requests (T1 and TR) for the guardian. Each serves one service, which shares its network namespace: `sidecar` serves the MCP server, with app-only settings only, and `executor-sidecar` serves the executor, with the OBO settings too (FR4). So only the guardian's tools and its executor can get its tokens, and only the executor can exchange an approver's token. The guardian's harness, which talks to Claude, runs outside it and never sees a key or a token ([Agent architecture](agent-steward-architecture.md#1-the-guardians-design-today)). For how the sidecar compares with the in-process and token broker patterns, see [Credentials and Tokens](authentication.md#3-credentials-and-tokens-how-a-workload-gets-them).
 
 **Before the first run.**
 
@@ -276,7 +278,8 @@ The guardian gets its tokens from Microsoft's Entra ID Auth SDK sidecar (`mcr.mi
 ```sh
 docker compose up -d sidecar
 docker compose run --rm token-claims graph   # claims of the guardian's Graph token
-docker compose up -d api mcp-server
+docker compose up -d identity-api mcp-server
+docker compose up -d executor-sidecar executor   # the approved disable (FR4): the CLI sends the approver's token here
 docker compose run --rm guardian            # one run of the agent loop: Claude asks, the MCP tools act
 docker compose run --rm -e GUARDIAN_TRACE=1 guardian   # the same, showing every message to and from the model and the MCP server, each in its own panels, as a chat, shortened
 docker compose run --rm -e GUARDIAN_TRACE=json guardian   # the same, as JSON: each model message once, no settings
@@ -292,15 +295,16 @@ What the guardian prints, what each trace mode shows, and its settings file ([co
 
 **Three settings that matter.**
 
-- **Loopback only:** Since version 1.1, the sidecar refuses any caller that is not on loopback (403). So it listens on `127.0.0.1`, and its callers join its network namespace (`network_mode: service:sidecar`), like containers in one Kubernetes pod: the MCP server, the integration tests and `token-claims`. No other container, and not the host, can ask it for the guardian's tokens. The MCP integration test proves this for the guardian's container.
+- **Loopback only:** Since version 1.1, the sidecar refuses any caller that is not on loopback (403). So it listens on `127.0.0.1`, and its callers join its network namespace (`network_mode: service:sidecar`), like containers in one Kubernetes pod: the MCP server, the integration tests and `token-claims` for `sidecar`, and the executor and `obo-claims` for `executor-sidecar`. No other container, and not the host, can ask them for the guardian's tokens. The MCP integration test proves this for the guardian's container.
 - **Agent identity override:** `Sidecar__AllowOverrides__GetAuthorizationHeaderUnauthenticated` must be `true`. When it is off, the sidecar ignores the `AgentIdentity` parameter and silently returns the blueprint's own token instead. The Identity API's agent check will reject such a token, because its actor facets (`xms_act_fct`) do not contain 11.
-- **Pinned image:** The image is pinned by digest, so a changed image cannot slip in.
+- **Pinned image:** The image is pinned by digest, so a changed image cannot slip in. Both sidecars use the same digest: change it in both blocks.
+- **OBO settings, on `executor-sidecar` only:** `AzureAd__Audience` is the blueprint's bare app ID, because the blueprint issues v2 tokens and has no App ID URI (the default, `api://<ClientId>`, would reject the approver's token). `AzureAd__Scopes` is `access_as_user`, and the downstream API `graph-delegated` has `RequestAppToken: "false"`, so the sidecar exchanges the incoming token with OBO instead of getting an app-only token.
 
 Sources: the sidecar's [security](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/security), [configuration](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/configuration) and [endpoints](https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/endpoints) pages (Microsoft Learn, checked 26 October 2026), and its source code ([`LocalCallerRestriction.cs`](https://github.com/AzureAD/microsoft-identity-web/blob/master/src/Microsoft.Identity.Web.Sidecar/LocalCallerRestriction.cs), [`AuthorizationHeaderEndpoint.cs`](https://github.com/AzureAD/microsoft-identity-web/blob/master/src/Microsoft.Identity.Web.Sidecar/Endpoints/AuthorizationHeaderEndpoint.cs)).
 
 ## The CLI
 
-A person approves or denies the guardian's requests to disable an agent (FR7). The command runs on demand, on the `agent` network, because the Identity API is not published to the host:
+A person approves or denies the guardian's requests to disable an agent (FR7). The command runs on demand, on the `approval` network, because the Identity API and the executor are not published to the host:
 
 ```sh
 docker compose run --rm approve
@@ -310,14 +314,14 @@ docker compose run --rm approve
 2. The browser then fails to load a `http://localhost:18400` page. That is expected. Copy its whole address.
 3. Paste it into the terminal. Do not share it or save it: it holds the sign-in code. The code works once, and only with this run's PKCE verifier.
 
-The command then waits, and shows each pending request as it arrives. It keeps the token in memory only.
+The command then waits, and shows each pending request as it arrives. It keeps the tokens in memory only. After an approval, it gets a second token from the same sign-in, for the guardian blueprint's `access_as_user` scope (Tc), and sends it to the executor, which disables the agent with the person's own rights (FR4). So the executor must be running: otherwise the CLI says "the guardian's executor could not be reached", and nothing is disabled.
 
 To see the claims of the approver's token, add `--show-claims`: the command signs in the same way, prints the decoded claims, and stops. It never prints the token itself. The claims hold real tenant and object IDs, so redact them before they go anywhere.
 
 ```sh
 docker compose build approve
 docker compose run --rm approve python approve.py --show-claims
-``` To see why the Identity API refused a call, read the `request_rejected` lines in `docker compose logs api`.
+``` To see why the Identity API refused a call, read the `request_rejected` lines in `docker compose logs identity-api`.
 
 The sign-in fails with `AADSTS530035` only if the device code flow comes back: security defaults block that flow ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)).
 

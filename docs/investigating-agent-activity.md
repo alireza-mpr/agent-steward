@@ -173,7 +173,8 @@ On Monday morning, an important SharePoint site is gone.
 
 - **Identity API audit lines.** Each line names the agent identity (`agent_app_id`, `agent_object_id`), its blueprint, the mode (autonomous), the delegating user (none), the approver (for a disable) and a correlation ID ([main.py](../src/identity_api/main.py)).
 - **The correlation ID per run.** `scan_registry` returns it, and the harness logs it, so the model's report can be checked against the audit log.
-- **One correlation ID per disable request,** on every line from request to decision to write.
+- **The executor's audit line for a disable.** `agent_disabled` names the target agent, the agent identity that acted (`agent_app_id`), the request, the approver, `mode: obo` and the delegating user, whose rights the write used.
+- **One correlation ID per disable request,** on every line from request to decision to write, across the MCP server, the Identity API and the executor.
 
 **Verified:** a token's `uti` equals the **Unique Token Identifier** of the sign-in event that issued it. Tested with real guardian tokens on 27 October 2026.
 

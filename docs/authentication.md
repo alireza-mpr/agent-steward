@@ -316,21 +316,22 @@ The Guardian runs locally, so it differs from the design above. The shortcuts D1
 |---|---|
 | 1, 2 | Do not exist: there is no managed identity locally. |
 | 3 | An API key in a file, given only to the Guardian's container, because it runs locally with no managed identity to federate (**D4**). |
-| 4, 5 | The harness never talks to Entra ID. The sidecar makes requests 1 and 2 for the MCP server, as the Guardian's agent identity, with a certificate file (**D2**, **D3**). |
+| 4, 5 | The harness never talks to Entra ID. Two sidecars make requests 1 and 2, as the Guardian's agent identity, with a certificate file (**D2**, **D3**): one for the MCP server, and one for the executor. The executor's sidecar also makes the delegated option of row 5: it exchanges the approver's Tc with OBO for the approved disable (FR4). |
 | 6 | No token, only network isolation (**D1**). |
 | 7, 8 | The MCP server has no application of its own. It gets its tokens from the sidecar and calls the APIs as the Guardian's agent identity (**D2**). |
 | 9, 11 | The Identity API serves the approval service. The approver signs in with the authorization code flow and PKCE, in the CLI's public client app `agent-steward-agent-disable-cli`. Built and run live on 31 October 2026 ([Delivery status](delivery-status.md)). |
-| 10, and the delegated options in rows 5 and 7 | Not built (**D5**). |
+| 10 | Built for the approved disable, with one difference: the approver's CLI sends Tc to the executor, not to the harness, and only after the approval. The executor checks Tc's signature, audience and `scp`, and that its `oid` is the approver. Not run live end to end yet (**D5**). |
+| The delegated option in row 7 | Not built: the MCP server has no application of its own (**D2**). |
 
 **The Guardian's credentials, against the enterprise design:**
 
 | Credential | The Guardian today | Enterprise design |
 |---|---|---|
-| The blueprint's credential | A certificate file, mounted only into the sidecar (**D3**) | A managed identity, as the blueprint's federated identity credential |
+| The blueprint's credential | A certificate file, mounted only into the two sidecars (**D3**) | A managed identity, as the blueprint's federated identity credential |
 | The model provider's credential | An API key in a file, given only to the Guardian's container (**D4**) | Workload identity federation: no key |
 | The MCP server's own identity | None: it acts as the Guardian (**D2**) | Its own app registration, with a managed identity as its federated identity credential ([source](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity)) |
 
 **Who gets the tokens:**
 
-* **Locally (today):** A certificate file (layer 1, **D3**) and a **sidecar** (layer 2). Python has no Microsoft library for agent identities, and the sidecar keeps the private key out of every container except its own. Only the MCP server shares the sidecar's network namespace, so only the Guardian's tools can get tokens ([Component Inventory](agent-steward-architecture.md#component-inventory-who-holds-what)). How the sidecar is set up and run: [Local run: the sidecar](infra.md#local-run-the-sidecar).
+* **Locally (today):** A certificate file (layer 1, **D3**) and a **sidecar** (layer 2). Python has no Microsoft library for agent identities, and the sidecar keeps the private key out of every container except its own. Each of the two sidecars shares its network namespace with one service, the MCP server or the executor, so only the Guardian's tools and its executor can get tokens ([Component Inventory](agent-steward-architecture.md#component-inventory-who-holds-what)). How the sidecar is set up and run: [Local run: the sidecar](infra.md#local-run-the-sidecar).
 * **In the enterprise design:** A managed identity as the client credential, so no file and no vault key exist. The sidecar can stay, or an in-process library can replace it where the language has one.

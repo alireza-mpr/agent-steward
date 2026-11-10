@@ -46,7 +46,7 @@ Three runs is a small sample: it still allows a failure rate of up to about 63%.
 
 ## 5. The tool allow-list
 
-The MCP server offers only the tools on its [allow-list](config/tool-allow-list.json), and it refuses any other name before the tool runs. In this run, `disable_agent` was off the list, so the call was refused and audited. It is on the list today, behind the approval in section 6.
+The MCP server offers only the tools on its [allow-list](config/tool-allow-list.json), and it refuses any other name before the tool runs. In this run, `disable_agent` was off the list, so the call was refused and audited. Its successor, `submit_disable_agent_request`, is on the list today, behind the approval in section 6.
 
 ![End-to-end tests and the refusals in the audit log](docs/screenshots/mcp-allow-list-refusal.png)
 
@@ -64,9 +64,12 @@ Only the approved agent was disabled, and the four denied agents stayed active. 
 
 A disable stops new tokens, but issued tokens work until they expire ([design note](docs/DESIGN-NOTES.md#7-revoking-live-tokens)).
 
+Since this run, the disable runs with the approver's own rights (OBO), in a separate executor, and the guardian holds no write permission of its own. That version is not shown here yet: it has not run live end to end.
+
 ## What this page does not show
 
-- **Not built:** OBO ([design](docs/DESIGN-NOTES.md#6-delegation-and-on-behalf-of-obo-for-agents)), revocation of live tokens, Conditional Access for agents, the live worker, and the correlation of traces with Entra sign-in logs.
+- **Not shown yet:** OBO for the approved disable, which is built but not yet run live end to end ([design](docs/DESIGN-NOTES.md#6-delegation-and-on-behalf-of-obo-for-agents)).
+- **Not built:** revocation of live tokens, Conditional Access for agents, the live worker, and the correlation of traces with Entra sign-in logs.
 - **Known risks:** the [accepted risks](THREATMODEL.md#accepted-risks), each with its fix.
 
 The [delivery status](docs/delivery-status.md) has the state of every requirement.
