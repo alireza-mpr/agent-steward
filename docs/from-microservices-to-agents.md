@@ -12,9 +12,10 @@ An engineer who knows microservices already knows most of the identity machinery
 - [6. Many People Create Agents, Fast](#6-many-people-create-agents-fast)
 - [7. Agents Call Agents](#7-agents-call-agents)
 - [8. Audit Needs "Why"](#8-audit-needs-why)
-- [9. How to Approach Agent Identities](#9-how-to-approach-agent-identities)
-- [10. The Short Version](#10-the-short-version)
-- [11. The Guardian Today](#11-the-guardian-today)
+- [9. Revocation Has to Reach the Running Agent](#9-revocation-has-to-reach-the-running-agent)
+- [10. How to Approach Agent Identities](#10-how-to-approach-agent-identities)
+- [11. The Short Version](#11-the-short-version)
+- [12. The Guardian Today](#12-the-guardian-today)
 
 ---
 
@@ -40,6 +41,7 @@ A microservices developer already knows most of the machinery. So say that first
 5. **Many people create agents, fast:** service accounts come from platform teams through change control. Agents are created by many teams, including with low-code tools such as Copilot Studio. So you get sprawl. You need a registry, an owner and sponsor for every agent, expiry and clean-up.
 6. **Agents call agents:** delegation chains form, so you need to track who acted for whom across hops.
 7. **Audit needs "why":** for a microservice, "what happened" is enough. For an agent, you also need for whom and why: the user, the task, and the approver.
+8. **Revocation has to reach the running agent:** a disabled user's token stays valid until it expires. A person makes a few calls in that window; an agent acting for them can make hundreds. So revocation must stop the running task, not only new tokens.
 
 Microsoft says the same in its Learn "Key concepts" page: "Traditional service principals were designed for static, deterministic workloads. Microsoft Entra Agent ID exists because service principals lack the governance infrastructure AI agents need. There's no enforced sponsorship, no agent-aware audit entries, and no blueprint-managed lifecycle." ([Key concepts](https://learn.microsoft.com/en-us/entra/agent-id/key-concepts), verified 9 November 2026). That's why Entra Agent ID exists.
 
@@ -149,7 +151,37 @@ Microsoft says the same in its Learn "Key concepts" page: "Traditional service p
 
 ---
 
-## 9. How to Approach Agent Identities
+## 9. Revocation Has to Reach the Running Agent
+
+**In a microservice:** when a user is disabled, the identity provider stops issuing new tokens. A token already issued stays valid until it expires: 60 to 90 minutes by default in Entra ([Access tokens](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#token-lifetime), verified 10 November 2026). With a person behind the app, that window is a small risk: they make a few calls in it, and they usually close the app.
+
+**In an agent acting on the user's behalf (OBO):**
+
+- **Speed:** the agent acts at machine speed. In those 60-90 minutes, it can make hundreds of calls for a user who no longer exists in the company.
+- **Long tasks:** agents run long background tasks. So they hold tokens, and sometimes refresh tokens, for longer than a person would.
+- **Nobody is watching:** a person might notice they've been locked out. An autonomous agent just keeps going.
+
+**So:** disabling the identity is not enough. Revocation needs layers, from the identity provider down to the agent itself:
+
+1. **Short-lived tokens:** keep the window small, and issue no new token or refresh after the disable.
+2. **Push events at the resource:** the identity provider tells the resource that the user was disabled, and the resource rejects the old token at once.
+3. **A live check for high-risk calls:** the resource asks whether the identity is still active, with no cache or a short one.
+4. **The agent runtime:** the harness listens for the same events, or re-checks the delegation before each tool call, and stops the running task.
+
+**In the industry:**
+
+- **Token introspection ([RFC 7662](https://www.rfc-editor.org/rfc/rfc7662)):** the resource asks the identity provider whether a token is still active, on each call. It costs a round trip per call.
+- **Push events:** OpenID Shared Signals carry revocation events, such as CAEP's session revoked. Microsoft's Continuous Access Evaluation (CAE) is "based on Open ID Continuous Access Evaluation Profile (CAEP)" ([CAE](https://learn.microsoft.com/en-us/entra/identity/conditional-access/concept-continuous-access-evaluation), verified 10 November 2026).
+
+**Deviation, Entra:**
+
+- **No introspection:** Entra's discovery document lists no `introspection_endpoint` ([OpenID configuration](https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration), checked 10 November 2026). APIs validate Entra tokens locally.
+- **CAE is for Microsoft's resources:** "Microsoft Entra ID sends an event to CAE-enabled Microsoft resources" ([Secure applications with CAE](https://learn.microsoft.com/security/zero-trust/develop/secure-with-cae), verified 10 November 2026), such as Exchange Online, SharePoint Online, Teams and Microsoft Graph. For workload identities, only Microsoft Graph ([CAE for workload identities](https://learn.microsoft.com/entra/identity/conditional-access/concept-continuous-access-evaluation-workload)). Microsoft documents no way for your own API to receive CAE events. Even where CAE works, events can take up to 15 minutes to arrive.
+- **So, for your own API:** the check is custom. Either the API asks Microsoft Graph whether the identity is still enabled on high-risk calls, or a deny list at the API is fed by events, for example Microsoft Graph change notifications on users (not checked).
+
+---
+
+## 10. How to Approach Agent Identities
 
 1. **Identity:** Give each agent its own identity, not a shared service account (and never a user account).
 2. **Accountability:** Give each agent an owner and a sponsor.
@@ -160,7 +192,7 @@ Microsoft says the same in its Learn "Key concepts" page: "Traditional service p
 
 ---
 
-## 10. The Short Version
+## 11. The Short Version
 
 The whole page in about one minute, as I would say it to a microservices developer:
 
@@ -168,7 +200,7 @@ The whole page in about one minute, as I would say it to a microservices develop
 
 ---
 
-## 11. The Guardian Today
+## 12. The Guardian Today
 
 How this project's guardian handles each difference, and where it falls short of the general practice:
 
@@ -181,5 +213,6 @@ How this project's guardian handles each difference, and where it falls short of
 | Sprawl | The guardian is a registry hygiene agent: it flags agents with no sponsor, expiring credentials, too many permissions, or no sign-in in 30 days ([rules.py](../src/mcp_server/rules.py)) | Report and disable only; no access reviews |
 | Agents call agents | One agent; the fixture agents run no code (ASI07 out of scope) | No delegation chain to track |
 | Audit "why" | One audit line per decision at the Identity API, with the FR8 fields | One correlation ID across all parts is not built yet (NFR4) |
+| Revocation | Disabling an agent identity is built, behind human approval (FR7), so Entra stops issuing it new tokens | A token already issued works until it expires; the deny list is design only ([DESIGN-NOTES §7](DESIGN-NOTES.md#7-revoking-live-tokens)) |
 
-Sources: Key concepts and Authorization in Agent ID (Microsoft Learn) and RFC 8693, checked 9 November 2026; Copilot Studio and Agent 365 pages, checked 5 November 2026.
+Sources: Key concepts and Authorization in Agent ID (Microsoft Learn) and RFC 8693, checked 9 November 2026; Access tokens, CAE, Secure applications with CAE (Microsoft Learn) and Entra's OpenID configuration, checked 10 November 2026; Copilot Studio and Agent 365 pages, checked 5 November 2026.
