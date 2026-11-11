@@ -5,7 +5,7 @@ This document shows how this project's **Guardian** agent is built today: its pa
 > **Current Implementation Status: Partly Built**
 > * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with three tools (`scan_registry` runs the Guardian's four registry rules, `get_agent` reads one agent, `submit_disable_agent_request` asks a human to approve disabling a dormant agent) and its tool allow-list, the executor, which does an approved disable with the approver's own rights (OBO), and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an MCP integration test proves it.
 > * **Run live:** both phases end to end, with the OBO disable, on 10 November 2026 ([the approve phase](#the-approve-phase)).
-> * **Not built yet:** The correlation-ID scaffold across all components.
+> * **Not built yet:** The link from a trace to the Entra sign-in log (the token's `uti` in each audit line).
 > 
 > *(See [Delivery status](delivery-status.md) for live progress tracking).*
 
@@ -97,53 +97,45 @@ So the guardian holds no standing write permission: its app-only write role was 
 
 ### Component Inventory: Who Holds What?
 
-The containers of one local run ([docker-compose.yml](../docker-compose.yml)), what each holds, and who calls whom. An arrow points from the caller to the one it calls. A namespace box is a shared network namespace: the containers in it talk over 127.0.0.1, like containers in one Kubernetes pod, and nothing outside the box can reach the sidecar.
+The containers of one local run ([docker-compose.yml](../docker-compose.yml)), what each holds, and who calls whom. An arrow points from the caller to the one it calls. A namespace box is a shared network namespace: the containers in it talk over 127.0.0.1, like containers in one Kubernetes pod, and nothing outside the box can reach the sidecar in it.
 
-```text
-  Docker Compose on one host. [agent] and [approval] are the two Docker networks.
-  Outside the host: Claude (Anthropic), Entra ID and Microsoft Graph.
+```mermaid
+flowchart LR
+    MODEL["<b>Claude</b><br/>Anthropic"]
+    ENTRA["<b>Entra ID</b>"]
+    GRAPH["<b>Microsoft Graph</b>"]
+    subgraph HOST["Docker Compose, one host"]
+        HARNESS["<b>guardian</b><br/>harness · agent network<br/>holds: the Anthropic API key"]
+        subgraph NS["sidecar's network namespace · agent network"]
+            MCP["<b>mcp-server</b><br/>tools, allow-list<br/>holds: no stored secret"]
+            SIDECAR["<b>sidecar</b><br/>app-only tokens<br/>holds: the certificate"]
+        end
+        API["<b>identity-api</b><br/>both networks · port 8000<br/>holds: no secret"]
+        APPROVE["<b>approve</b><br/>CLI · approval network<br/>signs the approver in at Entra ID<br/>holds: the approver's tokens,<br/>in memory"]
+        subgraph NSX["executor sidecar's network namespace · approval network"]
+            EXEC["<b>executor</b><br/>the only write<br/>holds: Tc, for one request"]
+            XSIDECAR["<b>executor-sidecar</b><br/>app-only and OBO tokens<br/>holds: the certificate"]
+        end
+    end
 
-  PROPOSE PHASE                             APPROVE PHASE
-
-  +-----------------------------------+     +-----------------------------------+
-  | guardian                [agent]   |     | approve              [approval]   |
-  | the harness: the agent loop       |     | the approver's CLI, on demand     +-----+
-  | holds: the Anthropic API key      |     | holds: the approver's tokens,     |     |
-  | calls: Claude                     |     | in memory only                    |     | list,
-  +-------+---------------------------+     | calls: Entra ID (sign-in)         |     | decision
-          |                                 +-------+---------------------------+     |
-          | MCP, no token (D1)                      |                                 |
-          | sidecar:8100/mcp                        | Tc, after an approval           |
-          v                                         | executor-sidecar:8200           |
-  +- sidecar's namespace -------------+             v                                 |
-  |  [agent]                          |     +- executor-sidecar's namespace ----+     |
-  |  +------------------------------+ |     |  [approval]                       |     |
-  |  | mcp-server                   | |     |  +------------------------------+ |     |
-  |  | tools, allow-list            | |     |  | executor                     | |     |
-  |  | calls: Graph (read)          | |     |  | the only write               | |     |
-  |  +---------------+--------------+ |     |  | calls: Graph (read, PATCH)   | |     |
-  |                  | 127.0.0.1:5000 |     |  +---------------+--------------+ |     |
-  |                  v                |     |                  | 127.0.0.1:5000 |     |
-  |  +------------------------------+ |     |                  v                |     |
-  |  | sidecar                      | |     |  +------------------------------+ |     |
-  |  | the certificate, app-only    | |     |  | executor-sidecar             | |     |
-  |  | calls: Entra ID              | |     |  | the certificate, OBO         | |     |
-  |  +------------------------------+ |     |  | calls: Entra ID              | |     |
-  +-------+---------------------------+     |  +------------------------------+ |     |
-          |                                 +-------+---------------------------+     |
-          | findings, requests                      |                                 |
-          | app-only token                          | claim, outcome                  |
-          |                                         | app-only token                  |
-          v                                         v                                 v
-  +------------------------------------------------------------------------------------+
-  | identity-api                                          [agent] [approval]           |
-  | checks every token, stores the findings, the requests and the decisions,           |
-  | and writes the audit lines. No published port: identity-api:8000                   |
-  | holds: no secret (it checks tokens with Entra's public signing keys)               |
-  +------------------------------------------------------------------------------------+
+    HARNESS <-->|"prompts, tool calls"| MODEL
+    HARNESS -->|"MCP, no token · D1"| MCP
+    MCP -->|"loopback"| SIDECAR
+    SIDECAR -->|"T1, then TR"| ENTRA
+    MCP -->|"TR: read"| GRAPH
+    MCP -->|"TR: findings, requests"| API
+    APPROVE -->|"list, decision"| API
+    APPROVE -->|"Tc, after an approval"| EXEC
+    XSIDECAR -->|"OBO exchange"| ENTRA
+    EXEC -->|"claim, outcome"| API
+    EXEC -->|"loopback"| XSIDECAR
+    EXEC -->|"OBO token: PATCH (disable)"| GRAPH
+    %% invisible link: keeps Graph in the right column, next to Entra ID
+    API ~~~ GRAPH
 ```
 
-* **Two networks:** the guardian is on the agent network only, so it cannot reach the executor. The approve CLI and the executor's sidecar are on the approval network only. The Identity API is on both.
+* **Two networks:** the guardian is on the agent network only, so it cannot reach the executor. The approve CLI and the executor's sidecar are on the approval network only. The Identity API and Jaeger are on both, and they do not join the two networks to each other.
+* **Jaeger, not drawn:** the trace viewer is on both networks and receives the spans of every service but the two sidecars. Its edges would cross the whole diagram, so it is only in the table below.
 * **Not shown:** the containers that run only on demand for tests and checks (`integration-tests`, `mcp-integration-tests`, `agent-eval`, `token-claims`, `obo-claims`). Each one joins one of the two networks or namespaces above.
 
 To verify our security posture, here is exactly what each container holds and what it can reach over the network:
@@ -158,6 +150,7 @@ To verify our security posture, here is exactly what each container holds and wh
 | **`executor-sidecar`** | Token acquisition, OBO | The blueprint's certificate file, plus the OBO settings. | Can reach Entra ID. Listens strictly on loopback. |
 | **`approve`** | The approver's client (CLI) | The approver's tokens, in memory only. | Can reach `identity-api` and the executor. |
 | **`identity-api`** | Resource API | *No secrets* (validates tokens using Entra's public signing keys). | *Nothing* (only responds to incoming API calls). |
+| **`jaeger`** | Trace viewer (NFR4) | *Nothing* | *Nothing* (only receives spans). Every service can send spans to it, and nothing checks who sent them ([A9](../THREATMODEL.md#accepted-risks)). |
 
 *(Transport Note: The communication between the harness and the MCP server uses **MCP over Streamable HTTP**, the standard transport for standalone networked MCP services. The client sends each MCP message as an HTTP POST to a single `/mcp` endpoint, and the server either replies with a standard JSON payload or streams the response back over the same connection).*
 
@@ -213,7 +206,7 @@ sequenceDiagram
     M->>M: run the four rules
     M->>A: POST /findings<br/>Bearer: the guardian's app-only token (Findings.Submit)
     M->>A: GET /agents/{agentId}/disableRequests, for each dormant agent<br/>Bearer: the guardian's app-only token (AgentDisable.Request)
-    M-->>H: the findings, the audit's correlation ID,<br/>and each dormant agent's latest request
+    M-->>H: the findings, and each dormant<br/>agent's latest request
     H->>L: the findings
 
     L-->>H: submit_disable_agent_request for each dormant agent
