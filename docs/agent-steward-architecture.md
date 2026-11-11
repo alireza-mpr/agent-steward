@@ -111,7 +111,7 @@ flowchart LR
             MCP["<b>mcp-server</b><br/>tools, allow-list<br/>holds: no stored secret"]
             SIDECAR["<b>sidecar</b><br/>app-only tokens<br/>holds: the certificate"]
         end
-        JAEGER["<b>jaeger</b><br/>trace viewer<br/>both networks<br/>gets spans from every<br/>service but the sidecars<br/>UI on 127.0.0.1:16686"]
+        JAEGER["<b>jaeger</b><br/>trace viewer<br/>both networks<br/>gets spans from every<br/>service but the sidecars<br/>OTLP/HTTP on port 4318"]
         API["<b>identity-api</b><br/>both networks · port 8000<br/>holds: no secret"]
         APPROVE["<b>approve</b><br/>CLI · approval network<br/>signs the approver in at Entra ID<br/>holds: the approver's tokens,<br/>in memory"]
         subgraph NSX["executor sidecar's network namespace · approval network"]
