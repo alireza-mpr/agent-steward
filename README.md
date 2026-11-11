@@ -31,50 +31,61 @@ The point of this project: demonstrate, end to end, how an autonomous agent can 
 
 ```mermaid
 flowchart LR
-    Admin[Admin user] -- "signs in (OIDC)" --> Guardian
-    Guardian["Guardian agent<br/>(Entra agent identity)"] -- "tool calls" --> MCP["MCP server<br/>allow-list + approval gate"]
-    MCP -- "agent token<br/>(client credentials or OBO)" --> API["Identity API<br/>claim validation + audit"]
-    Guardian -- "token requests via blueprint" --> Entra[("Microsoft Entra<br/>Agent ID")]
-    Worker["Live worker agent<br/>(timer loop, no LLM)"] -- "client credentials" --> Entra
-    Worker -- "read-only call every 5 min" --> API
-    API --> Obs[("Audit log + OTel traces<br/>linked by correlation ID")]
-    Entra --> Logs[("Entra sign-in logs")]
+    subgraph Propose["Propose phase: autonomous, the guardian's own app-only tokens"]
+        Guardian["Guardian: harness + model<br/>(holds no token)"] -- "tool calls (MCP)" --> MCP["MCP server<br/>allow-list, checks, requests"]
+    end
+    subgraph Approve["Approve phase: a person, then OBO"]
+        Approver["Approver<br/>(approve CLI)"] -- "Tc, after an approval" --> Exec["Executor<br/>the one write"]
+    end
+    MCP -- "reads" --> Graph[("Microsoft Graph")]
+    MCP -- "findings, disable requests" --> API["Identity API<br/>token checks, approvals, audit"]
+    Approver -- "decision" --> API
+    Exec -- "claims the request" --> API
+    Exec -- "disable, with the<br/>approver's rights (OBO)" --> Graph
+    API --> Audit[("Audit lines")]
 ```
 
 ### Agents in this demo
 
 | Agent | Role |
 |---|---|
-| **Guardian** | The only agent that uses a model (an LLM). Reads the registry autonomously; proposes privileged fixes, which a person approves; the approved disable runs with the approver's rights (OBO). |
-| **Live worker** | A tiny timer loop with its own agent identity. Calls one read-only endpoint every few minutes. Exists to produce real sign-in logs, to be blocked by Conditional Access, and to be killed live in the revocation demo. No LLM. |
-| **Fixture agents (3-4)** | Registry entries with deliberate flaws: one without a sponsor, one with an expiring credential, one over-permissioned, one dormant. They run no code. The guardian finds them. |
+| **Guardian** | The agent that governs, and the only one that uses a model (an LLM). Reads the registry autonomously; proposes privileged fixes, which a person approves; the approved disable runs with the approver's rights (OBO). |
+| **Fixture agents (5)** | The agents it governs: registry entries with deliberate flaws, one each without a sponsor, with an expiring credential, over-permissioned, dormant, and with a prompt injection in its description. They run no code. The guardian finds them. |
+
+The guardian runs when someone starts it. In production it would run on a schedule, and the controls do not depend on it.
 
 ## Functional requirements
 
-- **FR1 - Agent identity.** The guardian runs under an Entra agent identity created from an agent identity blueprint. No shared user account, no plain service principal.
-- **FR2 - Ownership.** Every agent identity has a named owner (technical) and sponsor (business), set in Entra.
-- **FR3 - Autonomous mode.** For read-only registry checks (orphan agents, expiring credentials, over-permissioned agents, dormant agents), the guardian gets a token via its blueprint using client credentials and calls the Identity API.
-- **FR4 - On-behalf-of mode.** For privileged fixes (disable agent, remove permission, assign sponsor), the agent proposes and the approver decides. The approver's sign-in gives a token that the guardian exchanges with the OBO flow, so the fix runs with the approver's rights, limited by the guardian's delegated permissions, and the guardian holds no standing write permission. The API tells the two modes apart from token claims.
-- **FR5 - Token validation.** The Identity API rejects any token not issued to a registered agent identity, and rejects agent tokens for scopes the agent was not granted. Negative tests included.
-- **FR6 - Tool layer via MCP.** The guardian's tools are exposed through an MCP server. Only allow-listed tools can be called. A call to an unknown tool is refused and logged.
-- **FR7 - Human approval.** Privileged tools require explicit human approval before execution. The approver's identity is recorded with the action.
-- **FR8 - Audit.** Every action logs: agent object ID, parent blueprint app ID, mode (autonomous or OBO), delegating user if any, tool name, approver if any, correlation ID, timestamp, outcome.
-- **FR9 - Conditional Access.** A policy applied to the blueprint blocks the agent under a defined condition, and the block appears in Entra sign-in logs. (If tenant licensing blocks CA for agents, this requirement is documented with the exact licensing constraint instead of demoed - see DEMO.md.)
-- **FR10 - Secrets.** No long-lived secrets in code or config. Credentials via Key Vault or environment injection; tokens short-lived.
-- **FR11 - Revocation.** Disabling an agent identity in Entra stops its calls within one token lifetime, with no code change. Demonstrated live on the worker's timer loop.
-- **FR12 - Live telemetry source.** One real worker agent runs on a timer, continuously producing sign-in logs, fresh short-lived tokens, and traces, so lifecycle and observability demos use live data.
+Status: [✅] done, [▶️] in progress, [📄] design only, [⏸️] not started, [✂️] cut. The evidence for each one is in [Delivery status](docs/delivery-status.md).
+
+- [✅] **FR1 - Agent identity.** The guardian runs under an Entra agent identity created from an agent identity blueprint. No shared user account, no plain service principal.
+- [✅] **FR2 - Ownership.** Every agent identity has a named owner (technical) and sponsor (business), set in Entra.
+- [✅] **FR3 - Autonomous mode.** For read-only registry checks (orphan agents, expiring credentials, over-permissioned agents, dormant agents), the guardian gets a token via its blueprint using client credentials and calls the Identity API.
+- [✅] **FR4 - On-behalf-of mode.** For a privileged fix, disabling an agent, the agent proposes and the approver decides. The approver's sign-in gives a token that the guardian exchanges with the OBO flow, so the fix runs with the approver's rights, limited by the guardian's delegated permissions, and the guardian holds no standing write permission. The API tells the two modes apart from token claims.
+  - Cut: removing a permission and assigning a sponsor, because one fix already proves the whole OBO chain, and each extra fix would only repeat it.
+- [✅] **FR5 - Token validation.** The Identity API rejects any token not issued to a registered agent identity, and rejects agent tokens for scopes the agent was not granted. Negative tests included.
+- [✅] **FR6 - Tool layer via MCP.** The guardian's tools are exposed through an MCP server. Only allow-listed tools can be called. A call to an unknown tool is refused and logged.
+- [✅] **FR7 - Human approval.** Privileged tools require explicit human approval before execution. The approver's identity is recorded with the action.
+- [▶️] **FR8 - Audit.** Every action logs: agent object ID, parent blueprint app ID, mode (autonomous or OBO), delegating user if any, tool name, approver if any, correlation ID, timestamp, outcome.
+- [⏸️] **FR9 - Conditional Access.** A policy applied to the blueprint blocks the agent under a defined condition, and the block appears in Entra sign-in logs. (If tenant licensing blocks CA for agents, this requirement is documented with the exact licensing constraint instead of demoed - see DEMO.md.)
+- [✅] **FR10 - Secrets.** No long-lived secrets in code or config. Credentials via Key Vault or environment injection; tokens short-lived.
+- [📄] **FR11 - Revocation.** Disabling an agent identity in Entra stops its calls within one token lifetime, with no code change. The ways to stop a token already issued are written design ([DESIGN-NOTES.md](docs/DESIGN-NOTES.md#7-revoking-live-tokens)).
+- [✂️] **FR12 - Live telemetry source.** One real worker agent runs on a timer, continuously producing sign-in logs, fresh short-lived tokens, and traces, so lifecycle and observability demos use live data.
+  - Cut: the worker was only a live target for the revocation and Conditional Access demos, and revocation is now design only.
 
 ## Non-functional requirements
 
-- **NFR1 - Least privilege.** Each tool documents the exact permission it needs. No agent holds anything beyond its documented set.
-- **NFR2 - Attribution.** Any log line traces to exactly one agent identity and, in OBO mode, exactly one human.
-- **NFR3 - Untrusted content boundary.** Tool outputs and directory data are data, never instructions. Demonstrated with a prompt injection test: a malicious instruction planted in a fixture agent's description field is treated as text, not executed.
-- **NFR4 - Observability.** OpenTelemetry trace per guardian request. One correlation ID links three records: the application trace, the audit line, and the Entra sign-in log. (Per-step token count and cost estimation: optional, first to cut.)
-- **NFR5 - Reproducibility.** One `docker compose up` runs the app locally. Tenant setup is documented step by step and scripted as code: Bicep (Microsoft Graph Bicep extension) where the object type supports it, Microsoft Graph PowerShell for the rest.
-- **NFR6 - Repo hygiene.** No secrets, tenant IDs or real data in the repo. History scanned with gitleaks.
-- **NFR7 - Threat model.** Every OWASP Agentic Top 10 risk is marked mitigated, accepted or out of scope, with a reason, mapped to a MAESTRO layer, and pointing at the code or config that implements the control. See [THREATMODEL.md](THREATMODEL.md).
-- **NFR8 - Tests.** Offline tests for all policy logic (allow-list, approval gate, token claim checks). One live test per auth flow.
-- **NFR9 - Durable proof.** [DEMO.md](DEMO.md) walks through every control with screenshots captured while the tenant was live, so the whole story is reviewable without running anything.
+Status: as for the functional requirements above.
+
+- [▶️] **NFR1 - Least privilege.** Each tool documents the exact permission it needs. No agent holds anything beyond its documented set.
+- [▶️] **NFR2 - Attribution.** Any log line traces to exactly one agent identity and, in OBO mode, exactly one human.
+- [✅] **NFR3 - Untrusted content boundary.** Tool outputs and directory data are data, never instructions. Demonstrated with a prompt injection test: a malicious instruction planted in a fixture agent's description field is treated as text, not executed.
+- [⏸️] **NFR4 - Observability.** OpenTelemetry trace per guardian request. One correlation ID links three records: the application trace, the audit line, and the Entra sign-in log. (Per-step token count and cost estimation: optional, first to cut.)
+- [▶️] **NFR5 - Reproducibility.** One `docker compose up` runs the app locally. Tenant setup is documented step by step and scripted as code: Bicep (Microsoft Graph Bicep extension) where the object type supports it, Microsoft Graph PowerShell for the rest.
+- [▶️] **NFR6 - Repo hygiene.** No secrets, tenant IDs or real data in the repo. History scanned with gitleaks.
+- [✅] **NFR7 - Threat model.** Every OWASP Agentic Top 10 risk is marked mitigated, accepted or out of scope, with a reason, mapped to a MAESTRO layer, and pointing at the code or config that implements the control. See [THREATMODEL.md](THREATMODEL.md).
+- [▶️] **NFR8 - Tests.** Offline tests for all policy logic (allow-list, approval gate, token claim checks). One live test per auth flow.
+- [▶️] **NFR9 - Durable proof.** [DEMO.md](DEMO.md) walks through every control with screenshots captured while the tenant was live, so the whole story is reviewable without running anything.
 
 ## Deliberately out of code scope
 
@@ -98,8 +109,8 @@ setup/            Tenant setup as code: Bicep + Graph PowerShell (blueprint, ide
 src/identity_api/ Identity API (Python / FastAPI): token validation, audit
 src/guardian/     Guardian's harness (Python): the agent loop between Claude and the MCP server
 src/approve_cli/  The CLI (Python): a person approves or denies a request to disable an agent
-src/mcp_server/   MCP server (official Python SDK): the guardian's tools, the four rules, Graph reader
-src/worker/       Live worker timer loop (PowerShell)
+src/mcp_server/   MCP server (official Python SDK): the guardian's tools, the four rules, Graph reader; it never writes
+src/executor/     The executor (Python / FastAPI): the one write, disabling an agent with the approver's rights (OBO)
 tests/            Unit tests, offline (unit/); integration tests against the running stack (integration/): the Identity API with real Entra tokens (identity_api/), and the MCP tools from the guardian's network (mcp_server/); an agent eval that runs the guardian with Claude against a planted prompt injection (agent_eval/)
 tools/            Dev tools that print token claims, never tokens (token-claims: the guardian's token from the sidecar; token_exchange: T1 and TR side by side)
 docs/             Delivery status (delivery-status.md); reference (GLOSSARY.md: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP; DESIGN-NOTES.md: written designs for out-of-scope patterns; entra.md, infra.md, agent-id.md, tokens.md, agent-architecture.md, agent-steward-architecture.md, investigating-agent-activity.md, from-microservices-to-agents.md, authentication.md, jwt-bearer-and-token-exchange.md, apps-and-apis.md, messages-api.md), harness reference (harness.md), MCP reference (mcp.md), testing the agent's behaviour with evals (testing-ai-agents.md), decision log (decisions.md), control register (security-controls.md), screenshots
