@@ -25,14 +25,15 @@ def is_protected(graph: GraphClient, agent: AgentDetails, guardian_app_id: str) 
 
 def dormant_finding(graph: GraphClient, agent: AgentDetails, now: datetime) -> Finding | None:
     """The same rule as scan_registry, so a disable does not depend on what the model says."""
-    plain = Agent(agent.app_id, agent.name, agent.blueprint_app_id, sponsor_count=0)
+    plain = Agent(agent.app_id, agent.name, agent.blueprint_app_id, sponsor_count=0, enabled=agent.enabled)
     return next(iter(find_dormant([plain], fetch_last_sign_ins(graph, now), now)), None)
 
 
 async def check_can_be_disabled(graph: GraphClient, app_id: str, guardian_app_id: str,
                                 audit: Callable[..., None]) -> tuple[AgentDetails | None, Finding | None, str | None]:
     """Returns the agent, its dormant finding, and the refusal text, which is None when the agent
-    can be disabled. Writes a disable_refused line for the guardian's own agents and active agents."""
+    can be disabled. Writes a disable_refused line for the guardian's own agents, agents that are
+    already disabled, and active agents."""
     # app_id goes into a Graph filter, so only a GUID passes.
     if not GUID.fullmatch(app_id):
         return None, None, "app_id must be an agent identity's app ID (a GUID)"
@@ -42,6 +43,9 @@ async def check_can_be_disabled(graph: GraphClient, app_id: str, guardian_app_id
     if await asyncio.to_thread(is_protected, graph, agent, guardian_app_id):
         audit(event="disable_refused", agent=app_id, reason="protected")
         return agent, None, "Refused: this agent belongs to the guardian."
+    if not agent.enabled:
+        audit(event="disable_refused", agent=app_id, reason="already disabled")
+        return agent, None, "Refused: this agent is already disabled."
     dormant = await asyncio.to_thread(dormant_finding, graph, agent, datetime.now(timezone.utc))
     if dormant is None:
         audit(event="disable_refused", agent=app_id, reason="not dormant")

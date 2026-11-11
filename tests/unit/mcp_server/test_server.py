@@ -6,6 +6,7 @@ No network: Graph and the Identity API are replaced where a test needs them.
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -206,7 +207,7 @@ class FakeApprovals:
         if self.execute_error:
             raise self.execute_error
         self.executed.append((agent_id, request_id, delegating_user))
-        self.status = "executed"
+        self.status = "running"
         return self.request(agent_id)
 
 
@@ -285,6 +286,19 @@ def test_the_request_tool_refuses_everything_when_the_guardian_cannot_be_read(di
 
     assert submit().is_error
     assert approvals.created == []
+
+
+def test_the_request_tool_refuses_an_agent_that_is_already_disabled_and_asks_nobody(disable_setup, monkeypatch, capsys):
+    use = disable_setup
+    approvals = use(FakeApprovals())
+    disabled = replace(AGENT, enabled=False)
+    set_agents(monkeypatch, lambda client, app_id: GUARDIAN if app_id == GUARDIAN.app_id else disabled)
+
+    outcome = submit()
+
+    assert outcome.is_error and "already disabled" in outcome.content[0].text
+    assert approvals.created == []
+    assert {"event": "disable_refused", "agent": AGENT.app_id, "reason": "already disabled"} in audit_lines(capsys)
 
 
 def test_the_request_tool_refuses_an_agent_that_is_not_dormant_and_asks_nobody(disable_setup, monkeypatch, capsys):

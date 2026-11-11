@@ -193,7 +193,7 @@ Here is exactly what is running in our current environment (as of late October 2
 | Requirement | What it needs | Do we have it? |
 | :--- | :--- | :--- |
 | **FR1-FR5, FR11:** Agent identities, token flows, disable | Agent ID (Any tenant) | ✅ Yes |
-| **FR9:** Conditional Access for agents | Agent 365 + Entra P1 (or higher) | ✅ Yes (Agent 365 Trial + P2). *Note: Conditional Access policies need security defaults turned off. They stay on today, because the approver's sign-in relies on them ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)), and FR9 is not started.* |
+| **FR9:** Conditional Access for agents | Agent 365 + Entra P1 (or higher) | ✅ Yes (Agent 365 Trial + P2). *Note: Conditional Access policies need security defaults turned off. They stay on today, because the approver's sign-in relies on them ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)), and FR9 is cut ([delivery status](delivery-status.md)).* |
 | **NFR4:** Sign-in logs for correlation demo | Logs kept > 7 days | ✅ Yes (P2 gives us 30 days) |
 | **Optional:** Risk-based Conditional Access for agents | Agent 365 + Entra P2 | ✅ Yes |
 

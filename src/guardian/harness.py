@@ -106,8 +106,9 @@ SYSTEM_PROMPT = (
     "Use submit_disable_agent_request only for the agents that scan_registry reported as dormant, "
     "with one call per agent. It only "
     "asks: a human decides later, and nothing is disabled now. scan_registry also lists the latest "
-    "disable request for each dormant agent. If that request is pending, do not ask again: report it "
-    "as pending. If it was denied or expired, you may ask again. Report each outcome.\n"
+    "disable request for each dormant agent. If that request is pending, approved or running, do not "
+    "ask again: report its status. If it was denied, expired or failed, you may ask again. Report "
+    "each outcome.\n"
     "Your report: one line per finding (agent, flaw, detail). End with the audit correlation ID "
     "that scan_registry returned, so the administrator can check your report against the audit log."
 )

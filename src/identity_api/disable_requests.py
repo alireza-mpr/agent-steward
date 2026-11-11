@@ -3,7 +3,9 @@
 The agent proposes, and the approver decides. A request starts pending, and leaves pending only
 once: approved, denied or expired. An approved request is executed at most once, and only soon
 after the approval: the executor claims it here before it writes, with the approver's rights
-(OBO). Plain Python with no FastAPI, and the clock is passed in, so the rules have offline tests (NFR8).
+(OBO), and the request becomes running. After the write, the executor records the outcome once:
+succeeded or failed. The names are Microsoft Graph's longRunningOperationStatus values. Plain
+Python with no FastAPI, and the clock is passed in, so the rules have offline tests (NFR8).
 
 In memory only. If the API restarts, every request is gone: a pending one can no longer be
 approved, an approved one can no longer be executed, and nothing is disabled (fail closed). The
@@ -15,6 +17,29 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from enum import StrEnum
+
+
+class Status(StrEnum):
+    """A request's status. Each value is a plain string, so it goes into JSON as is.
+
+    pending -> approved, denied or expired (the approver decides, or nobody does within a day)
+    approved -> running (the executor claimed it, right before its write)
+    running -> succeeded or failed (the executor recorded what the write did)
+    The last three are Microsoft Graph's longRunningOperationStatus values."""
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+    EXPIRED = "expired"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+# A claimed request. None of these can be claimed again.
+CLAIMED = frozenset({Status.RUNNING, Status.SUCCEEDED, Status.FAILED})
+# What the executor can record after its write.
+OUTCOMES = frozenset({Status.SUCCEEDED, Status.FAILED})
 
 # The guardian does not wait for the decision: it asks, and a later run sees the request's status.
 # So a pending request waits for an approver for a day, about one run of the guardian.
@@ -36,6 +61,10 @@ class AlreadyFinal(Exception):
     """The request was already decided, or it expired."""
 
 
+class NotRunning(Exception):
+    """The request is not running, so it has no outcome to record: not claimed, or already finished."""
+
+
 class NotExecutable(Exception):
     """The request cannot be executed: not approved, already executed, too late, or the delegating
     user is not the person who approved it. reason says which."""
@@ -55,11 +84,12 @@ class DisableRequest:
     correlation_id: str     # links the audit lines of this request
     expires_at: datetime
     created_at: datetime | None = None
-    status: str = "pending"             # pending, approved, denied, expired or executed
+    status: Status = Status.PENDING
     decided_by_id: str | None = None    # the approver's oid, from their token
     decided_by_name: str | None = None
     decided_at: datetime | None = None
-    executed_at: datetime | None = None
+    executed_at: datetime | None = None    # when the executor claimed it (running)
+    finished_at: datetime | None = None    # when the executor recorded the outcome
 
 
 class DisableRequestStore:
@@ -73,9 +103,9 @@ class DisableRequestStore:
 
     def _expire_if_due(self, request: DisableRequest) -> DisableRequest:
         """Expiry is checked on every read and decision, so no background timer is needed."""
-        if request.status != "pending" or self._now() < request.expires_at:
+        if request.status != Status.PENDING or self._now() < request.expires_at:
             return request
-        expired = replace(request, status="expired")
+        expired = replace(request, status=Status.EXPIRED)
         self._requests[request.id] = expired
         self._on_expired(expired)
         return expired
@@ -85,7 +115,7 @@ class DisableRequestStore:
 
     def create(self, agent_id: str, requested_by: str, reason: str, facts: dict, correlation_id: str) -> DisableRequest:
         with self._lock:
-            if any(request.agent_id == agent_id and request.status == "pending" for request in self._current()):
+            if any(request.agent_id == agent_id and request.status == Status.PENDING for request in self._current()):
                 raise AlreadyPending
             now = self._now()
             request = DisableRequest(str(uuid.uuid4()), agent_id, requested_by, reason, facts, correlation_id,
@@ -106,7 +136,7 @@ class DisableRequestStore:
 
     def pending(self) -> list[DisableRequest]:
         with self._lock:
-            return [request for request in self._current() if request.status == "pending"]
+            return [request for request in self._current() if request.status == Status.PENDING]
 
     def of_agent(self, agent_id: str, requested_by: str) -> list[DisableRequest]:
         """The requests one requester made for one agent, the newest first."""
@@ -120,25 +150,39 @@ class DisableRequestStore:
         it, and only within EXECUTE_WITHIN of the approval. Raises NotFound or NotExecutable."""
         with self._lock:
             request = self._find(agent_id, request_id)
-            if request.status == "executed":
+            if request.status in CLAIMED:
                 raise NotExecutable("already executed")
-            if request.status != "approved":
+            if request.status != Status.APPROVED:
                 raise NotExecutable("not approved")
             if request.decided_by_id != delegating_user:
                 raise NotExecutable("not the approver")
             if self._now() > request.decided_at + EXECUTE_WITHIN:
                 raise NotExecutable("too late")
-            executed = replace(request, status="executed", executed_at=self._now())
+            executed = replace(request, status=Status.RUNNING, executed_at=self._now())
             self._requests[request_id] = executed
             return executed
 
-    def decide(self, agent_id: str, request_id: str, status: str, decided_by_id: str, decided_by_name: str) -> DisableRequest:
+    def record_outcome(self, agent_id: str, request_id: str, outcome: str) -> DisableRequest:
+        """Record what the write did, once: succeeded or failed. Only a running request has an
+        outcome to record. A failed request is final too: the agent may ask again with a new request,
+        which needs a new approval. Raises NotFound or NotRunning."""
+        if outcome not in OUTCOMES:
+            raise ValueError(f"outcome must be one of {sorted(OUTCOMES)}")
+        with self._lock:
+            request = self._find(agent_id, request_id)
+            if request.status != Status.RUNNING:
+                raise NotRunning
+            finished = replace(request, status=Status(outcome), finished_at=self._now())
+            self._requests[request_id] = finished
+            return finished
+
+    def decide(self, agent_id: str, request_id: str, status: Status, decided_by_id: str, decided_by_name: str) -> DisableRequest:
         """Record a decision, once. status is approved or denied."""
         with self._lock:
             request = self._find(agent_id, request_id)
-            if request.status != "pending":
+            if request.status != Status.PENDING:
                 raise AlreadyFinal
-            decided = replace(request, status=status, decided_by_id=decided_by_id, decided_by_name=decided_by_name,
+            decided = replace(request, status=Status(status), decided_by_id=decided_by_id, decided_by_name=decided_by_name,
                               decided_at=self._now())
             self._requests[request_id] = decided
             return decided

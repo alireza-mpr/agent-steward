@@ -72,7 +72,7 @@ class RequestStatus:
     """The latest disable request for a dormant agent, so the model can see what is already asked."""
     agent_app_id: str
     request_id: str
-    status: str                 # pending, approved, denied, expired or executed
+    status: str                 # pending, approved, denied, expired, running, succeeded or failed (approval.Status)
     created_at: str | None
     decided_by: str | None      # the approver's display name, once someone decided
     decided_at: str | None

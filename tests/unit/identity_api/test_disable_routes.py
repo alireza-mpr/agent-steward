@@ -316,7 +316,7 @@ def test_the_agent_that_asked_executes_an_approved_request_once(client, capsys):
 
     first, second = execute(client, request_id), execute(client, request_id)
 
-    assert first.status_code == 200 and first.json()["status"] == "executed"
+    assert first.status_code == 200 and first.json()["status"] == "running"
     assert second.status_code == 409
     [line] = audit_lines(capsys, "disable_request_executed")
     assert (line["mode"], line["delegating_user"], line["approver_id"]) == ("obo", PERSON, PERSON)
@@ -361,3 +361,60 @@ def test_the_requester_lists_its_own_requests_for_one_agent(client):
     assert mine.json()["value"][0]["decidedAt"] is not None
     assert theirs.json()["value"] == []
     assert client.get(f"/agents/{TARGET}/disableRequests", headers=person()).status_code in (401, 403)
+
+
+# The outcome: the executor records what its write did.
+
+def record(client, request_id, outcome="succeeded", headers=None, agent=TARGET):
+    return client.post(f"/agents/{agent}/disableRequests/{request_id}/outcome", json={"outcome": outcome},
+                       headers=headers or guardian())
+
+
+@pytest.mark.parametrize("outcome", ["succeeded", "failed"])
+def test_the_agent_that_asked_records_the_outcome_once_and_it_is_audited(outcome, client, capsys):
+    request_id = approve_one(client)
+    execute(client, request_id)
+
+    first, second = record(client, request_id, outcome), record(client, request_id, outcome)
+
+    assert first.status_code == 200 and first.json()["status"] == outcome and first.json()["finishedAt"]
+    assert second.status_code == 409
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    [line] = [line for line in lines if line["event"] == "disable_request_finished"]
+    assert (line["outcome"], line["correlation_id"], line["approver_id"]) == (outcome, "correlation-1", PERSON)
+    [refused] = [line for line in lines if line["event"] == "disable_outcome_refused"]
+    assert refused["status"] == outcome
+
+
+def test_an_approved_request_that_was_not_claimed_has_no_outcome(client):
+    request_id = approve_one(client)
+
+    assert record(client, request_id).status_code == 409
+
+
+def test_an_outcome_must_be_succeeded_or_failed_on_the_wire(client):
+    request_id = approve_one(client)
+    execute(client, request_id)
+
+    assert record(client, request_id, "executed").status_code == 422
+    assert record(client, request_id, "approved").status_code == 422
+
+
+def test_a_person_or_another_agent_cannot_record_an_outcome(client):
+    request_id = approve_one(client)
+    execute(client, request_id)
+
+    assert record(client, request_id, headers=person()).status_code in (401, 403)
+    assert record(client, request_id, headers=guardian(azp=OTHER_AGENT, oid=OTHER_AGENT)).status_code == 404
+
+
+def test_the_scan_sees_a_failed_request_and_the_agent_can_ask_again(client):
+    request_id = approve_one(client)
+    execute(client, request_id)
+    record(client, request_id, "failed")
+
+    again = create(client)
+    listed = client.get(f"/agents/{TARGET}/disableRequests", headers=guardian()).json()["value"]
+
+    assert again.status_code == 201
+    assert sorted(item["status"] for item in listed) == ["failed", "pending"]

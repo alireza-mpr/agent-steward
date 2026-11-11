@@ -97,6 +97,16 @@ def test_dormant_rule_flags_every_agent_without_a_recent_sign_in():
     assert {finding.date for finding in find_dormant(AGENTS, LAST_SIGN_INS, NOW)} == {None}
 
 
+def test_a_disabled_agent_is_not_dormant_but_the_other_rules_still_see_it():
+    # Live case, 10 November 2026: overperm-01 was disabled with OBO, and the next scan flagged it
+    # as dormant again, so the guardian would have asked to disable it twice.
+    disabled = replace(OVERPERM, sponsor_count=0, enabled=False)
+
+    assert find_dormant([disabled], {}, NOW) == []
+    assert names(find_orphans([disabled])) == ["agent-steward-fixture-overperm-01"]
+    assert names(find_over_permissioned([disabled], POLICY)) == ["agent-steward-fixture-overperm-01"]
+
+
 def test_a_sign_in_older_than_30_days_is_dormant():
     [finding] = find_dormant([GUARDIAN], {"a-guardian": NOW - timedelta(days=31)}, NOW)
     assert (finding.date, finding.detail) == ("2026-09-26", "last sign-in more than 30 days ago")

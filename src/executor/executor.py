@@ -3,7 +3,8 @@
 The agent proposes, and the approver decides and lends their own rights. The MCP server only
 creates the request. After an approval, the approve CLI sends the approver's token (Tc) here. The
 executor checks Tc, binds it to the approval, checks the agent again, claims the request at the
-Identity API, exchanges Tc with OBO and writes, all within that one HTTP call.
+Identity API, exchanges Tc with OBO, writes, and records the outcome at the Identity API (succeeded
+or failed), all within that one HTTP call.
 
 It runs as the guardian's agent identity, through its own token sidecar (docker-compose.yml).
 Only that sidecar has the OBO settings, and only this service ever receives Tc. So the MCP
@@ -25,7 +26,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from approval import SERVICE_ERRORS, ApprovalError, DisableRequest, IdentityApiApprovals
+from approval import CLAIMED, SERVICE_ERRORS, ApprovalError, DisableRequest, IdentityApiApprovals, Status
 from disable_checks import GUID, check_can_be_disabled
 from graph_reader import GraphClient
 from graph_writer import GraphWriter, disable_agent_identity
@@ -86,6 +87,17 @@ def approval_service() -> IdentityApiApprovals:
     return IdentityApiApprovals(API_URL, token_for("identity-api"))
 
 
+async def record_outcome(service: IdentityApiApprovals, claimed: DisableRequest, outcome: Status) -> None:
+    """Tell the Identity API what the write did, so the scan, the model and the audit can tell a
+    disabled agent from a failed write. If this call fails, the request stays running: the audit
+    line here is then the record, and a later scan sees the agent's real state."""
+    try:
+        await asyncio.to_thread(service.record_outcome, claimed.agent_id, claimed.request_id, outcome)
+    except (ApprovalError, *SERVICE_ERRORS) as error:
+        audit_request("outcome_not_recorded", claimed, claimed.correlation_id, outcome=str(outcome),
+                      reason=getattr(error, "reason", type(error).__name__))
+
+
 async def write_disable(reader: GraphClient, writer: GraphWriter, approved: DisableRequest,
                         correlation_id: str | None, delegating_user: str | None = None) -> bool | None:
     """The write: reader reads with the guardian's app-only token, writer writes with the approver's
@@ -138,9 +150,9 @@ async def accept_delegation(agent_id: str, request_id: str, tc: str | None) -> t
         return refuse(404, "no such request") if error.code == 404 else refuse(503, "unavailable")
     except SERVICE_ERRORS:
         return refuse(503, "unavailable")
-    if found.status == "executed":
+    if found.status in CLAIMED:
         return refuse(409, "already executed", found.correlation_id)
-    if found.status != "approved":
+    if found.status != Status.APPROVED:
         return refuse(403, "not approved", found.correlation_id)
     # The binding: only the person who approved this request may lend their rights for it.
     if found.decided_by_id != oid:
@@ -160,14 +172,22 @@ async def accept_delegation(agent_id: str, request_id: str, tc: str | None) -> t
     except SERVICE_ERRORS:
         return refuse(503, "unavailable", found.correlation_id)
 
+    # From here the request is running. Every path below records its outcome, except a cancelled
+    # write, whose outcome is unknown: it stays running (disable_abandoned).
     try:
         token = await asyncio.to_thread(obo_token, tc)
     except SERVICE_ERRORS:
         audit_request("disable_failed", claimed, claimed.correlation_id, stage="obo exchange", delegating_user=oid)
+        await record_outcome(service, claimed, Status.FAILED)
         return 502, "write_failed"
     confirmed = await write_disable(GraphClient(token_for("graph")), GraphWriter(lambda: token), claimed,
                                     claimed.correlation_id, delegating_user=oid)
-    return (200, "disabled") if confirmed is not None else (502, "write_failed")
+    if confirmed is None:
+        await record_outcome(service, claimed, Status.FAILED)
+        return 502, "write_failed"
+    # Graph accepted the PATCH. A read that does not show it yet (confirmed False) is only lag.
+    await record_outcome(service, claimed, Status.SUCCEEDED)
+    return 200, "disabled"
 
 
 @app.post("/agents/{agent_id}/disableRequests/{request_id}/delegation")

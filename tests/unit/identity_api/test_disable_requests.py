@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from disable_requests import (EXECUTE_WITHIN, EXPIRES_AFTER, AlreadyFinal, AlreadyPending, DisableRequestStore,
-                              NotExecutable, NotFound)
+                              NotExecutable, NotFound, NotRunning, Status)
 
 
 class Clock:
@@ -167,7 +167,7 @@ def test_an_approved_request_is_executed_once_for_the_approver(store, clock):
 
     executed = store.execute("agent-1", request.id, "approver-oid")
 
-    assert (executed.status, executed.executed_at) == ("executed", clock.time)
+    assert (executed.status, executed.executed_at) == (Status.RUNNING, clock.time)
     with pytest.raises(NotExecutable, match="already executed"):
         store.execute("agent-1", request.id, "approver-oid")
 
@@ -221,3 +221,66 @@ def test_of_agent_lists_one_requesters_requests_for_one_agent_newest_first(store
 
     assert [request.id for request in store.of_agent("agent-1", "guardian")] == [second.id, first.id]
     assert store.of_agent("agent-1", "another-requester") == []
+
+
+# The outcome: a claimed request ends as succeeded or failed, so a failed write is not taken for a disable.
+
+def running(store, agent="agent-1"):
+    request = approved(store, agent)
+    store.execute(agent, request.id, "approver-oid")
+    return request
+
+
+@pytest.mark.parametrize("outcome", [Status.SUCCEEDED, Status.FAILED])
+def test_a_running_request_records_its_outcome_once(outcome, store, clock):
+    request = running(store)
+    clock.time += timedelta(seconds=20)
+
+    finished = store.record_outcome("agent-1", request.id, outcome)
+
+    assert (finished.status, finished.finished_at) == (outcome, clock.time)
+    with pytest.raises(NotRunning):
+        store.record_outcome("agent-1", request.id, Status.SUCCEEDED)
+
+
+@pytest.mark.parametrize("status", [None, "approved", "denied"])
+def test_only_a_running_request_has_an_outcome(status, store):
+    request = create(store)
+    if status:
+        store.decide("agent-1", request.id, status, "approver-oid", "An Approver")
+
+    with pytest.raises(NotRunning):
+        store.record_outcome("agent-1", request.id, Status.SUCCEEDED)
+
+
+def test_an_outcome_must_be_succeeded_or_failed(store):
+    request = running(store)
+
+    with pytest.raises(ValueError):
+        store.record_outcome("agent-1", request.id, Status.APPROVED)
+    assert store.get("agent-1", request.id).status == Status.RUNNING
+
+
+@pytest.mark.parametrize("outcome", [Status.SUCCEEDED, Status.FAILED])
+def test_a_finished_request_cannot_be_executed_again(outcome, store):
+    request = running(store)
+    store.record_outcome("agent-1", request.id, outcome)
+
+    with pytest.raises(NotExecutable, match="already executed"):
+        store.execute("agent-1", request.id, "approver-oid")
+
+
+def test_after_a_failed_write_the_agent_can_ask_again_with_a_new_request(store):
+    request = running(store)
+    store.record_outcome("agent-1", request.id, Status.FAILED)
+
+    again = create(store)
+
+    assert again.status == Status.PENDING and again.id != request.id
+
+
+def test_an_outcome_is_only_through_the_requests_own_agent(store):
+    request = running(store)
+
+    with pytest.raises(NotFound):
+        store.record_outcome("agent-2", request.id, Status.SUCCEEDED)

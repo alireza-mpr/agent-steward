@@ -84,3 +84,12 @@ def test_a_failed_sign_in_is_not_activity():
               {"appId": "a-1", "createdDateTime": "2026-10-26T08:45:18Z",
                "agent": {"agentType": "agenticAppInstance"}, "status": {"errorCode": 0}}]
     assert parse_last_sign_ins(events) == {"a-1": datetime(2026, 10, 26, 8, 45, 18, tzinfo=timezone.utc)}
+
+
+def test_accountenabled_is_read_and_only_false_means_disabled():
+    # A missing value counts as enabled, so it can never hide a dormant agent.
+    items = [{"id": f"o-{value}", "appId": f"a-{value}", "displayName": "agent", "agentIdentityBlueprintId": "bp-1",
+              **({} if value == "missing" else {"accountEnabled": value})} for value in (True, False, "missing")]
+
+    assert [agent.enabled for agent in parse_agents(items, {})] == [True, False, True]
+    assert [parse_agent_details([item]).enabled for item in items] == [True, False, True]

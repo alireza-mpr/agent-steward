@@ -22,7 +22,8 @@ import jwt
 from fastapi import Depends, FastAPI, HTTPException, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from disable_requests import AlreadyFinal, AlreadyPending, DisableRequest, DisableRequestStore, NotExecutable, NotFound
+from disable_requests import (AlreadyFinal, AlreadyPending, DisableRequest, DisableRequestStore, NotExecutable,
+                              NotFound, NotRunning, Status)
 from token_validation import ApiSettings, Approver, Caller, TokenRejected, verify_agent, verify_approver
 
 SETTINGS = ApiSettings(
@@ -128,7 +129,8 @@ def submit_findings(report: FindingsReport, request: Request,
 
 
 # The approval of a request to disable an agent (FR7, FR4): the agent proposes, and the approver
-# decides. The agent creates, reads and executes its own requests; a person lists and decides.
+# decides. The agent creates, reads and executes its own requests, and records the outcome; a person
+# lists and decides.
 
 GUID_PATTERN = r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$"
 AgentId = Annotated[str, Path(pattern=GUID_PATTERN)]
@@ -164,6 +166,11 @@ class Decision(BaseModel):
     decision: Literal["approve", "deny"]   # the approver's identity comes only from the token
 
 
+class Outcome(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    outcome: Literal[Status.SUCCEEDED, Status.FAILED]   # what the executor's write did
+
+
 class Execution(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # The oid of the person whose rights the write uses (OBO). The executor took it from that
@@ -180,7 +187,8 @@ def as_json(request: DisableRequest) -> dict:
     return {"id": request.id, "agentId": request.agent_id, "status": request.status, "reason": request.reason,
             "facts": request.facts, "correlationId": request.correlation_id,
             "createdAt": iso(request.created_at), "expiresAt": iso(request.expires_at),
-            "decidedBy": decided_by, "decidedAt": iso(request.decided_at), "executedAt": iso(request.executed_at)}
+            "decidedBy": decided_by, "decidedAt": iso(request.decided_at), "executedAt": iso(request.executed_at),
+            "finishedAt": iso(request.finished_at)}
 
 
 @app.post("/agents/{agent_id}/disableRequests", status_code=201)
@@ -242,16 +250,38 @@ def execute_disable_request(agent_id: AgentId, request_id: str, body: Execution,
     return as_json(executed)
 
 
+@app.post("/agents/{agent_id}/disableRequests/{request_id}/outcome")
+def record_disable_outcome(agent_id: AgentId, request_id: str, body: Outcome, caller: Caller = Depends(can_request)) -> dict:
+    """The executor records what its write did, once, for a running request: succeeded or failed.
+    Only the agent that asked. A failed request lets the agent ask again, with a new request."""
+    try:
+        found = STORE.get(agent_id, request_id)
+    except NotFound:
+        raise HTTPException(404, detail="no such request") from None
+    if found.requested_by != caller.agent_app_id:
+        raise HTTPException(404, detail="no such request")
+    try:
+        finished = STORE.record_outcome(agent_id, request_id, body.outcome)
+    except NotRunning:
+        audit(event="disable_outcome_refused", correlation_id=found.correlation_id, request_id=request_id,
+              target_agent=agent_id, agent_app_id=caller.agent_app_id, status=found.status)
+        raise HTTPException(409, detail="this request is not running") from None
+    audit(event="disable_request_finished", correlation_id=finished.correlation_id, request_id=request_id,
+          target_agent=agent_id, agent_app_id=caller.agent_app_id, outcome=finished.status,
+          approver_id=finished.decided_by_id, approver_name=finished.decided_by_name)
+    return as_json(finished)
+
+
 @app.get("/disableRequests")
 def list_disable_requests(status: str, person: Approver = Depends(approver)) -> dict:
-    if status != "pending":
+    if status != Status.PENDING:
         raise HTTPException(400, detail="status must be pending")
     return {"value": [as_json(request) for request in STORE.pending()]}
 
 
 @app.post("/agents/{agent_id}/disableRequests/{request_id}/decision")
 def decide_disable_request(agent_id: AgentId, request_id: str, body: Decision, person: Approver = Depends(approver)) -> dict:
-    status = {"approve": "approved", "deny": "denied"}[body.decision]
+    status = {"approve": Status.APPROVED, "deny": Status.DENIED}[body.decision]
     try:
         current = STORE.get(agent_id, request_id)
         decided = STORE.decide(agent_id, request_id, status, person.object_id, person.name)

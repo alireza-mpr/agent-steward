@@ -118,7 +118,16 @@ The guardian's work has two phases, and each runs with different rights:
 1. **The propose phase:** the autonomous part. The guardian scans the registry as itself, sends the findings to the audit log, and submits a disable request for each dormant agent. Nobody is signed in, and nothing in the tenant changes: the strongest thing this phase can do is ask.
 2. **The approve phase:** the human part. Later, within 24 hours, an approver reviews each pending request in the CLI and approves, denies or skips it. Only an approval leads to a write: the executor disables the agent with the approver's own rights (OBO).
 
-The two phases meet only at the Identity API, which stores the findings, the requests and the decisions. The propose phase does not wait for the approver: a later scan shows each request's status (pending, approved, denied, expired or executed).
+The two phases meet only at the Identity API, which stores the findings, the requests and the decisions. The propose phase does not wait for the approver: a later scan shows each request's status.
+
+**A request's statuses** (`Status` in [disable_requests.py](../src/identity_api/disable_requests.py)):
+
+1. **pending:** The guardian asked. It waits up to 24 hours for an approver.
+2. **approved, denied or expired:** The approver decided, or nobody did within 24 hours. Only an approved request goes on.
+3. **running:** The executor claimed the approved request, right before its write. A claim happens once, so an approval cannot be used twice.
+4. **succeeded or failed:** The executor recorded what the write did. A failed request is final too: the guardian may ask again with a new request, which needs a new approval.
+
+The guardian asks again only after denied, expired or failed. The last three names are Microsoft Graph's [longRunningOperationStatus](https://learn.microsoft.com/en-us/graph/api/resources/longrunningoperation) values. The dormant rule skips agents that are already disabled, so a disabled agent is never asked for again.
 
 ### The Propose Phase
 
@@ -255,7 +264,7 @@ sequenceDiagram
         X->>G: read the agent again<br/>Bearer: the guardian's app-only token
         G-->>X: the facts: dormant, not the guardian's own?
         X->>A: POST .../{requestId}/execution<br/>Bearer: the guardian's app-only token (AgentDisable.Request)<br/>body: delegatingUser = Tc's oid
-        A-->>X: executed (409 unless approved, within 10 minutes, by this person)
+        A-->>X: running (409 unless approved, within 10 minutes, by this person)
         X->>S: GET /AuthorizationHeader/graph-delegated<br/>Bearer: Tc
         S->>E: OBO request, as the guardian's agent identity
         E-->>S: Graph token: the approver's oid,<br/>scp AgentIdentity.EnableDisable.All
@@ -264,12 +273,14 @@ sequenceDiagram
         G-->>X: 204
         X->>G: read accountEnabled back<br/>Bearer: the guardian's app-only token
         G-->>X: false
+        X->>A: POST .../{requestId}/outcome<br/>Bearer: the guardian's app-only token (AgentDisable.Request)<br/>body: outcome = succeeded (failed if the exchange or the write failed)
+        A-->>X: succeeded
         X-->>C: disabled, or why not
         C->>P: Disabled, with your own rights.
     end
 ```
 
-Every refusal on the executor's path leaves the agent enabled: no token, a token that is not the approver's, a request that is not approved or already executed, an agent that is no longer dormant, a failed exchange or a failed write.
+Every refusal on the executor's path leaves the agent enabled: no token, a token that is not the approver's, a request that is not approved or already executed, an agent that is already disabled or no longer dormant, a failed exchange or a failed write. After the claim, a failed exchange or a failed write ends the request as `failed`, so the scan does not take it for a disable.
 
 **Where the guardian differs from [the enterprise practice](agent-architecture.md#human-approval-who-approves-and-how):**
 
@@ -280,6 +291,7 @@ Every refusal on the executor's path leaves the agent enabled: no token, a token
 | A notification delivers the request | The approver runs the CLI, which lists what is pending | No web page in the timebox |
 | A durable store | In memory. A restart loses pending requests, and nothing is disabled (fail closed) | Lab |
 | An approval that is never carried out expires | It stays `approved`, and after 10 minutes it can no longer be executed. Nothing is disabled, and the CLI tells the approver | Known limit |
+| Every claimed request ends with an outcome | A write that is cancelled, or an outcome call that fails, leaves the request `running`. The executor's audit line (`disable_abandoned` or `outcome_not_recorded`) is then the record, and the next scan reads the agent's real state | Known limit |
 
 The next version would use URL-mode elicitation and an approval web page, on the same identity design.
 

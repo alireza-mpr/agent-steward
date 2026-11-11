@@ -21,6 +21,7 @@ class Agent:
     blueprint_app_id: str                   # agentIdentityBlueprintId
     sponsor_count: int
     permissions: frozenset[str] = frozenset()   # "<API>/<role>", for example "Microsoft Graph/User.Read.All"
+    enabled: bool = True                        # accountEnabled: a disabled agent can get no new tokens
 
 
 @dataclass(frozen=True)
@@ -90,13 +91,17 @@ def find_over_permissioned(agents: list[Agent], policy: dict[str, frozenset[str]
 
 
 def find_dormant(agents: list[Agent], last_sign_ins: dict[str, datetime], now: datetime) -> list[Finding]:
-    """Flag agents that got no token in the last 30 days.
+    """Flag enabled agents that got no token in the last 30 days.
 
     last_sign_ins holds each agent identity's own last sign-in (its T2 requests), not its
-    blueprint's: one blueprint signs in for all its agents.
+    blueprint's: one blueprint signs in for all its agents. A disabled agent is skipped: the only
+    fix for a dormant agent is to disable it, so it is already fixed. The other rules still apply
+    to it, because a disable removes no permission and adds no sponsor.
     """
     findings = []
     for agent in agents:
+        if not agent.enabled:
+            continue
         last = last_sign_ins.get(agent.app_id)
         if last is None:
             detail = "no sign-in in the last 30 days"

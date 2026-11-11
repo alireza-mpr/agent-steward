@@ -12,11 +12,14 @@ The Identity API's side of the contract:
     GET  /agents/{agentId}/disableRequests                          -> {"value": this server's requests
                                                                        for the agent, newest first}
     GET  /agents/{agentId}/disableRequests/{requestId}              -> the request and its status
-    POST /agents/{agentId}/disableRequests/{requestId}/execution    -> the request, now executed
+    POST /agents/{agentId}/disableRequests/{requestId}/execution    -> the request, now running
                                                                        409 if it cannot be executed
+    POST /agents/{agentId}/disableRequests/{requestId}/outcome      -> the request, now succeeded or failed
+                                                                       409 if it is not running
 The approver's list and decision go to the Identity API from the approve CLI (src/approve_cli),
-never through here. The guardian's role, AgentDisable.Request, opens only the four calls above: the
-MCP server creates and lists requests, and the executor reads one and claims it (execution).
+never through here. The guardian's role, AgentDisable.Request, opens only the five calls above: the
+MCP server creates and lists requests, and the executor reads one, claims it (execution) and
+records what the write did (outcome).
 """
 
 import json
@@ -25,16 +28,35 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
-STATUSES = frozenset({"pending", "approved", "denied", "expired", "executed"})
+
+class Status(StrEnum):
+    """A request's status, as the Identity API sends it (src/identity_api/disable_requests.py).
+
+    pending -> approved, denied or expired (the approver decides, or nobody does within a day)
+    approved -> running (the executor claimed it, right before its write)
+    running -> succeeded or failed (the executor recorded what the write did)
+    The last three are Microsoft Graph's longRunningOperationStatus values."""
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+    EXPIRED = "expired"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+# A claimed request: the executor has used it, so it can never be executed again.
+CLAIMED = frozenset({Status.RUNNING, Status.SUCCEEDED, Status.FAILED})
 
 
 @dataclass(frozen=True)
 class DisableRequest:
     request_id: str
     agent_id: str                       # the app ID of the agent to disable
-    status: str                         # pending, approved, denied, expired or executed
+    status: Status
     decided_by_id: str | None = None    # the approver's object ID (oid), once someone decided
     decided_by_name: str | None = None
     created_at: str | None = None       # ISO 8601, as the Identity API sends them
@@ -44,8 +66,8 @@ class DisableRequest:
 
 
 class ApprovalError(Exception):
-    """The request could not be made or used, so nothing is disabled. reason is one of:
-    already_waiting (create), not_executable (execute)."""
+    """The request could not be made or used. reason is one of: already_waiting (create),
+    not_executable (execute), not_running (record_outcome)."""
 
     def __init__(self, reason: str):
         super().__init__(reason)
@@ -57,11 +79,12 @@ class ApprovalService(Protocol):
     def get(self, agent_id: str, request_id: str) -> DisableRequest: ...
     def of_agent(self, agent_id: str) -> list[DisableRequest]: ...
     def execute(self, agent_id: str, request_id: str, delegating_user: str) -> DisableRequest: ...
+    def record_outcome(self, agent_id: str, request_id: str, outcome: Status) -> DisableRequest: ...
 
 
 def parse_request(body: dict) -> DisableRequest:
     """The Identity API's JSON for one request. Anything unexpected raises ValueError."""
-    if not isinstance(body, dict) or body.get("status") not in STATUSES:
+    if not isinstance(body, dict) or body.get("status") not in set(Status):
         raise ValueError("not a disable request")
     request_id, agent_id = body.get("id"), body.get("agentId")
     if not isinstance(request_id, str) or not isinstance(agent_id, str):
@@ -69,7 +92,7 @@ def parse_request(body: dict) -> DisableRequest:
     decided_by = body.get("decidedBy") or {}
     if not isinstance(decided_by, dict):
         raise ValueError("decidedBy must be an object")
-    return DisableRequest(request_id, agent_id, body["status"], decided_by.get("id"), decided_by.get("name"),
+    return DisableRequest(request_id, agent_id, Status(body["status"]), decided_by.get("id"), decided_by.get("name"),
                           body.get("createdAt"), body.get("decidedAt"), body.get("correlationId"),
                           body.get("expiresAt"))
 
@@ -121,6 +144,16 @@ class IdentityApiApprovals:
         except urllib.error.HTTPError as error:
             if error.code == 409:
                 raise ApprovalError("not_executable") from None
+            raise
+
+    def record_outcome(self, agent_id: str, request_id: str, outcome: Status) -> DisableRequest:
+        try:
+            return self._call("POST", f"/agents/{urllib.parse.quote(agent_id)}/disableRequests/"
+                                      f"{urllib.parse.quote(request_id)}/outcome",
+                              body={"outcome": str(outcome)})
+        except urllib.error.HTTPError as error:
+            if error.code == 409:
+                raise ApprovalError("not_running") from None
             raise
 
 

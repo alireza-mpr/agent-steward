@@ -36,9 +36,11 @@ def audit_lines(capsys) -> list[dict]:
 class FakeApprovals:
     """The Identity API's requests, in memory. get answers with the request in its current state."""
 
-    def __init__(self, status="approved", decided_by=APPROVER, execute_error=None):
-        self.status, self.decided_by, self.execute_error = status, decided_by, execute_error
+    def __init__(self, status="approved", decided_by=APPROVER, execute_error=None, outcome_error=None):
+        self.status, self.decided_by = status, decided_by
+        self.execute_error, self.outcome_error = execute_error, outcome_error
         self.executed: list[tuple] = []
+        self.outcomes: list[str] = []
 
     def request(self, agent_id):
         decided = (self.decided_by, "An Approver") if self.status not in ("pending", "expired") else (None, None)
@@ -54,7 +56,14 @@ class FakeApprovals:
         if self.execute_error:
             raise self.execute_error
         self.executed.append((agent_id, request_id, delegating_user))
-        self.status = "executed"
+        self.status = "running"
+        return self.request(agent_id)
+
+    def record_outcome(self, agent_id, request_id, outcome):
+        if self.outcome_error:
+            raise self.outcome_error
+        self.outcomes.append(str(outcome))
+        self.status = str(outcome)
         return self.request(agent_id)
 
 
@@ -97,11 +106,12 @@ def test_the_approvers_delegation_disables_the_agent_with_their_rights_once(setu
     assert delegate() == (200, "disabled")
     assert disabled == [AGENT.app_id]
     assert approvals.executed == [(AGENT.app_id, REQUEST_ID, APPROVER)]
+    assert approvals.outcomes == ["succeeded"]   # the request now says what happened
     [line] = [line for line in audit_lines(capsys) if line["event"] == "agent_disabled"]
     assert (line["mode"], line["delegating_user"], line["approver_id"]) == ("obo", APPROVER, APPROVER)
     assert line["agent_app_id"] == GUARDIAN.app_id   # NFR2: the line names the user and the agent
     assert line["correlation_id"] == "correlation-1"
-    # Used once: the request is now executed.
+    # Used once: the request has been executed.
     assert delegate() == (409, "already_executed")
     assert disabled == [AGENT.app_id]
 
@@ -142,7 +152,9 @@ def test_a_token_the_sidecar_rejects_disables_nothing(setup, monkeypatch):
 
 
 @pytest.mark.parametrize("status, answer", [("pending", (403, "not_approved")), ("denied", (403, "not_approved")),
-                                            ("expired", (403, "not_approved")), ("executed", (409, "already_executed")),
+                                            ("expired", (403, "not_approved")), ("running", (409, "already_executed")),
+                                            ("succeeded", (409, "already_executed")),
+                                            ("failed", (409, "already_executed")),
                                             ("unreachable", (503, "unavailable"))])
 def test_a_request_that_is_not_approved_disables_nothing(status, answer, setup):
     disabled, use, _ = setup
@@ -194,25 +206,27 @@ def test_when_the_identity_api_refuses_the_claim_nothing_is_disabled(setup):
 
 def test_a_failed_obo_exchange_disables_nothing_and_is_on_record(setup, monkeypatch, capsys):
     disabled, use, _ = setup
-    use(FakeApprovals("approved"))
+    approvals = use(FakeApprovals("approved"))
     def exchange_fails(tc):
         raise OSError("HTTP Error 500: Internal Server Error")
     monkeypatch.setattr(executor, "obo_token", exchange_fails)
 
     assert delegate() == (502, "write_failed")
     assert disabled == []
+    assert approvals.outcomes == ["failed"]   # not left as if it was carried out
     [line] = [line for line in audit_lines(capsys) if line["event"] == "disable_failed"]
     assert line["stage"] == "obo exchange"
 
 
 def test_a_failed_write_is_reported_and_on_record(setup, monkeypatch, capsys):
     _, use, _ = setup
-    use(FakeApprovals("approved"))
+    approvals = use(FakeApprovals("approved"))
     def write_fails(reader, writer, app_id):
         raise urllib.error.HTTPError("https://graph.microsoft.com/beta/x", 403, "Forbidden", {}, None)
     monkeypatch.setattr(executor, "disable_agent_identity", write_fails)
 
     assert delegate() == (502, "write_failed")
+    assert approvals.outcomes == ["failed"]
     lines = audit_lines(capsys)
     assert "agent_disabled" not in [line["event"] for line in lines]
     [line] = [line for line in lines if line["event"] == "disable_failed"]
@@ -259,3 +273,24 @@ def test_the_delegation_route_reads_the_bearer_token_and_answers_without_detail(
 def test_the_executor_offers_only_the_delegation_route():
     routes = {(route.path, method) for route in executor.app.routes for method in getattr(route, "methods", ())}
     assert routes == {("/agents/{agent_id}/disableRequests/{request_id}/delegation", "POST")}
+
+
+def test_a_write_that_a_read_does_not_show_yet_still_succeeded(setup, monkeypatch):
+    # Graph accepted the PATCH; the read-back is only slow (eventual consistency).
+    _, use, _ = setup
+    approvals = use(FakeApprovals("approved"))
+    monkeypatch.setattr(executor, "disable_agent_identity", lambda reader, writer, app_id: False)
+
+    assert delegate() == (200, "disabled")
+    assert approvals.outcomes == ["succeeded"]
+
+
+@pytest.mark.parametrize("error", [OSError("connection refused"), ApprovalError("not_running")])
+def test_when_the_outcome_cannot_be_recorded_the_answer_is_unchanged_and_on_record(error, setup, capsys):
+    disabled, use, _ = setup
+    use(FakeApprovals("approved", outcome_error=error))
+
+    assert delegate() == (200, "disabled")
+    assert disabled == [AGENT.app_id]
+    [line] = [line for line in audit_lines(capsys) if line["event"] == "outcome_not_recorded"]
+    assert (line["outcome"], line["correlation_id"]) == ("succeeded", "correlation-1")

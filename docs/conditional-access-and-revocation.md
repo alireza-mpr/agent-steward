@@ -181,7 +181,7 @@ Microsoft's goal is near real time, but up to 15 minutes of delay is possible.
 
 ## 4. agent-steward
 
-**Moment 1, Conditional Access (FR9, not started):** The tenant has the license (an Agent 365 trial with Entra ID P2). But security defaults are still on, because the approver's sign-in relies on them ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)). While they are on, no Conditional Access policy applies. See [entra.md](entra.md).
+**Moment 1, Conditional Access (FR9, cut):** The tenant has the license (an Agent 365 trial with Entra ID P2). But security defaults are still on, because the approver's sign-in relies on them ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)). While they are on, no Conditional Access policy applies. See [entra.md](entra.md).
 
 **Moment 2, revocation (FR11, documented-only):** The executor disables an agent with the approver's own rights (FR4, FR7), so Entra stops issuing that agent new tokens. The Identity API validates tokens locally ([tokens.md](tokens.md)) and does no status check. So an existing token keeps working until it expires. A Graph token observed in this project lived 65 minutes.
 
