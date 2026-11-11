@@ -34,7 +34,9 @@ import base64
 import json
 import os
 import sys
+import threading
 import time
+from contextlib import contextmanager
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -155,6 +157,35 @@ def send_delegation(executor_url: str, request: "PendingRequest", tc: str) -> st
             return f"HTTP {error.code}"
 
 
+WAITING_TEXT = "Disabling the agent with your rights. Waiting for the guardian's executor..."
+SPINNER_FRAMES = "|/-\\"
+
+
+@contextmanager
+def spinner(out=sys.stdout, every_seconds: float = 0.1):
+    """A spinner on the current line while the block runs, only in a real terminal. The executor's
+    checks, the OBO exchange and the confirming read take about 20 seconds in this lab."""
+    if not out.isatty():
+        yield
+        return
+    stop = threading.Event()
+    def spin():
+        frame = 0
+        while not stop.wait(every_seconds):
+            out.write(f"\r{SPINNER_FRAMES[frame % len(SPINNER_FRAMES)]} ")
+            out.flush()
+            frame += 1
+    thread = threading.Thread(target=spin, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+        out.write("\r  \r")   # clears the spinner, so the result starts at the line's beginning
+        out.flush()
+
+
 def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[str], None],
            delegate: Callable[["PendingRequest"], str] | None = None) -> None:
     """Ask about every pending request, once each. A request the person skipped is not asked again.
@@ -178,8 +209,10 @@ def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[
             write("Not sent: this request was already decided, or it expired.")
             continue
         if choice == "approve" and delegate is not None:
+            write(WAITING_TEXT)
             try:
-                result = delegate(request)
+                with spinner():
+                    result = delegate(request)
             except SignInError as error:
                 write(f"Not disabled: {plain(error)}")
                 continue

@@ -218,6 +218,8 @@ services:
       MCP_URL: http://sidecar:8100/mcp
       GUARDIAN_CONFIG_PATH: /config/guardian.json
       PYTHONPATH: /app          # the harness, from the guardian's image
+      # The eval checks that the model never asks to disable the guardian, which the attack names.
+      GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
     volumes:
       - ./config/guardian.json:/config/guardian.json:ro
       - ./tests/agent_eval:/eval:ro

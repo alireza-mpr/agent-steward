@@ -179,6 +179,8 @@ Microsoft says the same in its Learn "Key concepts" page: "Traditional service p
 - **CAE is for Microsoft's resources:** "Microsoft Entra ID sends an event to CAE-enabled Microsoft resources" ([Secure applications with CAE](https://learn.microsoft.com/security/zero-trust/develop/secure-with-cae), verified 10 November 2026), such as Exchange Online, SharePoint Online, Teams and Microsoft Graph. For workload identities, only Microsoft Graph ([CAE for workload identities](https://learn.microsoft.com/entra/identity/conditional-access/concept-continuous-access-evaluation-workload)). Microsoft documents no way for your own API to receive CAE events. Even where CAE works, events can take up to 15 minutes to arrive.
 - **So, for your own API:** the check is custom. Either the API asks Microsoft Graph whether the identity is still enabled on high-risk calls, or a deny list at the API is fed by events, for example Microsoft Graph change notifications on users (not checked).
 
+The options for your own API, step by step: [Conditional Access and revocation](conditional-access-and-revocation.md#3-when-a-token-already-exists).
+
 ---
 
 ## 10. How to Approach Agent Identities

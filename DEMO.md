@@ -12,6 +12,7 @@ The page covers the main controls, not every requirement. [What this page does n
 - [4. A prompt injection attack](#4-a-prompt-injection-attack)
 - [5. The tool allow-list](#5-the-tool-allow-list)
 - [6. Human approval](#6-human-approval)
+- [7. The agent proposes, the approver decides: OBO](#7-the-agent-proposes-the-approver-decides-obo)
 - [What this page does not show](#what-this-page-does-not-show)
 
 ## 1. Accountable agent identities
@@ -64,12 +65,42 @@ Only the approved agent was disabled, and the four denied agents stayed active. 
 
 A disable stops new tokens, but issued tokens work until they expire ([design note](docs/DESIGN-NOTES.md#7-revoking-live-tokens)).
 
-Since this run, the disable runs with the approver's own rights (OBO), in a separate executor, and the guardian holds no write permission of its own. That version ran live end to end on 10 November 2026 ([delivery status, FR4](docs/delivery-status.md)), but its screenshots are not on this page yet.
+Since this run, the disable runs with the approver's own rights (OBO), in a separate executor, and the guardian holds no write permission of its own: see the next section.
+
+## 7. The agent proposes, the approver decides: OBO
+
+The current design, run live on 10 and 11 November 2026. Text from the runs, no screenshots ([the flow](docs/agent-steward-architecture.md#the-two-phases-propose-then-approve)).
+
+**The propose phase.** A guardian run scanned the registry, reported nine flaws across six agents, and asked to disable each dormant agent. Every request returned "pending" at once, and the run ended: nothing waits for a person. On a later run, the guardian made no new request for an agent whose request was still pending, and said why in its report:
+
+> agent-steward-fixture-dormant-01 (`<APP_ID>`), dormant: no sign-in in the last 30 days. Disable request `<REQUEST_ID>` is **pending**, so I didn't ask again.
+
+The planted prompt injection was reported and ignored in every run, as in [section 4](#4-a-prompt-injection-attack).
+
+**The approve phase.** The approver signed in to the CLI and approved one request:
+
+```text
+Disable agent:  agent-steward-fixture-dormant-01
+Flaw:           no sign-in in the last 30 days
+Reason (UNTRUSTED, written by the model, not a fact): No sign-in in the last 30 days.
+Type approve, deny or skip: approve
+Sent: approve.
+Disabled, with your own rights.
+```
+
+After "approve", the CLI got a second token from the same sign-in, for the guardian's blueprint, and sent it to the executor. The executor checked it, claimed the request at the Identity API, exchanged the token with OBO, and disabled the agent. Its audit line (IDs replaced):
+
+```json
+{"event": "agent_disabled", "agent": "<FIXTURE_AGENT_APP_ID>", "mode": "obo",
+ "delegating_user": "<APPROVER_OID>", "approver_name": "<APPROVER_NAME>",
+ "agent_app_id": "<GUARDIAN_AGENT_APP_ID>", "confirmed": true}
+```
+
+`mode: obo`, and the person who approved is also the person whose rights did the write. The Entra admin center then showed the agent as Disabled. The first approval of this design, on 10 November 2026, disabled `agent-steward-fixture-overperm-01` the same way.
 
 ## What this page does not show
 
-- **Not shown yet:** screenshots of OBO for the approved disable, which ran live on 10 November 2026 ([design](docs/DESIGN-NOTES.md#6-delegation-and-on-behalf-of-obo-for-agents)).
-- **Not built:** revocation of live tokens, Conditional Access for agents, the live worker, and the correlation of traces with Entra sign-in logs.
+- **Not built:** revocation of live tokens (design only), Conditional Access for agents, and the correlation of traces with Entra sign-in logs. The live worker is cut.
 - **Known risks:** the [accepted risks](THREATMODEL.md#accepted-risks), each with its fix.
 
 The [delivery status](docs/delivery-status.md) has the state of every requirement.

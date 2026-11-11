@@ -89,7 +89,8 @@ This is the general design for FR4. The guardian's scan runs autonomously, and t
   1. Short lifetimes, where the platform allows them.
   2. The API checks the agent's state on each call or with a short cache, which costs a call or some delay.
   3. A kill list at the API, fed by the disable event.
-  4. Continuous Access Evaluation, if it covers the agent's tokens. This project has not checked that.
+  4. Continuous Access Evaluation: not an option for the Identity API. Its events reach only Microsoft's resources; for workload identities, only Microsoft Graph.
+- **More detail:** each option, with its steps, cases and sources, is in [Conditional Access and revocation](conditional-access-and-revocation.md#3-when-a-token-already-exists).
 - **Status:** FR11 is not built. The disable itself is built and was run live ([FR7](../DEMO.md#6-human-approval)).
 
 ## Future work

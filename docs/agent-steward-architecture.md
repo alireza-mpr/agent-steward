@@ -62,7 +62,7 @@ flowchart LR
 
 ### Why the Guardian Uses a Model
 
-Every safety decision is deterministic, on purpose. The MCP server's rules decide which agents are flagged, the allow-list decides which tools exist, the MCP server checks each request, and the executor checks again before the write (the agent must be dormant and not the guardian's own), and a human approves each disable and lends their rights for it. The operator's `--disable-dormant` option only changes the model's task, so it is not a control.
+Every safety decision is deterministic, on purpose. The MCP server's rules decide which agents are flagged, the allow-list decides which tools exist, the MCP server checks each request, and the executor checks again before the write (the agent must be dormant and not the guardian's own), and a human approves each disable and lends their rights for it.
 
 The model is used where rules fail: scanning unstructured data, such as an agent's description, for malicious text. A rule could search for known words, but an attacker can reword the text easily. In the NFR3 agent eval, it flagged the planted prompt injection in a description on its own ([eval_prompt_injection.py](../tests/agent_eval/eval_prompt_injection.py)).
 
@@ -115,14 +115,14 @@ To verify our security posture, here is exactly what each container holds and wh
 
 The guardian's work has two phases, and each runs with different rights:
 
-1. **The propose phase:** the autonomous part. The guardian scans the registry as itself, sends the findings to the audit log, and, on the `--disable-dormant` task, submits a disable request for each dormant agent. Nobody is signed in, and nothing in the tenant changes: the strongest thing this phase can do is ask.
+1. **The propose phase:** the autonomous part. The guardian scans the registry as itself, sends the findings to the audit log, and submits a disable request for each dormant agent. Nobody is signed in, and nothing in the tenant changes: the strongest thing this phase can do is ask.
 2. **The approve phase:** the human part. Later, within 24 hours, an approver reviews each pending request in the CLI and approves, denies or skips it. Only an approval leads to a write: the executor disables the agent with the approver's own rights (OBO).
 
 The two phases meet only at the Identity API, which stores the findings, the requests and the decisions. The propose phase does not wait for the approver: a later scan shows each request's status (pending, approved, denied, expired or executed).
 
 ### The Propose Phase
 
-One run of the guardian on the `--disable-dormant` task. Every token is the guardian's own app-only token. On the default task, the run ends after the report, with no requests.
+One run of the guardian. Every token is the guardian's own app-only token.
 
 Who calls whom (an arrow points from the caller to the one it calls):
 
@@ -143,7 +143,7 @@ sequenceDiagram
     participant G as Microsoft Graph
     participant A as Identity API
 
-    O->>H: start a run (--disable-dormant)
+    O->>H: start a run
     H->>M: tools/list
     M-->>H: the tools on the allow-list
     H->>L: task and tool list

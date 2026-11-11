@@ -2,6 +2,7 @@
 decision. No network and no sign-in."""
 
 import io
+import time
 import sys
 import types
 import urllib.error
@@ -420,3 +421,48 @@ def test_send_delegation_reads_the_result_of_a_refusal(monkeypatch):
     monkeypatch.setattr(approve.urllib.request, "urlopen", refuse)
 
     assert approve.send_delegation("http://executor-sidecar:8200", REQUEST, "the-tc") == "not_the_approver"
+
+
+# While the guardian's executor works: a waiting line, and a spinner only in a terminal
+
+def test_after_an_approval_the_waiting_line_comes_before_the_result():
+    lines = []
+
+    review(FakeApi(REQUEST), set(), typed("approve"), lines.append, lambda request: "disabled")
+
+    assert lines[-2:] == [approve.WAITING_TEXT, "Disabled, with your own rights."]
+
+
+def test_a_denial_shows_no_waiting_line():
+    lines = []
+
+    review(FakeApi(REQUEST), set(), typed("deny"), lines.append, lambda request: "disabled")
+
+    assert approve.WAITING_TEXT not in lines
+
+
+class FakeTerminal(io.StringIO):
+    def __init__(self, tty):
+        super().__init__()
+        self.tty = tty
+
+    def isatty(self):
+        return self.tty
+
+
+def test_the_spinner_draws_in_a_terminal_and_clears_its_line():
+    out = FakeTerminal(tty=True)
+
+    with approve.spinner(out, every_seconds=0.01):
+        time.sleep(0.05)
+
+    assert out.getvalue().startswith("\r") and out.getvalue().endswith("\r  \r")
+
+
+def test_the_spinner_writes_nothing_when_the_output_is_not_a_terminal():
+    out = FakeTerminal(tty=False)
+
+    with approve.spinner(out, every_seconds=0.01):
+        time.sleep(0.03)
+
+    assert out.getvalue() == ""

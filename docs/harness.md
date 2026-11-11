@@ -71,13 +71,13 @@ The JSON of one round, in its general form, is in [The Messages API](messages-ap
 
 ### The Run's Task
 
-A run is the propose phase ([the two phases](agent-steward-architecture.md#the-two-phases-propose-then-approve)). By default it only reports. To also submit a request to disable each dormant agent, for a human to decide in the approve phase (FR7), the operator chooses the other task:
+A run is the propose phase ([the two phases](agent-steward-architecture.md#the-two-phases-propose-then-approve)). It has one task: scan the registry, report the findings, and submit a request to disable each dormant agent, for a human to decide in the approve phase (FR7). A run takes no arguments.
 
 ```sh
-docker compose run --rm guardian python main.py --disable-dormant
+docker compose run --rm guardian
 ```
 
-Only the command line chooses the task, so nothing the model reads can change it. The rule that the model must not use `submit_disable_agent_request` on the default task is only a prompt rule. If a tricked model calls the tool anyway, the server's checks and the human still stop it ([the flow](agent-steward-architecture.md#the-two-phases-propose-then-approve)).
+The rule to ask only for dormant agents is a prompt rule, so it is not a control. The controls are in code: the MCP server refuses a request for an agent that is not dormant or that belongs to the guardian, the executor checks again before the write, and a person must approve ([the flow](agent-steward-architecture.md#the-two-phases-propose-then-approve)).
 
 ## 2. Why the Model Stopped: stop_reason
 

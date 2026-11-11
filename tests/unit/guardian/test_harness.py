@@ -365,26 +365,25 @@ def test_a_wrong_value_stops_the_run(tmp_path, changes, message):
         harness.load_settings(settings_file(tmp_path, **changes))
 
 
-# --- The task: only the operator can allow disabling (FR7) ---
+# --- The task: scan, report, and ask to disable each dormant agent (FR7) ---
 
-def test_a_run_only_reports_by_default():
-    assert harness.choose_task([]) == harness.TASK
-    assert "disable" not in harness.TASK
-
-
-def test_the_flag_chooses_the_task_that_asks_to_disable_dormant_agents():
-    assert harness.choose_task(["--disable-dormant"]) == harness.DISABLE_DORMANT_TASK
-    assert "disable each dormant agent" in harness.DISABLE_DORMANT_TASK
+def test_the_task_asks_to_disable_each_dormant_agent():
+    assert "disable each dormant agent" in harness.TASK
 
 
-def test_an_unknown_argument_stops_the_run():
+@pytest.mark.parametrize("arguments", [["--request-disables"], ["--disable-dormant"], ["--disable-everything"]])
+def test_any_argument_stops_the_run(arguments):
     with pytest.raises(SystemExit):
-        harness.choose_task(["--disable-everything"])
+        harness.check_arguments(arguments)
 
 
-def test_the_chosen_task_is_what_the_model_receives():
+def test_no_arguments_is_a_normal_run():
+    harness.check_arguments([])
+
+
+def test_the_task_is_what_the_model_receives():
     claude = ScriptedClaude(answer("end_turn", text("Done.")))
 
-    asyncio.run(harness.run_agent(claude, FakeMcpServer({}), SETTINGS, task=harness.DISABLE_DORMANT_TASK))
+    asyncio.run(harness.run_agent(claude, FakeMcpServer({}), SETTINGS))
 
-    assert claude.requests[0]["messages"] == [{"role": "user", "content": harness.DISABLE_DORMANT_TASK}]
+    assert claude.requests[0]["messages"] == [{"role": "user", "content": harness.TASK}]
