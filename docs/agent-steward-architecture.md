@@ -146,8 +146,8 @@ To verify our security posture, here is exactly what each container holds and wh
 
 | Component | Agent Part | Credentials Held | Network Reach |
 |---|---|---|---|
-| **Claude** | Model | *Nothing* | *Nothing* (only responds to incoming requests from the `guardian`). |
-| **`guardian`** | Harness | Anthropic API key | Can reach Claude and `mcp-server`. **Cannot reach `sidecar`** (meaning it can never obtain an Entra token), and is not on the approval network, so it cannot reach the executor. |
+| **Claude** | Model | *Nothing* | *Nothing* (only responds to incoming requests from `harness`). |
+| **`harness`** | Harness | Anthropic API key | Can reach Claude and `mcp-server`. **Cannot reach `sidecar`** (meaning it can never obtain an Entra token), and is not on the approval network, so it cannot reach the executor. |
 | **`mcp-server`** | Tools | *No stored secrets* (requests app-only TR tokens on demand from `sidecar`). | Can reach `sidecar`, Microsoft Graph, and `identity-api`. Never receives an approver's token, and holds no write code. |
 | **`sidecar`** | Token acquisition | The blueprint's certificate file. App-only settings only. | Can reach Entra ID. Listens strictly on loopback ([details](infra.md#local-run-the-sidecar)). |
 | **`executor`** | The one write | *No stored secrets* (gets tokens from `executor-sidecar`; receives the approver's Tc for one request, never stores it). | Can reach `executor-sidecar`, Microsoft Graph, and `identity-api`. On the approval network, with the CLI and the Identity API. |

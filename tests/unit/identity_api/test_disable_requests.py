@@ -28,7 +28,7 @@ def store(clock):
 
 
 def create(store, agent="agent-1"):
-    return store.create(agent, "guardian", "It is dormant.", {"name": agent}, "correlation-1")
+    return store.create(agent, "guardian", "It is dormant.", {"name": agent})
 
 
 def test_a_new_request_is_pending_with_its_own_id_and_expiry(store, clock):

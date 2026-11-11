@@ -30,23 +30,31 @@ from approval import CLAIMED, SERVICE_ERRORS, ApprovalError, DisableRequest, Ide
 from disable_checks import GUID, check_can_be_disabled
 from graph_reader import GraphClient
 from graph_writer import GraphWriter, disable_agent_identity
+from telemetry import setup_tracing, trace_fields
 
 SIDECAR_URL = os.environ.get("SIDECAR_URL", "http://127.0.0.1:5000")
 API_URL = os.environ.get("API_URL", "http://identity-api:8000")
 
 # One route and nothing else: no interactive docs and no OpenAPI page.
 app = FastAPI(title="agent-steward executor", docs_url=None, redoc_url=None, openapi_url=None)
+if setup_tracing():   # only when OTEL_SERVICE_NAME is set (src/shared/telemetry.py)
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.urllib import URLLibInstrumentor
+    # A server span for the CLI's call, as a child of the CLI's span, and a client span for each call
+    # to the sidecar, Graph and the Identity API. Neither records a header, so Tc never goes into a span.
+    FastAPIInstrumentor.instrument_app(app, exclude_spans=["receive", "send"])
+    URLLibInstrumentor().instrument()
 
 
 def audit(**fields) -> None:
-    """Write one audit line on stdout, like the Identity API's and the MCP server's (FR8).
-    Never pass a token in here."""
-    record = {"timestamp": datetime.now(timezone.utc).isoformat(), **fields}
+    """Write one audit line on stdout, like the Identity API's and the MCP server's (FR8), with the
+    current trace ID and span ID (NFR4). Never pass a token in here."""
+    record = {"timestamp": datetime.now(timezone.utc).isoformat(), **trace_fields(), **fields}
     print(json.dumps(record), file=sys.stdout, flush=True)
 
 
-def audit_request(event: str, request: DisableRequest, correlation_id: str | None, **fields) -> None:
-    audit(event=event, agent=request.agent_id, request_id=request.request_id, correlation_id=correlation_id, **fields)
+def audit_request(event: str, request: DisableRequest, **fields) -> None:
+    audit(event=event, agent=request.agent_id, request_id=request.request_id, **fields)
 
 
 def guardian_app_id() -> str:
@@ -94,12 +102,12 @@ async def record_outcome(service: IdentityApiApprovals, claimed: DisableRequest,
     try:
         await asyncio.to_thread(service.record_outcome, claimed.agent_id, claimed.request_id, outcome)
     except (ApprovalError, *SERVICE_ERRORS) as error:
-        audit_request("outcome_not_recorded", claimed, claimed.correlation_id, outcome=str(outcome),
+        audit_request("outcome_not_recorded", claimed, outcome=str(outcome),
                       reason=getattr(error, "reason", type(error).__name__))
 
 
 async def write_disable(reader: GraphClient, writer: GraphWriter, approved: DisableRequest,
-                        correlation_id: str | None, delegating_user: str | None = None) -> bool | None:
+                        delegating_user: str | None = None) -> bool | None:
     """The write: reader reads with the guardian's app-only token, writer writes with the approver's
     OBO token (graph_writer.py says why). Returns whether a read already shows it, or None when the
     write failed. Its audit lines name the approver, so the action stands on its own (FR7), the
@@ -110,23 +118,22 @@ async def write_disable(reader: GraphClient, writer: GraphWriter, approved: Disa
         confirmed = await asyncio.to_thread(disable_agent_identity, reader, writer, approved.agent_id)
     except SERVICE_ERRORS as error:
         # The HTTP status, when Graph answered (403: a missing permission or role). Never the body.
-        audit_request("disable_failed", approved, correlation_id, http_status=getattr(error, "code", None),
+        audit_request("disable_failed", approved, http_status=getattr(error, "code", None),
                       **approver)
         return None
     except asyncio.CancelledError:
         # The write runs in its own thread and may still finish, so the outcome is unknown: check the tenant.
-        audit_request("disable_abandoned", approved, correlation_id, stage="writing", **approver)
+        audit_request("disable_abandoned", approved, stage="writing", **approver)
         raise
-    audit_request("agent_disabled", approved, correlation_id, confirmed=confirmed, **approver)
+    audit_request("agent_disabled", approved, confirmed=confirmed, **approver)
     return confirmed
 
 
 async def accept_delegation(agent_id: str, request_id: str, tc: str | None) -> tuple[int, str]:
     """The approver's delegation for one approved request. Returns the HTTP status and a short
     result word. Tc and the OBO token are never stored. Every refusal leaves the agent enabled."""
-    def refuse(status: int, reason: str, correlation_id: str | None = None) -> tuple[int, str]:
-        audit(event="delegation_refused", agent=agent_id[:64], request_id=request_id[:64],
-              correlation_id=correlation_id, reason=reason)
+    def refuse(status: int, reason: str) -> tuple[int, str]:
+        audit(event="delegation_refused", agent=agent_id[:64], request_id=request_id[:64], reason=reason)
         return status, reason.replace(" ", "_")
 
     # Both go into Identity API paths: only well-formed IDs pass.
@@ -151,37 +158,37 @@ async def accept_delegation(agent_id: str, request_id: str, tc: str | None) -> t
     except SERVICE_ERRORS:
         return refuse(503, "unavailable")
     if found.status in CLAIMED:
-        return refuse(409, "already executed", found.correlation_id)
+        return refuse(409, "already executed")
     if found.status != Status.APPROVED:
-        return refuse(403, "not approved", found.correlation_id)
+        return refuse(403, "not approved")
     # The binding: only the person who approved this request may lend their rights for it.
     if found.decided_by_id != oid:
-        return refuse(403, "not the approver", found.correlation_id)
+        return refuse(403, "not the approver")
 
     # Time has passed since the request: the MCP server's checks again, right before the write.
     _, _, refusal = await check_can_be_disabled(GraphClient(token_for("graph")), agent_id, guardian_app_id(), audit)
     if refusal:
-        return refuse(409, "no longer allowed", found.correlation_id)
+        return refuse(409, "no longer allowed")
 
     # The claim: once, soon after the approval, only for the approver. The Identity API checks all
     # three again, under its own lock, so a second delegation for this request cannot write.
     try:
         claimed = await asyncio.to_thread(service.execute, agent_id, request_id, oid)
     except ApprovalError:
-        return refuse(409, "not executable", found.correlation_id)
+        return refuse(409, "not executable")
     except SERVICE_ERRORS:
-        return refuse(503, "unavailable", found.correlation_id)
+        return refuse(503, "unavailable")
 
     # From here the request is running. Every path below records its outcome, except a cancelled
     # write, whose outcome is unknown: it stays running (disable_abandoned).
     try:
         token = await asyncio.to_thread(obo_token, tc)
     except SERVICE_ERRORS:
-        audit_request("disable_failed", claimed, claimed.correlation_id, stage="obo exchange", delegating_user=oid)
+        audit_request("disable_failed", claimed, stage="obo exchange", delegating_user=oid)
         await record_outcome(service, claimed, Status.FAILED)
         return 502, "write_failed"
     confirmed = await write_disable(GraphClient(token_for("graph")), GraphWriter(lambda: token), claimed,
-                                    claimed.correlation_id, delegating_user=oid)
+                                    delegating_user=oid)
     if confirmed is None:
         await record_outcome(service, claimed, Status.FAILED)
         return 502, "write_failed"

@@ -77,7 +77,7 @@ In the Evidence column, a test is named in plain words, so the tables fit the pa
 | ID | Control | The threat it stops | Where it is enforced | Evidence |
 |---|---|---|---|---|
 | C14 | Four registry rules flag orphan agents (no sponsor), expiring blueprint credentials, over-permissioned agents and dormant agents. Only *successful* sign-ins count as activity | Unaccountable, unused or over-privileged agents, and outages from expired credentials | The MCP server's `scan_registry` tool ([rules.py](../src/mcp_server/rules.py)) | [Unit tests](../tests/unit/mcp_server/test_rules.py), including *a failed sign-in is not activity* in [test_graph_reader.py](../tests/unit/mcp_server/test_graph_reader.py), the MCP integration test against the real tenant, and a [guardian run](screenshots/phase2-guardian-run.png) |
-| C15 | One audit line for each decision and each finding, with the agent, its blueprint, the mode and a correlation ID. Each disable also gets one line at the executor, naming the agent that acted, the approver and the delegating user | Actions that cannot be traced to one agent, or to the person whose rights they used | The Identity API, and the executor for the write | The live run's 8 audit lines (one decision, 7 findings) under one correlation ID |
+| C15 | One audit line for each decision and each finding, with the agent, its blueprint, the mode and the trace ID. Each disable also gets one line at the executor, naming the agent that acted, the approver and the delegating user | Actions that cannot be traced to one agent, or to the person whose rights they used | The Identity API, and the executor for the write | The live run's 8 audit lines (one decision, 7 findings) under one correlation ID |
 
 ### Repository and supply chain
 

@@ -81,7 +81,8 @@ class DisableRequest:
     requested_by: str       # the agent that asked: only it can read the request
     reason: str             # from the model: untrusted
     facts: dict             # read from Graph by the MCP server
-    correlation_id: str     # links the audit lines of this request
+    trace_id: str | None    # the trace and span that created the request (NFR4): the approval's
+    span_id: str | None     # trace links to them. None when tracing is off
     expires_at: datetime
     created_at: datetime | None = None
     status: Status = Status.PENDING
@@ -113,12 +114,13 @@ class DisableRequestStore:
     def _current(self) -> list[DisableRequest]:
         return [self._expire_if_due(request) for request in list(self._requests.values())]
 
-    def create(self, agent_id: str, requested_by: str, reason: str, facts: dict, correlation_id: str) -> DisableRequest:
+    def create(self, agent_id: str, requested_by: str, reason: str, facts: dict,
+               trace_id: str | None = None, span_id: str | None = None) -> DisableRequest:
         with self._lock:
             if any(request.agent_id == agent_id and request.status == Status.PENDING for request in self._current()):
                 raise AlreadyPending
             now = self._now()
-            request = DisableRequest(str(uuid.uuid4()), agent_id, requested_by, reason, facts, correlation_id,
+            request = DisableRequest(str(uuid.uuid4()), agent_id, requested_by, reason, facts, trace_id, span_id,
                                      now + EXPIRES_AFTER, created_at=now)
             self._requests[request.id] = request
             return request

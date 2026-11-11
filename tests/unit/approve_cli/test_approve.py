@@ -9,6 +9,9 @@ import urllib.error
 import urllib.request
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 import approve
 from approve import PendingRequest, ask, parse_pending, plain, review, show
@@ -604,3 +607,43 @@ def test_an_old_redirect_from_an_earlier_sign_in_is_ignored_and_the_wait_goes_on
 
     assert (status, body) == (400, b"")   # urllib's HTTPError hides the body; the status is what matters
     assert result["url"] == "http://localhost:18400/?code=the-code&state=abc"
+
+
+# Tracing (NFR4): one trace per run; each decision is a span, linked to the guardian's span that asked
+
+@pytest.fixture
+def spans(monkeypatch):
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(approve, "TRACER", provider.get_tracer("test"))
+    return exporter
+
+
+def test_a_decision_is_one_span_linked_to_the_span_that_created_the_request(spans):
+    asked = PendingRequest("request-1", "agent-1", "It is dormant.", trace_id="0af7651916cd43dd8448eb211c80319c",
+                           span_id="b7ad6b7169203331")
+
+    review(FakeApi(asked), set(), typed("approve"), lambda line: None, lambda request: "disabled")
+
+    span, run = spans.get_finished_spans()   # in the order they ended: the decision, then the run
+    assert (run.name, run.parent) == ("review disable_requests", None)   # the root of this run's trace
+    assert run.attributes["guardian.disable_requests.shown"] == 1
+    assert span.name == "decide disable_request" and span.parent.span_id == run.context.span_id
+    assert span.attributes["guardian.disable_request.id"] == "request-1"
+    assert span.attributes["guardian.decision"] == "approve"
+    [link] = span.links
+    assert (f"{link.context.trace_id:032x}", f"{link.context.span_id:016x}") == (asked.trace_id, asked.span_id)
+
+
+def test_a_skip_makes_no_decision_span(spans):
+    review(FakeApi(REQUEST), set(), typed(""), lambda line: None)
+
+    [run] = spans.get_finished_spans()
+    assert run.name == "review disable_requests"
+
+
+def test_parse_pending_reads_the_trace_of_the_request():
+    [request] = parse_pending({"value": [{"id": "r", "agentId": "a", "traceId": "t", "spanId": "s"}]})
+
+    assert (request.trace_id, request.span_id) == ("t", "s")

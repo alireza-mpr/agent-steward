@@ -44,7 +44,7 @@ class FakeApprovals:
 
     def request(self, agent_id):
         decided = (self.decided_by, "An Approver") if self.status not in ("pending", "expired") else (None, None)
-        return DisableRequest(REQUEST_ID, agent_id, self.status, *decided, correlation_id="correlation-1",
+        return DisableRequest(REQUEST_ID, agent_id, self.status, *decided, trace_id="0af7651916cd43dd8448eb211c80319c",
                               expires_at="2026-11-11T06:00:00+00:00")
 
     def get(self, agent_id, request_id):
@@ -110,7 +110,7 @@ def test_the_approvers_delegation_disables_the_agent_with_their_rights_once(setu
     [line] = [line for line in audit_lines(capsys) if line["event"] == "agent_disabled"]
     assert (line["mode"], line["delegating_user"], line["approver_id"]) == ("obo", APPROVER, APPROVER)
     assert line["agent_app_id"] == GUARDIAN.app_id   # NFR2: the line names the user and the agent
-    assert line["correlation_id"] == "correlation-1"
+    assert line["request_id"] == REQUEST_ID   # the request ID ties the line to the request's other lines
     # Used once: the request has been executed.
     assert delegate() == (409, "already_executed")
     assert disabled == [AGENT.app_id]
@@ -241,7 +241,7 @@ def test_a_write_that_is_abandoned_is_on_record_with_the_approver(monkeypatch, c
     monkeypatch.setattr(executor, "disable_agent_identity", slow_write)
     approved = DisableRequest(REQUEST_ID, AGENT.app_id, "approved", APPROVER, "An Approver")
     async def run():
-        task = asyncio.create_task(executor.write_disable(None, None, approved, "correlation-1"))
+        task = asyncio.create_task(executor.write_disable(None, None, approved))
         await asyncio.sleep(0.05)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -293,4 +293,4 @@ def test_when_the_outcome_cannot_be_recorded_the_answer_is_unchanged_and_on_reco
     assert delegate() == (200, "disabled")
     assert disabled == [AGENT.app_id]
     [line] = [line for line in audit_lines(capsys) if line["event"] == "outcome_not_recorded"]
-    assert (line["outcome"], line["correlation_id"]) == ("succeeded", "correlation-1")
+    assert (line["outcome"], line["request_id"]) == ("succeeded", REQUEST_ID)

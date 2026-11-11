@@ -186,10 +186,10 @@ class FakeApprovals:
 
     def request(self, agent_id):
         decided = (self.decided_by, "An Approver") if self.status not in ("pending", "expired") else (None, None)
-        return DisableRequest(REQUEST_ID, agent_id, self.status, *decided, correlation_id="correlation-1",
+        return DisableRequest(REQUEST_ID, agent_id, self.status, *decided, trace_id="0af7651916cd43dd8448eb211c80319c",
                               expires_at="2026-11-11T06:00:00+00:00")
 
-    def create(self, agent_id, reason, facts, correlation_id):
+    def create(self, agent_id, reason, facts):
         if self.create_error:
             raise self.create_error
         self.created.append((agent_id, reason, facts))

@@ -16,7 +16,6 @@ import os
 import sys
 import urllib.parse
 import urllib.request
-import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +32,7 @@ from approval import SERVICE_ERRORS, ApprovalError, DisableRequest, IdentityApiA
 from disable_checks import GUID, check_can_be_disabled
 from graph_reader import AgentDetails, GraphClient, fetch_agent_details, fetch_agents, fetch_blueprints, fetch_last_sign_ins
 from rules import Finding, load_permission_policy, run_all_rules
+from telemetry import setup_tracing, trace_fields
 
 SIDECAR_URL = os.environ.get("SIDECAR_URL", "http://127.0.0.1:5000")
 API_URL = os.environ.get("API_URL", "http://identity-api:8000")
@@ -53,14 +53,13 @@ def token_for(api: str):
     return get_token
 
 
-def submit(findings: list[Finding], correlation_id: str) -> dict:
+def submit(findings: list[Finding]) -> dict:
     """Send the findings to the Identity API, which writes one audit line per decision (FR8)."""
     request = urllib.request.Request(
         f"{API_URL}/findings",
         data=json.dumps({"findings": [asdict(finding) for finding in findings]}).encode(),
         headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {token_for('identity-api')()}",
-                 "X-Correlation-ID": correlation_id},
+                 "Authorization": f"Bearer {token_for('identity-api')()}"},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -82,7 +81,6 @@ class RequestStatus:
 class ScanResult:
     findings: list[Finding]
     accepted: int          # how many findings the Identity API accepted
-    correlation_id: str    # the Identity API writes the same ID into its audit line
     disable_requests: list[RequestStatus]   # the latest request for each dormant agent that has one
 
 
@@ -103,12 +101,11 @@ def scan() -> ScanResult:
     """Read the tenant, apply the rules, report the findings to the Identity API, and add the
     status of the latest disable request for each dormant agent."""
     now = datetime.now(timezone.utc)
-    correlation_id = str(uuid.uuid4())
     graph = GraphClient(token_for("graph"))
     findings = run_all_rules(fetch_agents(graph), fetch_blueprints(graph),
                              load_permission_policy(POLICY_PATH), fetch_last_sign_ins(graph, now), now)
-    answer = submit(findings, correlation_id)
-    return ScanResult(findings, answer["accepted"], correlation_id, latest_requests(findings))
+    answer = submit(findings)
+    return ScanResult(findings, answer["accepted"], latest_requests(findings))
 
 
 # Sent in every answer's _meta (serverInfo), so logs and clients can tell which build answered.
@@ -118,8 +115,9 @@ SERVER_VERSION = "1.0.0"
 
 
 def audit(**fields) -> None:
-    """Write one audit line on stdout, like the Identity API's (FR8). Never pass a token in here."""
-    record = {"timestamp": datetime.now(timezone.utc).isoformat(), **fields}
+    """Write one audit line on stdout, like the Identity API's (FR8), with the current trace ID and
+    span ID (NFR4): the Identity API's lines for the same call carry the same trace ID. Never pass a token in here."""
+    record = {"timestamp": datetime.now(timezone.utc).isoformat(), **trace_fields(), **fields}
     print(json.dumps(record), file=sys.stdout, flush=True)
 
 
@@ -160,8 +158,7 @@ mcp = AllowListedServer(SERVER_NAME, version=SERVER_VERSION)
 def scan_registry() -> ScanResult:
     """Check every agent identity in the tenant for four flaws: no sponsor (orphan), a blueprint
     credential that expires soon, more permissions than its policy allows, and no sign-in for 30
-    days (dormant). Reports the findings to the Identity API's audit log, then returns them with
-    the audit's correlation ID."""
+    days (dormant). Reports the findings to the Identity API's audit log, then returns them."""
     return scan()
 
 
@@ -199,25 +196,25 @@ def approval_service() -> IdentityApiApprovals:
     return IdentityApiApprovals(API_URL, token_for("identity-api"))
 
 
-def audit_request(event: str, request: DisableRequest, correlation_id: str | None, **fields) -> None:
-    audit(event=event, agent=request.agent_id, request_id=request.request_id, correlation_id=correlation_id, **fields)
+def audit_request(event: str, request: DisableRequest, **fields) -> None:
+    audit(event=event, agent=request.agent_id, request_id=request.request_id, **fields)
 
 
-async def request_approval(service: IdentityApiApprovals, agent: AgentDetails, dormant: Finding, reason: str,
-                           correlation_id: str) -> tuple[DisableRequest | None, str | None]:
+async def request_approval(service: IdentityApiApprovals, agent: AgentDetails, dormant: Finding,
+                           reason: str) -> tuple[DisableRequest | None, str | None]:
     """Create the disable request. Returns the request and None, or None and why there is none. The
     facts come from Graph, so the approver can trust them. The reason comes from the model."""
     facts = {"name": agent.name, "blueprintAppId": agent.blueprint_app_id, "flaw": dormant.detail,
              "lastSignIn": dormant.date}
     try:
-        request = await asyncio.to_thread(service.create, agent.app_id, reason[:MAX_REASON], facts, correlation_id)
+        request = await asyncio.to_thread(service.create, agent.app_id, reason[:MAX_REASON], facts)
     except ApprovalError as error:
         audit(event="disable_refused", agent=agent.app_id, reason=error.reason)
         return None, error.reason
     except SERVICE_ERRORS:
         audit(event="disable_refused", agent=agent.app_id, reason="unavailable")
         return None, "unavailable"
-    audit_request("disable_requested", request, correlation_id)
+    audit_request("disable_requested", request)
     return request, None
 
 
@@ -231,13 +228,12 @@ async def submit_disable_agent_request(app_id: str, reason: str) -> SubmittedReq
     agent that is not dormant, for the guardian's own agents, and while a request for the agent is
     already pending. reason: one short sentence for the approver."""
     graph = GraphClient(token_for("graph"))   # app-only, read-only: the checks before anyone is asked
-    correlation_id = str(uuid.uuid4())
 
     agent, dormant, refusal = await check_can_be_disabled(graph, app_id, os.environ["GUARDIAN_AGENT_APP_ID"], audit)
     if refusal:
         raise ToolError(refusal)
 
-    request, not_created = await request_approval(approval_service(), agent, dormant, reason, correlation_id)
+    request, not_created = await request_approval(approval_service(), agent, dormant, reason)
     if not_created:
         raise ToolError(NOT_REQUESTED[not_created])
     return SubmittedRequest(app_id, agent.name, request.request_id, request.status, request.expires_at)
@@ -249,6 +245,11 @@ if __name__ == "__main__":
     except AllowListError as error:
         sys.exit(f"The MCP server did not start: {error}")
     audit(event="allow_list_loaded", allowed_tools=sorted(mcp.allowed_tools))
+    if setup_tracing():   # only when OTEL_SERVICE_NAME is set (src/shared/telemetry.py)
+        from opentelemetry.instrumentation.urllib import URLLibInstrumentor
+        # A client span for each call to the sidecar, Graph and the Identity API, and the traceparent
+        # header on each. It records the method, the URL and the status, never a header or a body.
+        URLLibInstrumentor().instrument()
     # 0.0.0.0, because the harness calls from another container. The port is reachable on the
     # compose network, not from the host (docs/agent-steward-architecture.md, D1).
     mcp.run(transport="streamable-http", host="0.0.0.0", port=MCP_PORT,

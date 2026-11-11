@@ -16,6 +16,12 @@ cannot publish a port, the person pastes the final address instead.
 
 It lists the pending requests once, asks about each one, and exits.
 
+One run of the CLI is one OpenTelemetry trace (NFR4): its root span, review disable_requests, holds the
+list call and one span per decision. It is a trace of its own, because the approval happens later than
+the guardian's run, in another process. Each decision's span links to the span that created the
+request, in the guardian's run, so the two traces can be followed in both directions. The calls to the
+Identity API and the executor carry the traceparent. MSAL's calls to Entra are not traced.
+
 Everything shown here is data, never instructions. The reason comes from the model, so it is labelled
 as untrusted. An agent's name comes from whoever registered it. Both have their control characters
 removed, so they cannot move the cursor or rewrite what the terminal shows.
@@ -49,6 +55,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from opentelemetry import trace
+
+import span_names as names
+from telemetry import link_to, setup_tracing
+
+# The run's span and one span per decision. Without the OpenTelemetry SDK (src/shared/telemetry.py) they record nothing.
+TRACER = trace.get_tracer(names.APPROVE_CLI_TRACER)
+
 # Registered on the client app without a port (setup/bicep/agent-disable-approvers.bicep): Entra ignores
 # the port of a localhost redirect URI. A port nothing listens on, so no local program gets the address.
 REDIRECT_URI = "http://localhost:18400"
@@ -65,6 +79,8 @@ class PendingRequest:
     reason: str                          # from the model: untrusted
     facts: dict = field(default_factory=dict)   # read from Graph by the MCP server
     expires_at: str = ""
+    trace_id: str | None = None          # the guardian's span that created the request
+    span_id: str | None = None
 
 
 def parse_pending(body: dict) -> list[PendingRequest]:
@@ -77,7 +93,8 @@ def parse_pending(body: dict) -> list[PendingRequest]:
             raise ValueError("a disable request needs id and agentId")
         facts = item.get("facts")
         requests.append(PendingRequest(item["id"], item["agentId"], str(item.get("reason") or ""),
-                                       facts if isinstance(facts, dict) else {}, str(item.get("expiresAt") or "")))
+                                       facts if isinstance(facts, dict) else {}, str(item.get("expiresAt") or ""),
+                                       item.get("traceId"), item.get("spanId")))
     return requests
 
 
@@ -196,7 +213,17 @@ def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[
            delegate: Callable[["PendingRequest"], str] | None = None) -> int:
     """Ask about every pending request, once each, and return how many were shown. A request the
     person skipped is not asked again. After an approval, delegate hands the person's rights to the
-    guardian for that one request and returns what the guardian answered."""
+    guardian for that one request and returns what the guardian answered. The whole review is one
+    span, the root of this run's trace."""
+    with TRACER.start_as_current_span(names.REVIEW_SPAN) as span:
+        shown = review_each(api, skipped, read, write, delegate)
+        span.set_attribute(names.REQUESTS_SHOWN, shown)
+    return shown
+
+
+def review_each(api, skipped: set[str], read: Callable[[str], str], write: Callable[[str], None],
+                delegate: Callable[["PendingRequest"], str] | None) -> int:
+    """review's loop, inside the run's span."""
     shown = 0
     for request in api.pending():
         if request.request_id in skipped:
@@ -208,27 +235,36 @@ def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[
             skipped.add(request.request_id)
             write("Skipped: nothing was decided.")
             continue
-        try:
-            api.decide(request.agent_id, request.request_id, choice)
-            write(f"Sent: {choice}.")
-        except urllib.error.HTTPError as error:
-            if error.code != 409:
-                raise
-            write("Not sent: this request was already decided, or it expired.")
-            continue
-        if choice == "approve" and delegate is not None:
-            write(WAITING_TEXT)
-            try:
-                with spinner():
-                    result = delegate(request)
-            except SignInError as error:
-                write(f"Not disabled: {plain(error)}")
-                continue
-            except OSError:
-                write("Not disabled: the guardian's executor could not be reached.")
-                continue
-            write(DELEGATION_RESULTS.get(result, f"Not disabled: {plain(result)}"))
+        # The span starts after the answer, so it times the calls, not the person's thinking.
+        with TRACER.start_as_current_span(names.DECIDE_SPAN, links=link_to(request.trace_id, request.span_id),
+                                          attributes={names.REQUEST_ID: request.request_id, names.DECISION: choice}):
+            decide_and_delegate(api, request, choice, write, delegate)
     return shown
+
+
+def decide_and_delegate(api, request: "PendingRequest", choice: str, write: Callable[[str], None],
+                        delegate: Callable[["PendingRequest"], str] | None) -> None:
+    """Send the decision. After an approval, hand the person's rights to the guardian (delegate)."""
+    try:
+        api.decide(request.agent_id, request.request_id, choice)
+        write(f"Sent: {choice}.")
+    except urllib.error.HTTPError as error:
+        if error.code != 409:
+            raise
+        write("Not sent: this request was already decided, or it expired.")
+        return
+    if choice == "approve" and delegate is not None:
+        write(WAITING_TEXT)
+        try:
+            with spinner():
+                result = delegate(request)
+        except SignInError as error:
+            write(f"Not disabled: {plain(error)}")
+            return
+        except OSError:
+            write("Not disabled: the guardian's executor could not be reached.")
+            return
+        write(DELEGATION_RESULTS.get(result, f"Not disabled: {plain(result)}"))
 
 
 LISTEN_PORT = 18400          # the port in REDIRECT_URI
@@ -377,6 +413,11 @@ def main(argv: list[str] | None = None) -> int:
     #                             guardian. Only in the obo-claims service, which shares the
     #                             executor's sidecar's loopback.
     options = sys.argv[1:] if argv is None else argv
+    if setup_tracing():   # only when OTEL_SERVICE_NAME is set (src/shared/telemetry.py)
+        from opentelemetry.instrumentation.urllib import URLLibInstrumentor
+        # A client span, and the traceparent header, for each call to the Identity API and the
+        # executor. It never records a header, so neither token goes into a span.
+        URLLibInstrumentor().instrument()
     try:
         session = sign_in(os.environ["TENANT_ID"], os.environ["AGENT_DISABLE_CLI_APP_ID"],
                           os.environ["IDENTITY_API_APP_ID"], input, print,

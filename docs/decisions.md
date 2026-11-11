@@ -35,7 +35,7 @@ For the architecture these decisions belong to, see [Agent Steward architecture]
 **Consequences:**
 
 - The model cannot hide a finding from the audit log, and it cannot add a finding that the rules did not produce.
-- The model's final report can still be wrong or incomplete. Anyone who needs the truth reads the audit log, using the correlation ID that `scan_registry` returns.
+- The model's final report can still be wrong or incomplete. Anyone who needs the truth reads the audit log, using the run's trace ID, which the harness logs and every audit line of the run carries (since 11 November 2026; until then, a correlation ID that `scan_registry` returned).
 - `scan_registry` has a side effect: it writes to the Identity API. So it is not marked as a read-only tool.
 - The same rule applies to any future tool that writes audit or evidence data: the tool's code produces the data, never the model.
 

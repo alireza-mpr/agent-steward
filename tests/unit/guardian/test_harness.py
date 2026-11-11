@@ -13,6 +13,10 @@ import httpx2
 import pytest
 from mcp import MCPError
 from mcp.types import INVALID_PARAMS, CallToolResult, Tool
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import SpanKind, StatusCode
 
 import harness
 
@@ -66,7 +70,7 @@ class FakeMcpServer:
 
 
 SCAN_OK = CallToolResult.model_validate({"content": [], "isError": False, "structuredContent": {
-    "findings": [], "accepted": 0, "correlation_id": "c-1"}})
+    "findings": [], "accepted": 0}})
 TOOL_FAILED = CallToolResult.model_validate({"content": [{"type": "text", "text": "app_id must be an agent "
                                                          "identity's app ID (a GUID)"}], "isError": True})
 
@@ -89,7 +93,6 @@ def test_a_tool_request_goes_to_the_mcp_server_and_its_result_back_to_the_model(
     assert tool_result["tool_use_id"] == "toolu_1"
     assert tool_result["is_error"] is False
     assert result.report == "No findings. Correlation ID c-1."
-    assert result.correlation_ids == ["c-1"]
 
 
 def test_the_model_gets_the_mcp_servers_tools_with_their_json_schema():
@@ -245,6 +248,47 @@ def test_the_json_trace_keeps_the_mcp_conversation_apart_from_the_model_conversa
     assert '"name": "scan_registry"' in trace and '"arguments": {}' in trace      # the tools/call request
     assert '"isError": false' in trace and '"structuredContent"' in trace         # MCP's own field names
     assert '"inputSchema"' in trace                                               # the tools as MCP lists them
+
+
+# --- The run's OpenTelemetry span (NFR4) ---
+
+@pytest.fixture
+def spans(monkeypatch):
+    """The harness's tracer, from an SDK provider that keeps every finished span in memory."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(harness, "TRACER", provider.get_tracer("test"))
+    return exporter
+
+
+def test_a_run_is_one_invoke_agent_span_with_the_token_totals(spans):
+    first = answer("tool_use", tool_use("toolu_1", "scan_registry", {}))
+    first.usage = SimpleNamespace(input_tokens=1000, output_tokens=50)
+    last = answer("end_turn", text("No findings."))
+    last.usage = SimpleNamespace(input_tokens=1200, output_tokens=80)
+
+    run(ScriptedClaude(first, last), FakeMcpServer({"scan_registry": SCAN_OK}))
+
+    [span] = spans.get_finished_spans()
+    assert span.name == "invoke_agent guardian"
+    assert span.kind == SpanKind.INTERNAL
+    assert dict(span.attributes) == {
+        "gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "guardian",
+        "gen_ai.provider.name": "anthropic", "gen_ai.request.model": "claude-opus-5-5",
+        "gen_ai.usage.input_tokens": 2200, "gen_ai.usage.output_tokens": 130, "guardian.rounds": 2}
+
+
+def test_a_stopped_run_ends_its_span_as_an_error_and_holds_no_report(spans):
+    claude = ScriptedClaude(answer("refusal", text("A report that may be cut off.")))
+
+    with pytest.raises(harness.ModelStopped):
+        run(claude, FakeMcpServer({}))
+
+    [span] = spans.get_finished_spans()
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["error.type"] == "ModelStopped"
+    assert "A report" not in str(dict(span.attributes))   # names and counts only, never the model's text
 
 
 # --- The body log (GUARDIAN_TRACE=full): the real SDK, a fake HTTP connection ---

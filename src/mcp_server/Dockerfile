@@ -4,6 +4,8 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY allow_list.py approval.py disable_checks.py rules.py graph_reader.py server.py ./
+# The shared OpenTelemetry setup (src/shared, an additional build context in docker-compose.yml).
+COPY --from=shared *.py ./
 
 USER nobody
 CMD ["python", "server.py"]

@@ -61,7 +61,8 @@ class DisableRequest:
     decided_by_name: str | None = None
     created_at: str | None = None       # ISO 8601, as the Identity API sends them
     decided_at: str | None = None
-    correlation_id: str | None = None   # links the request's audit lines at the Identity API and here
+    trace_id: str | None = None         # the trace and span that created the request (NFR4)
+    span_id: str | None = None
     expires_at: str | None = None       # when a pending request stops waiting for an approver
 
 
@@ -75,7 +76,7 @@ class ApprovalError(Exception):
 
 
 class ApprovalService(Protocol):
-    def create(self, agent_id: str, reason: str, facts: dict, correlation_id: str) -> DisableRequest: ...
+    def create(self, agent_id: str, reason: str, facts: dict) -> DisableRequest: ...
     def get(self, agent_id: str, request_id: str) -> DisableRequest: ...
     def of_agent(self, agent_id: str) -> list[DisableRequest]: ...
     def execute(self, agent_id: str, request_id: str, delegating_user: str) -> DisableRequest: ...
@@ -93,8 +94,8 @@ def parse_request(body: dict) -> DisableRequest:
     if not isinstance(decided_by, dict):
         raise ValueError("decidedBy must be an object")
     return DisableRequest(request_id, agent_id, Status(body["status"]), decided_by.get("id"), decided_by.get("name"),
-                          body.get("createdAt"), body.get("decidedAt"), body.get("correlationId"),
-                          body.get("expiresAt"))
+                          body.get("createdAt"), body.get("decidedAt"), body.get("traceId"),
+                          body.get("spanId"), body.get("expiresAt"))
 
 
 class IdentityApiApprovals:
@@ -105,21 +106,20 @@ class IdentityApiApprovals:
         self._api_url = api_url
         self._get_token = get_token
 
-    def _send(self, method: str, path: str, correlation_id: str = "", body: dict | None = None):
+    def _send(self, method: str, path: str, body: dict | None = None):
+        # The trace context goes in the traceparent header, which the urllib instrumentation adds.
         headers = {"Authorization": f"Bearer {self._get_token()}", "Content-Type": "application/json"}
-        if correlation_id:
-            headers["X-Correlation-ID"] = correlation_id
         request = urllib.request.Request(self._api_url + path, method=method, headers=headers,
                                          data=json.dumps(body).encode() if body is not None else None)
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
 
-    def _call(self, method: str, path: str, correlation_id: str = "", body: dict | None = None) -> DisableRequest:
-        return parse_request(self._send(method, path, correlation_id, body))
+    def _call(self, method: str, path: str, body: dict | None = None) -> DisableRequest:
+        return parse_request(self._send(method, path, body))
 
-    def create(self, agent_id: str, reason: str, facts: dict, correlation_id: str) -> DisableRequest:
+    def create(self, agent_id: str, reason: str, facts: dict) -> DisableRequest:
         try:
-            return self._call("POST", f"/agents/{urllib.parse.quote(agent_id)}/disableRequests", correlation_id,
+            return self._call("POST", f"/agents/{urllib.parse.quote(agent_id)}/disableRequests",
                               {"reason": reason, "facts": facts})
         except urllib.error.HTTPError as error:
             if error.code == 409:

@@ -4,6 +4,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY token_validation.py disable_requests.py main.py ./
+# The shared OpenTelemetry setup (src/shared, an additional build context in docker-compose.yml).
+COPY --from=shared *.py ./
 
 USER nobody
 EXPOSE 8000

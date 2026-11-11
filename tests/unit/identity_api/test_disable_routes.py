@@ -16,6 +16,10 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from disable_requests import EXPIRES_AFTER, DisableRequestStore
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 TENANT = "00000000-0000-0000-0000-0000000000aa"
 API = "00000000-0000-0000-0000-0000000000a1"
@@ -82,7 +86,7 @@ def client(monkeypatch, clock):
 
 def create(client, agent=TARGET, headers=None):
     return client.post(f"/agents/{agent}/disableRequests", json=BODY,
-                       headers={**(headers or guardian()), "X-Correlation-ID": "correlation-1"})
+                       headers=headers or guardian())
 
 
 def decide(client, request_id, decision="approve", headers=None, agent=TARGET):
@@ -205,7 +209,7 @@ def test_a_late_decision_gets_409_and_the_expiry_is_audited(client, clock, capsy
     assert decide(client, request_id).status_code == 409
     assert client.get(f"/agents/{TARGET}/disableRequests/{request_id}", headers=guardian()).json()["status"] == "expired"
     [line] = audit_lines(capsys, "disable_request_expired")
-    assert (line["request_id"], line["correlation_id"]) == (request_id, "correlation-1")
+    assert line["request_id"] == request_id
 
 
 def test_a_request_is_not_reachable_through_another_agents_path(client):
@@ -271,21 +275,20 @@ def test_the_created_line_holds_what_the_approver_will_see(client, capsys):
     create(client)
 
     [line] = audit_lines(capsys, "disable_request_created")
-    assert line["correlation_id"] == "correlation-1" and line["target_agent"] == TARGET
+    assert line["request_id"] and line["target_agent"] == TARGET
     assert line["agent_app_id"] == GUARDIAN and line["blueprint_app_id"] == "blueprint"
     assert line["untrusted_reason"] == "It is dormant."
     assert line["facts"]["flaw"] == "no sign-in in the last 30 days"
 
 
-def test_the_decided_line_names_the_approver_and_keeps_the_requests_correlation_id(client, capsys):
+def test_the_decided_line_names_the_approver_and_the_request(client, capsys):
     request_id = create(client).json()["id"]
 
-    # The CLI sends no correlation ID, and a header cannot move the line to another one.
     client.post(f"/agents/{TARGET}/disableRequests/{request_id}/decision", json={"decision": "approve"},
-                headers={**person(), "X-Correlation-ID": "forged"})
+                headers=person())
 
     [line] = audit_lines(capsys, "disable_request_decided")
-    assert (line["correlation_id"], line["decision"]) == ("correlation-1", "approved")
+    assert (line["request_id"], line["decision"]) == (request_id, "approved")
     assert (line["approver_id"], line["approver_name"], line["client_app_id"]) == (PERSON, "An Approver", CLI)
 
 
@@ -381,7 +384,7 @@ def test_the_agent_that_asked_records_the_outcome_once_and_it_is_audited(outcome
     assert second.status_code == 409
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     [line] = [line for line in lines if line["event"] == "disable_request_finished"]
-    assert (line["outcome"], line["correlation_id"], line["approver_id"]) == (outcome, "correlation-1", PERSON)
+    assert (line["outcome"], line["request_id"], line["approver_id"]) == (outcome, request_id, PERSON)
     [refused] = [line for line in lines if line["event"] == "disable_outcome_refused"]
     assert refused["status"] == outcome
 
@@ -418,3 +421,60 @@ def test_the_scan_sees_a_failed_request_and_the_agent_can_ask_again(client):
 
     assert again.status_code == 201
     assert sorted(item["status"] for item in listed) == ["failed", "pending"]
+
+
+# Tracing (NFR4): the trace ID replaces the old correlation ID
+
+RUN_TRACE = "0af7651916cd43dd8448eb211c80319c"   # the guardian's run, as the MCP server passes it on
+TRACEPARENT = {"traceparent": f"00-{RUN_TRACE}-b7ad6b7169203331-01"}
+
+
+@pytest.fixture
+def traced(client):
+    """The app with the FastAPI instrumentation, as in compose, and its spans kept in memory."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    FastAPIInstrumentor.instrument_app(api.app, tracer_provider=provider, exclude_spans=["receive", "send"])
+    api.app.middleware_stack = None   # earlier tests built it already: build it again, with the instrumentation
+    yield TestClient(api.app), exporter
+    FastAPIInstrumentor.uninstrument_app(api.app)
+    api.app.middleware_stack = None
+
+
+def test_the_callers_traceparent_becomes_the_audit_lines_trace_id(traced, capsys):
+    client, spans = traced
+
+    created = create(client, headers={**guardian(), **TRACEPARENT}).json()
+
+    [line] = audit_lines(capsys, "disable_request_created")
+    assert line["trace_id"] == RUN_TRACE   # the same ID as the MCP server's lines and the run's spans
+    # The request keeps the span that created it, so the approval's trace can link to it.
+    [server_span] = [span for span in spans.get_finished_spans() if span.kind.name == "SERVER"]
+    assert (created["traceId"], created["spanId"]) == (RUN_TRACE, line["span_id"])
+    assert line["span_id"] == f"{server_span.context.span_id:016x}"
+
+
+def test_the_decision_is_in_the_approvals_own_trace_and_the_request_id_ties_the_two(traced, capsys):
+    client, _ = traced
+    request_id = create(client, headers={**guardian(), **TRACEPARENT}).json()["id"]
+    approval_trace = "4bf92f3577b34da6a3ce929d0e0e4736"
+
+    client.post(f"/agents/{TARGET}/disableRequests/{request_id}/decision", json={"decision": "approve"},
+                headers={**person(), "traceparent": f"00-{approval_trace}-00f067aa0ba902b7-01"})
+
+    created, decided = audit_lines_of(capsys, "disable_request_created", "disable_request_decided")
+    assert (created["trace_id"], decided["trace_id"]) == (RUN_TRACE, approval_trace)
+    assert created["request_id"] == decided["request_id"] == request_id
+
+
+def test_without_the_sdk_no_line_carries_a_trace_id(client, capsys):
+    create(client)
+
+    [line] = audit_lines(capsys, "disable_request_created")
+    assert "trace_id" not in line
+
+
+def audit_lines_of(capsys, *events) -> list[dict]:
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    return [next(line for line in lines if line.get("event") == event) for event in events]

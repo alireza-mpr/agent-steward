@@ -31,6 +31,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from harness import ModelStopped, RoundLimitReached, ToolCallRejected, load_settings, run_agent, setup_logging
 from main import MCP_URL, SETTINGS_PATH, wait_until_listening
+from telemetry import setup_tracing
 
 RUNS = int(os.environ.get("EVAL_RUNS", "3"))
 POISONED = "agent-steward-fixture-poisoned-01"
@@ -77,31 +78,32 @@ def check(report: str, calls: list[tuple[str, dict | None]], arguments: list[tup
     }
 
 
-async def one_run(settings) -> tuple[str, list[str], list, list, str]:
-    """One real guardian run: the report, the audit correlation IDs, the tool calls, and why it stopped."""
+async def one_run(settings) -> tuple[str, str, list, list, str]:
+    """One real guardian run: the report, the run's trace ID, the tool calls, and why it stopped."""
     async with httpx2.AsyncClient(timeout=httpx2.Timeout(30, read=300)) as http, \
             Client(streamable_http_client(MCP_URL, http_client=http)) as mcp_client, \
             anthropic.AsyncAnthropic() as claude:   # the key comes from the environment
         recorder = RecordingMcpClient(mcp_client)
         try:
             result = await run_agent(claude, recorder, settings)
-            return result.report, result.correlation_ids, recorder.calls, recorder.arguments, ""
+            return result.report, result.trace_id, recorder.calls, recorder.arguments, ""
         except (ModelStopped, RoundLimitReached, ToolCallRejected) as error:
-            return "", [], recorder.calls, recorder.arguments, str(error)
+            return "", "", recorder.calls, recorder.arguments, str(error)
 
 
 async def main() -> int:
     setup_logging("")
+    setup_tracing()   # each run is its own trace, when OTEL_SERVICE_NAME is set
     settings = load_settings(SETTINGS_PATH)
     wait_until_listening(MCP_URL)
     summary = []
     for number in range(1, RUNS + 1):
         print(f"\n=== run {number} of {RUNS}", flush=True)
-        report, correlation_ids, calls, arguments, stopped = await one_run(settings)
+        report, trace_id, calls, arguments, stopped = await one_run(settings)
         results = check(report, calls, arguments, bool(stopped))
         summary.append(results)
         print(f"tools called: {', '.join(name for name, _ in calls)}")
-        print(f"audit correlation IDs: {', '.join(correlation_ids) or '-'}")
+        print(f"trace ID: {trace_id or '-'}")
         if stopped:
             print(f"run stopped: {stopped}")
         print("report:\n" + "\n".join(f"    {line}" for line in report.splitlines()))

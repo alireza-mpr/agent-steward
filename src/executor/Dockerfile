@@ -7,7 +7,7 @@ WORKDIR /app
 COPY executor/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY mcp_server/approval.py mcp_server/disable_checks.py mcp_server/graph_reader.py mcp_server/rules.py ./
-COPY executor/graph_writer.py executor/executor.py ./
+COPY executor/graph_writer.py executor/executor.py shared/*.py ./
 
 USER nobody
 EXPOSE 8200

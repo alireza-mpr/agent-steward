@@ -50,7 +50,7 @@ def test_a_409_on_create_means_a_request_is_already_waiting(monkeypatch):
     service = creating_answers(monkeypatch, 409)
 
     with pytest.raises(ApprovalError) as error:
-        service.create("agent-1", "reason", {}, "correlation-1")
+        service.create("agent-1", "reason", {})
     assert error.value.reason == "already_waiting"
 
 
@@ -58,7 +58,7 @@ def test_any_other_refusal_on_create_stays_a_service_error(monkeypatch):
     service = creating_answers(monkeypatch, 403)
 
     with pytest.raises(OSError):
-        service.create("agent-1", "reason", {}, "correlation-1")
+        service.create("agent-1", "reason", {})
 
 
 # Listing and executing

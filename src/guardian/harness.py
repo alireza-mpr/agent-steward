@@ -11,16 +11,22 @@ import json
 import logging
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from mcp import MCPError
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind, format_trace_id
+
+import span_names as names
 
 # One logger per source, so every progress line says what it is about. setup_logging prints the
 # last part of the name as a tag: [model] and [mcp] for the two peers, [harness] for the harness itself.
 MODEL_LOG = logging.getLogger("guardian.model")
 MCP_LOG = logging.getLogger("guardian.mcp")
+# The run's root span. Without the OpenTelemetry SDK (guardian_telemetry.py) it records nothing.
+TRACER = trace.get_tracer(names.HARNESS_TRACER)
 
 
 def add_tag(record: logging.LogRecord) -> bool:
@@ -109,8 +115,7 @@ SYSTEM_PROMPT = (
     "disable request for each dormant agent. If that request is pending, approved or running, do not "
     "ask again: report its status. If it was denied, expired or failed, you may ask again. Report "
     "each outcome.\n"
-    "Your report: one line per finding (agent, flaw, detail). End with the audit correlation ID "
-    "that scan_registry returned, so the administrator can check your report against the audit log."
+    "Your report: one line per finding (agent, flaw, detail)."
 )
 TASK = "Run today's registry check, report what you find, and ask to disable each dormant agent."
 
@@ -138,7 +143,9 @@ class ToolCallRejected(Exception):
 class RunResult:
     report: str = ""
     rounds: int = 0
-    correlation_ids: list[str] = field(default_factory=list)   # from scan_registry: the audit's IDs
+    trace_id: str = ""       # the run's trace ID: the same ID is in every audit line of the run (NFR4)
+    input_tokens: int = 0    # summed over the run's model calls, for the run's span
+    output_tokens: int = 0
 
 
 def to_claude_tool(tool: Any, strict: bool) -> dict:
@@ -313,21 +320,49 @@ async def run_agent(claude: Any, mcp_client: Any, settings: HarnessSettings, tra
     steps to guardian.mcp. With a trace (Trace, or the chat view), every message to and from the
     model and the MCP server is also shown, each conversation in its own sections.
     With show_thinking, the model returns a readable summary of its thinking.
+
+    The whole run is one OpenTelemetry span, the root of the run's trace: invoke_agent guardian, as
+    the GenAI semantic conventions name an agent run in its own process (status Development). The
+    model calls' spans (Anthropic SDK) and the MCP requests' spans (MCP SDK) are its children. It
+    holds no prompt, answer or tool result: only names and counts.
     """
+    result = RunResult()
+    with TRACER.start_as_current_span(names.INVOKE_AGENT_SPAN, kind=SpanKind.INTERNAL, attributes={
+            names.GEN_AI_OPERATION_NAME: names.INVOKE_AGENT_OPERATION, names.GEN_AI_AGENT_NAME: names.AGENT_NAME,
+            names.GEN_AI_PROVIDER_NAME: names.PROVIDER, names.GEN_AI_REQUEST_MODEL: settings.model}) as span:
+        if span.get_span_context().is_valid:   # not without the SDK
+            result.trace_id = format_trace_id(span.get_span_context().trace_id)
+        try:
+            return await agent_loop(claude, mcp_client, settings, trace, show_thinking, task, result)
+        except Exception as error:
+            span.set_attribute(names.ERROR_TYPE, type(error).__name__)   # the span also records the error
+            raise
+        finally:
+            span.set_attributes({names.GEN_AI_USAGE_INPUT_TOKENS: result.input_tokens,
+                                 names.GEN_AI_USAGE_OUTPUT_TOKENS: result.output_tokens,
+                                 names.ROUNDS: result.rounds})
+
+
+async def agent_loop(claude: Any, mcp_client: Any, settings: HarnessSettings, trace: Any, show_thinking: bool,
+                     task: str, result: RunResult) -> RunResult:
+    """run_agent's loop, inside the run's span. It fills in result as it goes."""
     listed = (await mcp_client.list_tools()).tools
     if trace:
         trace.mcp_tools_listed(listed)
     tools = [to_claude_tool(tool, settings.strict_tool_inputs) for tool in listed]
     MCP_LOG.info(f"tools/list: {', '.join(tool['name'] for tool in tools)}")
     messages: list[dict] = [{"role": "user", "content": task}]
-    result = RunResult()
 
     for round_number in range(1, settings.max_rounds + 1):
+        result.rounds = round_number
         if trace:
             trace.request(round_number, tools, messages)
         response = await ask_model(claude, settings, tools, messages, show_thinking=show_thinking)
         if trace:
             trace.response(round_number, response)
+        if usage := getattr(response, "usage", None):
+            result.input_tokens += usage.input_tokens
+            result.output_tokens += usage.output_tokens
         requests = [block for block in response.content if block.type == "tool_use"]
         # The model that answered: not always settings.model, when a refusal fallback ran.
         MODEL_LOG.info(f"round {round_number}: {response.model} stopped with {response.stop_reason}"
@@ -335,7 +370,6 @@ async def run_agent(claude: Any, mcp_client: Any, settings: HarnessSettings, tra
 
         if response.stop_reason == "end_turn":
             result.report = "\n".join(block.text for block in response.content if block.type == "text")
-            result.rounds = round_number
             return result
         if response.stop_reason != "tool_use":
             # Fail closed: only end_turn is a finished report. A refusal, a cut-off answer, a full
@@ -362,9 +396,6 @@ async def run_agent(claude: Any, mcp_client: Any, settings: HarnessSettings, tra
                 trace.mcp_result(round_number, request.name, outcome)
             MCP_LOG.info(f"round {round_number}: tools/call {request.name}({json.dumps(request.input)}) "
                          f"{'failed' if outcome.is_error else 'succeeded'}")
-            if not outcome.is_error and isinstance(outcome.structured_content, dict) \
-                    and "correlation_id" in outcome.structured_content:
-                result.correlation_ids.append(outcome.structured_content["correlation_id"])
             # A failed tool goes back as an error the model can read and correct.
             tool_results.append({"type": "tool_result", "tool_use_id": request.id,
                                  "content": result_text(outcome), "is_error": bool(outcome.is_error)})

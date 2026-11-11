@@ -1,7 +1,7 @@
 """The guardian's run: one pass of the agent loop, from the task to Claude's report (FR6).
 
 Claude decides which tools to ask for; the MCP server runs them. docker compose up runs the
-guardian once, and docker compose run --rm guardian runs it again. The container holds only the
+harness once, and docker compose run --rm harness runs it again. The container holds only the
 Anthropic API key (secrets/anthropic.env) and cannot reach the token sidecar.
 
 Every line the harness prints starts with a tag that says what it is about: [harness] for the
@@ -9,9 +9,9 @@ harness itself, [model] and [mcp] for its two peers.
 
 To see every message between the harness and its two peers, the model and the MCP server,
 each conversation in its own sections:
-    docker compose run --rm -e GUARDIAN_TRACE=1 guardian       # as a chat, in colour, shortened
-    docker compose run --rm -e GUARDIAN_TRACE=json guardian    # as JSON, each model message once, no settings
-    docker compose run --rm -e GUARDIAN_TRACE=full guardian    # the exact request and response bodies, in full
+    docker compose run --rm -e GUARDIAN_TRACE=1 harness       # as a chat, in colour, shortened
+    docker compose run --rm -e GUARDIAN_TRACE=json harness    # as JSON, each model message once, no settings
+    docker compose run --rm -e GUARDIAN_TRACE=full harness    # the exact request and response bodies, in full
 The trace holds real tenant data (agent names, IDs), so keep it out of git (run*.txt is ignored)
 and redact it in any screenshot.
 
@@ -36,6 +36,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from harness import (BodyLog, ModelStopped, RoundLimitReached, SettingsError, ToolCallRejected, Trace,
                      TASK, check_arguments, load_settings, run_agent, setup_logging)
+from telemetry import setup_tracing
 from trace_view import ChatTrace
 
 MCP_URL = os.environ.get("MCP_URL", "http://sidecar:8100/mcp")
@@ -64,6 +65,7 @@ def wait_until_listening(url: str, timeout_seconds: int = 60) -> None:
 async def main() -> int:
     check_arguments(sys.argv[1:])
     setup_logging(TRACE)
+    setup_tracing()   # only when OTEL_SERVICE_NAME is set (src/shared/telemetry.py)
     try:
         settings = load_settings(SETTINGS_PATH)
     except SettingsError as error:
@@ -108,8 +110,9 @@ async def main() -> int:
 
     if TRACE in ("", "json", "full"):   # the chat view has already shown the report
         log.info(f"report ({result.rounds} model calls):\n\n{result.report}\n")
-    for correlation_id in result.correlation_ids:
-        log.info(f"audit correlation ID, from scan_registry: {correlation_id}")
+    if result.trace_id:
+        # The same ID is in every audit line of this run, in the MCP server and the Identity API.
+        log.info(f"trace ID: {result.trace_id} (Jaeger: http://localhost:16686/trace/{result.trace_id})")
     return 0
 
 

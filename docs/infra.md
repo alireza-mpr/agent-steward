@@ -21,6 +21,7 @@ How this project creates tenant objects as code: Bicep, Azure Resource Manager (
   - [Run the Agent ID scripts](#run-the-agent-id-scripts)
 - [Local run: the sidecar](#local-run-the-sidecar)
 - [The CLI](#the-cli)
+- [Tracing: OpenTelemetry and Jaeger](#tracing-opentelemetry-and-jaeger)
 - [Cost](#cost)
 - [Known issue: Bicep on Apple Silicon](#known-issue-bicep-on-apple-silicon)
 - [Not in scope](#not-in-scope)
@@ -292,10 +293,10 @@ docker compose up -d sidecar
 docker compose run --rm token-claims graph   # claims of the guardian's Graph token
 docker compose up -d identity-api mcp-server
 docker compose up -d executor-sidecar executor   # the approved disable (FR4): the CLI sends the approver's token here
-docker compose run --rm guardian            # one run of the agent loop: Claude asks, the MCP tools act
-docker compose run --rm -e GUARDIAN_TRACE=1 guardian   # the same, showing every message to and from the model and the MCP server, each in its own panels, as a chat, shortened
-docker compose run --rm -e GUARDIAN_TRACE=json guardian   # the same, as JSON: each model message once, no settings
-docker compose run --rm -e GUARDIAN_TRACE=full guardian > run.txt   # the exact request and response bodies, model and MCP server apart, in full (run*.txt: git ignores it)
+docker compose run --rm harness            # one run of the agent loop: Claude asks, the MCP tools act
+docker compose run --rm -e GUARDIAN_TRACE=1 harness   # the same, showing every message to and from the model and the MCP server, each in its own panels, as a chat, shortened
+docker compose run --rm -e GUARDIAN_TRACE=json harness   # the same, as JSON: each model message once, no settings
+docker compose run --rm -e GUARDIAN_TRACE=full harness > run.txt   # the exact request and response bodies, model and MCP server apart, in full (run*.txt: git ignores it)
 docker compose run --rm integration-tests   # integration tests: real Entra tokens against the Identity API
 docker compose run --rm mcp-integration-tests   # MCP integration tests: the real MCP tools from the guardian's network, no model
 docker compose run --rm agent-eval              # agent eval (NFR3): 3 guardian runs with Claude against a planted prompt injection
@@ -335,6 +336,33 @@ docker compose run --rm --service-ports approve python approve.py --show-claims
 ``` To see why the Identity API refused a call, read the `request_rejected` lines in `docker compose logs identity-api`.
 
 The sign-in fails with `AADSTS530035` only if the device code flow comes back: security defaults block that flow ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)).
+
+## Tracing: OpenTelemetry and Jaeger
+
+Every service sends its spans to Jaeger, which runs in docker compose with the rest of the stack (NFR4). Jaeger keeps them in memory only, so a restart empties it.
+
+1. **Start the stack:** `docker compose up -d --build`.
+2. **Run the guardian:** `docker compose run --rm harness`. Its last line gives the run's trace ID and a Jaeger link.
+3. **Open the trace:** http://localhost:16686, service `harness`, "Find Traces", or the link from step 2.
+4. **Approve or deny:** `docker compose run --rm --service-ports approve`. Each run of the CLI is one trace, `approve-cli: review disable_requests`. Each decision's span in it links to the span that created the request, in the harness's trace.
+
+**Service names in Jaeger:** `harness` (the guardian's harness only, not the whole guardian), `mcp-server`, `identity-api`, `executor`, `approve-cli` and `agent-eval`. The run's root span is still `invoke_agent guardian`: there, `guardian` is the agent's name (`gen_ai.agent.name`), the whole agent, not one container.
+
+**What the trees show:**
+
+- **A guardian run:** `invoke_agent guardian` (the model, the token totals, the rounds), a span per model call, and a span per MCP request. Under each tool call: the MCP server's span, its calls to the sidecar and Graph, and the Identity API's spans.
+- **A CLI run:** `review disable_requests`, the list call, and one `decide disable_request` per decision: the Identity API's span for the decision, and after an approval the executor's spans: the token check, the Graph reads, the claim, the OBO exchange and the PATCH.
+
+**How it is set up** ([telemetry.py](../src/shared/telemetry.py), one file that every image copies):
+
+- **`OTEL_SERVICE_NAME`:** set per service in compose. It turns the SDK on, so every span and every audit line gets a real trace ID.
+- **`OTEL_EXPORTER_OTLP_ENDPOINT`:** `http://jaeger:4318` for every service. It sends the spans over OTLP/HTTP. Without it, the IDs still exist, but nothing is sent.
+- **The instrumentations:** urllib in the MCP server, the executor and the CLI (outgoing calls, with the `traceparent` header), and FastAPI in the Identity API and the executor (incoming calls). The Anthropic and MCP SDKs create their own spans.
+- **What spans hold:** never a token: the instrumentations record no headers and no bodies. The model calls' spans do hold content: the harness sets `ANTHROPIC_OPEN_TELEMETRY_TRACES_CONTENT_MODE: content`, so each one holds the messages the model was sent (the system prompt, the task, the tool results) and its answer. That is untrusted text, such as the planted prompt injection, and tenant data, as are the agent names and the object IDs in Graph URLs. So the Jaeger UI is published on the host's `127.0.0.1` only, and these spans must not go to a hosted viewer as they are.
+
+**Every span name, and who chose it:** [Trace and span names](tracing.md).
+
+**Find a run's audit lines:** `docker compose logs identity-api mcp-server | grep <trace ID>`.
 
 ## Cost
 

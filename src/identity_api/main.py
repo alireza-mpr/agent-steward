@@ -13,7 +13,6 @@ import json
 import os
 import sys
 import time
-import uuid
 from datetime import datetime, timezone
 from collections.abc import Callable
 from typing import Annotated, Literal, TypeVar
@@ -24,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from disable_requests import (AlreadyFinal, AlreadyPending, DisableRequest, DisableRequestStore, NotExecutable,
                               NotFound, NotRunning, Status)
+from telemetry import setup_tracing, trace_fields
 from token_validation import ApiSettings, Approver, Caller, TokenRejected, verify_agent, verify_approver
 
 SETTINGS = ApiSettings(
@@ -39,11 +39,15 @@ SIGNING_KEYS = jwt.PyJWKClient(
 )
 
 app = FastAPI(title="agent-steward Identity API")
+if setup_tracing():   # only when OTEL_SERVICE_NAME is set (src/shared/telemetry.py)
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    # A server span per request, as a child of the caller's span: it reads the traceparent header.
+    FastAPIInstrumentor.instrument_app(app, excluded_urls="health", exclude_spans=["receive", "send"])
 
 
 def audit(**fields) -> None:
-    """Write one audit line (FR8). Never pass a token in here."""
-    record = {"timestamp": datetime.now(timezone.utc).isoformat(), **fields}
+    """Write one audit line (FR8), with the current trace ID and span ID (NFR4). Never pass a token in here."""
+    record = {"timestamp": datetime.now(timezone.utc).isoformat(), **trace_fields(), **fields}
     print(json.dumps(record), file=sys.stdout, flush=True)
 
 
@@ -56,8 +60,6 @@ def authenticate(request: Request, verify: Callable[[str, object], T]) -> T:
     FastAPI reads the body first, so broken JSON gets a 422 before this runs. A body that
     is valid JSON but does not match the schema gets its 422 only after the token passes.
     """
-    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
-    request.state.correlation_id = correlation_id
     scheme, _, token = (request.headers.get("Authorization") or "").partition(" ")
     try:
         if scheme.lower() != "bearer" or not token:
@@ -70,7 +72,6 @@ def authenticate(request: Request, verify: Callable[[str, object], T]) -> T:
     except TokenRejected as rejection:
         audit(
             event="request_rejected",
-            correlation_id=correlation_id,
             path=request.url.path,
             client_app_id=rejection.client,
             outcome="rejected",
@@ -108,10 +109,8 @@ class FindingsReport(BaseModel):
 @app.post("/findings", status_code=202)
 def submit_findings(report: FindingsReport, request: Request,
                     caller: Caller = Depends(agent_with_role("Findings.Submit"))) -> dict:
-    correlation_id = request.state.correlation_id
     audit(
         event="findings_submitted",
-        correlation_id=correlation_id,
         path=request.url.path,
         tool="submit_findings",
         agent_app_id=caller.agent_app_id,
@@ -124,8 +123,8 @@ def submit_findings(report: FindingsReport, request: Request,
         findings=len(report.findings),
     )
     for finding in report.findings:
-        audit(event="finding", correlation_id=correlation_id, **finding.model_dump())
-    return {"accepted": len(report.findings), "correlation_id": correlation_id}
+        audit(event="finding", **finding.model_dump())
+    return {"accepted": len(report.findings)}
 
 
 # The approval of a request to disable an agent (FR7, FR4): the agent proposes, and the approver
@@ -138,7 +137,7 @@ can_request = agent_with_role("AgentDisable.Request")
 
 
 def audit_expired(request: DisableRequest) -> None:
-    audit(event="disable_request_expired", correlation_id=request.correlation_id, request_id=request.id,
+    audit(event="disable_request_expired", request_id=request.id,
           target_agent=request.agent_id)
 
 
@@ -185,7 +184,7 @@ def iso(moment: datetime | None) -> str | None:
 def as_json(request: DisableRequest) -> dict:
     decided_by = {"id": request.decided_by_id, "name": request.decided_by_name} if request.decided_by_id else None
     return {"id": request.id, "agentId": request.agent_id, "status": request.status, "reason": request.reason,
-            "facts": request.facts, "correlationId": request.correlation_id,
+            "facts": request.facts, "traceId": request.trace_id, "spanId": request.span_id,
             "createdAt": iso(request.created_at), "expiresAt": iso(request.expires_at),
             "decidedBy": decided_by, "decidedAt": iso(request.decided_at), "executedAt": iso(request.executed_at),
             "finishedAt": iso(request.finished_at)}
@@ -194,14 +193,16 @@ def as_json(request: DisableRequest) -> dict:
 @app.post("/agents/{agent_id}/disableRequests", status_code=201)
 def create_disable_request(agent_id: AgentId, body: NewDisableRequest, request: Request,
                            caller: Caller = Depends(can_request)) -> dict:
-    correlation_id = request.state.correlation_id
+    # The span that creates the request, so the approval's trace can link to it later.
+    origin = trace_fields()
     try:
-        created = STORE.create(agent_id, caller.agent_app_id, body.reason, body.facts.model_dump(), correlation_id)
+        created = STORE.create(agent_id, caller.agent_app_id, body.reason, body.facts.model_dump(),
+                               origin.get("trace_id"), origin.get("span_id"))
     except AlreadyPending:
-        audit(event="disable_request_refused", correlation_id=correlation_id, target_agent=agent_id,
+        audit(event="disable_request_refused", target_agent=agent_id,
               agent_app_id=caller.agent_app_id, reason="already pending")
         raise HTTPException(409, detail="a request for this agent is already pending") from None
-    audit(event="disable_request_created", correlation_id=correlation_id, request_id=created.id, target_agent=agent_id,
+    audit(event="disable_request_created", request_id=created.id, target_agent=agent_id,
           agent_app_id=caller.agent_app_id, agent_object_id=caller.agent_object_id,
           blueprint_app_id=caller.blueprint_app_id, expires_at=created.expires_at.isoformat(),
           untrusted_reason=created.reason, facts=created.facts)
@@ -240,11 +241,11 @@ def execute_disable_request(agent_id: AgentId, request_id: str, body: Execution,
     try:
         executed = STORE.execute(agent_id, request_id, body.delegatingUser)
     except NotExecutable as refusal:
-        audit(event="disable_execution_refused", correlation_id=found.correlation_id, request_id=request_id,
+        audit(event="disable_execution_refused", request_id=request_id,
               target_agent=agent_id, agent_app_id=caller.agent_app_id, delegating_user=body.delegatingUser,
               reason=refusal.reason)
         raise HTTPException(409, detail=f"this request cannot be executed: {refusal.reason}") from None
-    audit(event="disable_request_executed", correlation_id=executed.correlation_id, request_id=request_id,
+    audit(event="disable_request_executed", request_id=request_id,
           target_agent=agent_id, agent_app_id=caller.agent_app_id, mode="obo", delegating_user=body.delegatingUser,
           approver_id=executed.decided_by_id, approver_name=executed.decided_by_name)
     return as_json(executed)
@@ -263,10 +264,10 @@ def record_disable_outcome(agent_id: AgentId, request_id: str, body: Outcome, ca
     try:
         finished = STORE.record_outcome(agent_id, request_id, body.outcome)
     except NotRunning:
-        audit(event="disable_outcome_refused", correlation_id=found.correlation_id, request_id=request_id,
+        audit(event="disable_outcome_refused", request_id=request_id,
               target_agent=agent_id, agent_app_id=caller.agent_app_id, status=found.status)
         raise HTTPException(409, detail="this request is not running") from None
-    audit(event="disable_request_finished", correlation_id=finished.correlation_id, request_id=request_id,
+    audit(event="disable_request_finished", request_id=request_id,
           target_agent=agent_id, agent_app_id=caller.agent_app_id, outcome=finished.status,
           approver_id=finished.decided_by_id, approver_name=finished.decided_by_name)
     return as_json(finished)
@@ -288,12 +289,11 @@ def decide_disable_request(agent_id: AgentId, request_id: str, body: Decision, p
     except NotFound:
         raise HTTPException(404, detail="no such request") from None
     except AlreadyFinal:
-        # The store's own correlation ID, so a header cannot move this line to another request.
-        audit(event="disable_decision_refused", correlation_id=current.correlation_id, request_id=request_id,
+        audit(event="disable_decision_refused", request_id=request_id,
               target_agent=agent_id, decision=status, approver_id=person.object_id, approver_name=person.name,
               reason="already decided or expired")
         raise HTTPException(409, detail="this request was already decided, or it expired") from None
-    audit(event="disable_request_decided", correlation_id=decided.correlation_id, request_id=request_id,
+    audit(event="disable_request_decided", request_id=request_id,
           target_agent=agent_id, decision=status, approver_id=person.object_id, approver_name=person.name,
           client_app_id=person.client_app_id)
     return as_json(decided)

@@ -74,7 +74,7 @@ The JSON of one round, in its general form, is in [The Messages API](messages-ap
 A run is the propose phase ([the two phases](agent-steward-architecture.md#the-two-phases-propose-then-approve)). It has one task: scan the registry, report the findings, and submit a request to disable each dormant agent, for a human to decide in the approve phase (FR7). A run takes no arguments.
 
 ```sh
-docker compose run --rm guardian
+docker compose run --rm harness
 ```
 
 The rule to ask only for dormant agents is a prompt rule, so it is not a control. The controls are in code: the MCP server refuses a request for an agent that is not dormant or that belongs to the guardian, the executor checks again before the write, and a person must approve ([the flow](agent-steward-architecture.md#the-two-phases-propose-then-approve)).
@@ -139,7 +139,7 @@ The guardian has one task, so it has one effort level, kept in its settings file
 
 Every line the guardian prints starts with a tag that says what it is about:
 
-* **`[harness]`** is the harness itself: the settings, the report, the audit correlation ID, and errors.
+* **`[harness]`** is the harness itself: the settings, the report, the run's trace ID, and errors.
 * **`[model]`** is a model call: which model answered, why it stopped, and which tools it asks for.
 * **`[mcp]`** is a call to the MCP server: the tool list, and each tool call with its input.
 
@@ -157,7 +157,7 @@ Errors go to stderr. A run without a trace prints lines like these (the IDs are 
 
 ...the model's report...
 
-[harness] audit correlation ID, from scan_registry: <correlation ID>
+[harness] trace ID: <trace ID> (Jaeger: http://localhost:16686/trace/<trace ID>)
 ```
 
 To see every message between the harness and its two peers, set `GUARDIAN_TRACE`. Each trace keeps the conversation with the model apart from the conversation with the MCP server. A trace already shows every model and MCP step, so in a trace mode only the `[harness]` lines are printed.
@@ -170,10 +170,10 @@ To see every message between the harness and its two peers, set `GUARDIAN_TRACE`
 | `full` | The exact request and response bodies, in full: what the harness sent and what it got back. It never prints headers, because a header carries the API key. |
 
 ```sh
-docker compose run --rm guardian
-docker compose run --rm -e GUARDIAN_TRACE=1 guardian
-docker compose run --rm -e GUARDIAN_TRACE=json guardian
-docker compose run --rm -e GUARDIAN_TRACE=full guardian > run.txt
+docker compose run --rm harness
+docker compose run --rm -e GUARDIAN_TRACE=1 harness
+docker compose run --rm -e GUARDIAN_TRACE=json harness
+docker compose run --rm -e GUARDIAN_TRACE=full harness > run.txt
 ```
 
 A trace holds real tenant data (agent names, IDs). So git ignores `run*.txt`, and any screenshot of a trace must be redacted. For the whole local run, with the sidecar and the other services, see [Local run: the sidecar](infra.md#local-run-the-sidecar).

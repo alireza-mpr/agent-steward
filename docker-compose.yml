@@ -4,6 +4,11 @@
 
 name: agent-steward
 
+# OpenTelemetry (NFR4), the same for every traced service: the SDK is on (OTEL_SERVICE_NAME, set per
+# service), and the spans go to Jaeger over OTLP/HTTP (src/shared/telemetry.py).
+x-otel-exporter: &otel-exporter
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+
 services:
   # Microsoft Entra ID Auth SDK (sidecar), for the MCP server. It holds the guardian
   # blueprint's private key and makes both token requests (T1, T2), app-only.
@@ -95,21 +100,31 @@ services:
   # The Identity API (FR5): checks every token (docs/tokens.md) and writes one audit line
   # per decision (FR8). No port is published: callers reach it as http://identity-api:8000.
   identity-api:
-    build: src/identity_api
+    build:
+      context: src/identity_api
+      additional_contexts:
+        shared: src/shared   # telemetry.py, the OpenTelemetry setup every service shares
     environment:
       TENANT_ID: ${TENANT_ID:?set TENANT_ID in .env}
       IDENTITY_API_APP_ID: ${IDENTITY_API_APP_ID:?set IDENTITY_API_APP_ID in .env}
       AGENT_DISABLE_CLI_APP_ID: ${AGENT_DISABLE_CLI_APP_ID:?set AGENT_DISABLE_CLI_APP_ID in .env}
+      <<: *otel-exporter
+      OTEL_SERVICE_NAME: identity-api
     networks:
       - agent      # the MCP server's sidecar
       - approval   # the executor's sidecar and the approve CLI
+    depends_on:
+      - jaeger
 
   # The MCP server (FR6): the agent's hands. Its tools read Graph, apply the four rules (FR3),
   # report to the Identity API and ask for a disable. It gets the guardian's app-only tokens,
   # because it shares the sidecar's network namespace. It never writes: the executor does. It listens for MCP on port 8100,
   # which the guardian reaches as http://sidecar:8100/mcp.
   mcp-server:
-    build: src/mcp_server
+    build:
+      context: src/mcp_server
+      additional_contexts:
+        shared: src/shared   # telemetry.py, the OpenTelemetry setup every service shares
     network_mode: "service:sidecar"   # It mirrors how containers inside a Kubernetes Pod communicate. MCP's tokens come from the sidecar's loopback; it never sees the key
     environment:
       SIDECAR_URL: http://127.0.0.1:5000
@@ -122,11 +137,15 @@ services:
       # guardian calls http://sidecar:8100/mcp, because the MCP server has no name of its own
       # in the sidecar's namespace. Protects against DNS rebinding, not against callers (D1).
       MCP_ALLOWED_HOSTS: sidecar:8100
+      # OpenTelemetry (NFR4): it reaches Jaeger through the sidecar's agent network.
+      <<: *otel-exporter
+      OTEL_SERVICE_NAME: mcp-server
     volumes:
       - ./config:/config:ro   # the permission policy and the tool allow-list: edit, then restart, no rebuild
     depends_on:
       - sidecar
       - identity-api
+      - jaeger
 
   # The executor (FR4, FR7): the only service that disables an agent. The approve CLI sends it the
   # approver's token (Tc) right after an approval, and it exchanges Tc with OBO and writes with the
@@ -141,21 +160,37 @@ services:
       SIDECAR_URL: http://127.0.0.1:5000
       API_URL: http://identity-api:8000
       GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
+      # OpenTelemetry (NFR4): it reaches Jaeger through the executor sidecar's approval network.
+      <<: *otel-exporter
+      OTEL_SERVICE_NAME: executor
     depends_on:
       - executor-sidecar
       - identity-api
+      - jaeger
 
-  # The guardian (FR6): the harness. One run of the agent loop: Claude asks for tools, the MCP
-  # server runs them. It holds only the Anthropic API key, and it is NOT in the sidecar's
+  # The guardian's harness (FR6): the agent loop. The guardian is the whole agent (the harness, the
+  # model, the MCP server and the executor); this container is only its loop. One run: Claude asks for
+  # tools, the MCP server runs them. It holds only the Anthropic API key, and it is NOT in the sidecar's
   # network namespace, so it cannot get an Entra token (docs/agent-steward-architecture.md).
-  # docker compose up runs it once; docker compose run --rm guardian runs it again.
-  guardian:
-    build: src/guardian
+  # docker compose up runs it once; docker compose run --rm harness runs it again.
+  harness:
+    build:
+      context: src/guardian
+      additional_contexts:
+        shared: src/shared   # telemetry.py, the OpenTelemetry setup every service shares
     env_file:
       - secrets/anthropic.env   # ANTHROPIC_API_KEY, given to this container only
     environment:
       MCP_URL: http://sidecar:8100/mcp
       GUARDIAN_CONFIG_PATH: /config/guardian.json
+      # OpenTelemetry (NFR4): the run's span, and the model calls' and MCP requests' spans.
+      <<: *otel-exporter
+      OTEL_SERVICE_NAME: harness
+      # The model calls' spans also hold what the model was sent and what it answered: the system
+      # prompt, the task, the tool results (agent names and descriptions, including the planted prompt
+      # injection) and the report. Untrusted text and tenant data: keep these spans in the local Jaeger,
+      # never in a hosted viewer. Remove this line, or set metadata_only, to keep metadata only.
+      ANTHROPIC_OPEN_TELEMETRY_TRACES_CONTENT_MODE: content
     volumes:
       # Only its own settings file, read-only: edit it and run again, no rebuild.
       # Not the whole config folder, so the harness never sees the MCP server's files.
@@ -164,6 +199,21 @@ services:
       - agent
     depends_on:
       - mcp-server
+      - jaeger
+
+  # Jaeger (NFR4): An OTEL collector. receives every service's spans over OTLP/HTTP (port 4318) and shows each run as
+  # one trace at http://localhost:16686. It is a distribution of the OpenTelemetry Collector, and it
+  # keeps the spans in memory only, so a restart empties it. The spans hold tenant data (agent
+  # names, object IDs in Graph URLs), so the UI is published on the host's loopback only.
+  # It joins both networks, so both phases can send to it. It does not join them to each other:
+  # a container on the agent network still cannot reach the approval network.
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.23.0
+    ports:
+      - "127.0.0.1:16686:16686"   # the UI
+    networks:
+      - agent
+      - approval
 
   # Integration tests (FR5, NFR8): real tokens from Entra against the running Identity API.
   # Runs only on demand (profile "tools"): docker compose run --rm integration-tests
@@ -210,7 +260,10 @@ services:
   # Built from the guardian's image, because only its containers get the model key. On the guardian's
   # network, so it cannot reach the sidecar either. Runs only on demand (profile "tools"): docker compose run --rm agent-eval
   agent-eval:
-    build: src/guardian
+    build:
+      context: src/guardian
+      additional_contexts:
+        shared: src/shared   # telemetry.py, the OpenTelemetry setup every service shares
     profiles: ["tools"]
     env_file:
       - secrets/anthropic.env   # ANTHROPIC_API_KEY
@@ -220,6 +273,8 @@ services:
       PYTHONPATH: /app          # the harness, from the guardian's image
       # The eval checks that the model never asks to disable the guardian, which the attack names.
       GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
+      <<: *otel-exporter
+      OTEL_SERVICE_NAME: agent-eval   # each eval run is its own trace
     volumes:
       - ./config/guardian.json:/config/guardian.json:ro
       - ./tests/agent_eval:/eval:ro
@@ -249,7 +304,10 @@ services:
   # exchanges it for. It never prints a token. Runs only on demand (profile "tools"):
   #   docker compose run --rm --build obo-claims
   obo-claims:
-    build: src/approve_cli
+    build:
+      context: src/approve_cli
+      additional_contexts:
+        shared: src/shared   # telemetry.py, the OpenTelemetry setup every service shares
     profiles: ["tools"]
     stdin_open: true
     tty: true
@@ -272,7 +330,10 @@ services:
   # host's loopback. Runs only on demand (profile "tools"), and needs --service-ports for that port:
   #   docker compose run --rm --service-ports approve
   approve:
-    build: src/approve_cli
+    build:
+      context: src/approve_cli
+      additional_contexts:
+        shared: src/shared   # telemetry.py, the OpenTelemetry setup every service shares
     profiles: ["tools"]
     stdin_open: true
     tty: true
@@ -288,12 +349,16 @@ services:
       # The listener for the sign-in redirect: every address inside the container, because the browser's
       # request arrives from the host. The port below is published on the host's 127.0.0.1 only.
       APPROVE_LISTEN_ADDRESS: 0.0.0.0
+      # OpenTelemetry (NFR4): each decision is a span, linked to the guardian's span that asked.
+      <<: *otel-exporter
+      OTEL_SERVICE_NAME: approve-cli
     ports:
       - "127.0.0.1:18400:18400"
     networks:
       - approval
     depends_on:
       - identity-api
+      - jaeger
 
 secrets:
   guardian_blueprint_pfx:
