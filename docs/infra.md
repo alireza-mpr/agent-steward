@@ -319,20 +319,19 @@ Sources: the sidecar's [security](https://learn.microsoft.com/en-us/entra/msidwe
 A person approves or denies the guardian's requests to disable an agent (FR7). The command runs on demand, on the `approval` network, because the Identity API and the executor are not published to the host:
 
 ```sh
-docker compose run --rm approve
+docker compose run --rm --service-ports approve
 ```
 
 1. Open the printed address in a browser and sign in.
-2. The browser then fails to load a `http://localhost:18400` page. That is expected. Copy its whole address.
-3. Paste it into the terminal. Do not share it or save it: it holds the sign-in code. The code works once, and only with this run's PKCE verifier.
+2. The browser is redirected to `http://localhost:18400`, where the CLI's one-shot listener catches the sign-in code and shows "Signed in. You can close this tab". Docker forwards that port from the host's `127.0.0.1` only; `--service-ports` turns the forwarding on. The code works once, and only with this run's PKCE verifier. The listener accepts only the redirect for this sign-in (its `state` must match): a browser tab left from an earlier sign-in can send its old redirect again as soon as the port answers, and that one is ignored.
 
-The command then waits, and shows each pending request as it arrives. It keeps the tokens in memory only. After an approval, it gets a second token from the same sign-in, for the guardian blueprint's `access_as_user` scope (Tc), and sends it to the executor, which disables the agent with the person's own rights (FR4). So the executor must be running: otherwise the CLI says "the guardian's executor could not be reached", and nothing is disabled.
+The command then lists the pending requests once, asks about each one, and exits. It keeps the tokens in memory only. After an approval, it gets a second token from the same sign-in, for the guardian blueprint's `access_as_user` scope (Tc), and sends it to the executor, which disables the agent with the person's own rights (FR4). So the executor must be running: otherwise the CLI says "the guardian's executor could not be reached", and nothing is disabled.
 
 To see the claims of the approver's token, add `--show-claims`: the command signs in the same way, prints the decoded claims, and stops. It never prints the token itself. The claims hold real tenant and object IDs, so redact them before they go anywhere.
 
 ```sh
 docker compose build approve
-docker compose run --rm approve python approve.py --show-claims
+docker compose run --rm --service-ports approve python approve.py --show-claims
 ``` To see why the Identity API refused a call, read the `request_rejected` lines in `docker compose logs identity-api`.
 
 The sign-in fails with `AADSTS530035` only if the device code flow comes back: security defaults block that flow ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)).

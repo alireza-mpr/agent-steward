@@ -185,7 +185,7 @@ A person reviews the pending requests in the CLI, within 24 hours, and answers e
 
 * **Approve:** the Identity API records the decision. Then the CLI lends the person's rights for that one request: it sends Tc to the executor, which disables the agent with OBO (FR4).
 * **Deny:** the Identity API records the decision, and nothing else happens. A later propose phase may ask again.
-* **Skip:** nothing is sent. The request stays pending until the next run of the CLI, and it expires after 24 hours if nobody decides.
+* **Skip (press Enter):** nothing is sent. The request stays pending until the next run of the CLI, and it expires after 24 hours if nobody decides.
 
 The CLI lists the pending requests once, asks about each one, and exits.
 
@@ -227,8 +227,8 @@ sequenceDiagram
     participant S as Executor sidecar
     participant G as Microsoft Graph
 
-    P->>C: docker compose run --rm approve
-    C->>E: authorization code flow with PKCE
+    P->>C: docker compose run --rm --service-ports approve
+    C->>E: authorization code flow with PKCE<br/>(the CLI's own listener catches the redirect)
     E-->>C: an access token for the Identity API,<br/>plus an ID token and a refresh token (offline_access)
     C->>A: GET /disableRequests?status=pending<br/>Bearer: the access token for the Identity API
     A-->>C: pending requests
@@ -278,7 +278,6 @@ Every refusal on the executor's path leaves the agent enabled: no token, a token
 | A domain service does the write, with its own identity | The executor writes, as the guardian's agent identity, with the approver's delegated rights (OBO) | One identity keeps the OBO grants on one agent |
 | A domain service checks the rules and reads the facts itself | The executor checks the rules against Graph again before the write, but the facts the approver sees come from the MCP server | Timebox |
 | A notification delivers the request | The approver runs the CLI, which lists what is pending | No web page in the timebox |
-| A local listener or a web page catches the sign-in redirect | The person pastes the final address into the terminal | The command runs in a container |
 | A durable store | In memory. A restart loses pending requests, and nothing is disabled (fail closed) | Lab |
 | An approval that is never carried out expires | It stays `approved`, and after 10 minutes it can no longer be executed. Nothing is disabled, and the CLI tells the approver | Known limit |
 
@@ -296,13 +295,14 @@ sequenceDiagram
     participant E as Entra ID
     participant A as Identity API
 
-    P->>C: docker compose run --rm approve
-    C->>C: MSAL makes code_verifier, code_challenge and state
+    P->>C: docker compose run --rm --service-ports approve
+    C->>C: MSAL makes code_verifier, code_challenge and state<br/>start a one-shot listener on port 18400
     C->>P: print the sign-in address: /authorize?<br/>client_id=#lt;CLI app ID#gt;, response_type=code,<br/>redirect_uri=http://localhost:18400,<br/>scope=#lt;Identity API app ID#gt;/.default openid profile offline_access,<br/>code_challenge, code_challenge_method=S256, state,<br/>prompt=select_account
     P->>E: open the address, sign in (password, MFA)
     E->>E: the CLI's grant: AgentDisable.Decide, for all users (admin consent)<br/>the person's roles on the Identity API
-    E-->>P: redirect to http://localhost:18400/?code=...#amp;state=...<br/>(the page fails to load, as expected)
-    P->>C: paste the address
+    E-->>P: redirect to http://localhost:18400/?code=...#amp;state=...
+    P->>C: the browser's request reaches the listener<br/>(Docker forwards the host's 127.0.0.1:18400)
+    C-->>P: "Signed in. You can close this tab", and the listener stops
     C->>E: POST /token: grant_type=authorization_code,<br/>client_id, code, code_verifier, redirect_uri<br/>(MSAL first checks that state matches)
     E->>E: check code_verifier against code_challenge
     E-->>C: the approver's access token<br/>(aud: the Identity API, azp: the CLI, oid: the person, idtyp: user,<br/>scp: AgentDisable.Decide, roles: AgentDisable.Approve),<br/>plus an ID token and a refresh token, in MSAL's in-memory cache

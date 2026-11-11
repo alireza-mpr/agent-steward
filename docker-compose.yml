@@ -268,7 +268,9 @@ services:
   # The CLI (FR7): a person signs in with the authorization code flow, then approves or
   # denies the guardian's requests to disable an agent. On the approval network, because the
   # Identity API and the executor are not published to the host. No secret: it is a public client, and the token stays in
-  # memory. Runs only on demand (profile "tools"): docker compose run --rm approve
+  # memory. It catches the sign-in redirect with a one-shot listener on port 18400, published only on the
+  # host's loopback. Runs only on demand (profile "tools"), and needs --service-ports for that port:
+  #   docker compose run --rm --service-ports approve
   approve:
     build: src/approve_cli
     profiles: ["tools"]
@@ -283,6 +285,11 @@ services:
       API_URL: http://identity-api:8000
       # The guardian's executor, which receives that token right after an approval (FR4).
       EXECUTOR_URL: http://executor-sidecar:8200
+      # The listener for the sign-in redirect: every address inside the container, because the browser's
+      # request arrives from the host. The port below is published on the host's 127.0.0.1 only.
+      APPROVE_LISTEN_ADDRESS: 0.0.0.0
+    ports:
+      - "127.0.0.1:18400:18400"
     networks:
       - approval
     depends_on:

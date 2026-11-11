@@ -1,15 +1,18 @@
 """The CLI (FR7): a person approves or denies the guardian's requests to disable an agent.
 
-    docker compose run --rm approve
+    docker compose run --rm --service-ports approve
 
 It signs the person in with the authorization code flow and PKCE, as the public client
 agent-steward-agent-disable-cli, so the token is the person's own: its scp (AgentDisable.Decide) says
 this app may act for them, and its roles (AgentDisable.Approve) say they may approve. The Identity API
 checks both and records who decided. The token stays in memory: it is never written to a file or a log.
 
-The person pastes the final URL back, because the command runs in a container and no browser can reach
-a listener in it. That is a lab shortcut: an enterprise tool would catch the redirect itself, or use a
-web page. The code in that URL works once, and only with this run's PKCE verifier.
+The CLI catches the sign-in redirect itself: a one-shot listener on port 18400 receives the browser's
+redirect to http://localhost:18400, then stops. In compose, the listener runs on the container's
+0.0.0.0, and Docker publishes it only on the host's 127.0.0.1:18400 (--service-ports). The code in the
+redirect works once, and only with this run's PKCE verifier, so another program that got it could not
+use it (RFC 7636). Without APPROVE_LISTEN_ADDRESS, for example in the obo-claims dev service, which
+cannot publish a port, the person pastes the final address instead.
 
 It lists the pending requests once, asks about each one, and exits.
 
@@ -99,14 +102,16 @@ def show(request: PendingRequest) -> str:
 
 def ask(read: Callable[[str], str], write: Callable[[str], None]) -> str:
     """The person's choice: approve, deny or skip. Only the full word approves, so a stray key
-    cannot. No more input (end of file) means skip: nothing is decided."""
+    cannot. Enter alone, or no more input (end of file), means skip: nothing is decided."""
     while True:
         try:
-            answer = read("Type approve, deny or skip: ").strip().lower()
+            answer = read("Type approve or deny, or press Enter to skip: ").strip().lower()
         except EOFError:
             return "skip"
         if answer in ("approve", "deny", "skip"):
             return answer
+        if answer == "":
+            return "skip"
         write("Not understood: nothing was decided.")
 
 
@@ -226,6 +231,58 @@ def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[
     return shown
 
 
+LISTEN_PORT = 18400          # the port in REDIRECT_URI
+WAIT_FOR_SIGN_IN_SECONDS = 300
+SIGNED_IN_PAGE = b"Signed in. You can close this tab and go back to the terminal."
+OLD_SIGN_IN_PAGE = b"This page is from an earlier sign-in. You can close this tab."
+
+
+def wait_for_redirect(address: str, expected_state: str, port: int = LISTEN_PORT,
+                      timeout_seconds: float = WAIT_FOR_SIGN_IN_SECONDS,
+                      ready: Callable[[], None] = lambda: None) -> str | None:
+    """A one-shot listener for the browser's redirect. Returns the redirect as a full URL, or None
+    if none arrived in time. Only the redirect for this sign-in counts: its state must match. A
+    browser tab left from an earlier sign-in can send its old redirect again as soon as the port
+    answers; it gets a 400 and the wait goes on, as do requests without code or error, such as
+    /favicon.ico (404). Nothing is logged: the redirect holds the sign-in code."""
+    import http.server
+    received: dict[str, str] = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            values = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
+            if not values.keys() & {"code", "error"}:
+                self.send_error(404)
+                return
+            if values.get("state") != expected_state:
+                self.send_response(400)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(OLD_SIGN_IN_PAGE)))
+                self.end_headers()
+                self.wfile.write(OLD_SIGN_IN_PAGE)
+                return
+            received["path"] = self.path
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(SIGNED_IN_PAGE)))
+            self.end_headers()
+            self.wfile.write(SIGNED_IN_PAGE)
+
+        def log_message(self, *arguments):   # the default logs the path, which holds the code
+            pass
+
+    deadline = time.monotonic() + timeout_seconds
+    with http.server.HTTPServer((address, port), Handler) as server:
+        ready()
+        while "path" not in received:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            server.timeout = remaining
+            server.handle_request()   # returns after one request, or when the timeout passes
+    return REDIRECT_URI + received["path"]
+
+
 def parse_redirect(pasted: str) -> dict[str, str]:
     """The query values of the URL the browser landed on, for MSAL to check."""
     url = urllib.parse.urlsplit(pasted.strip())
@@ -252,20 +309,27 @@ class Session:
 
 
 def sign_in(tenant_id: str, client_id: str, api_app_id: str, read: Callable[[str], str],
-            write: Callable[[str], None]) -> Session:
+            write: Callable[[str], None], listen_address: str | None = None) -> Session:
     """The authorization code flow with PKCE: MSAL makes the verifier and checks the state. Its
-    default token cache is in memory only."""
+    default token cache is in memory only. With listen_address, a one-shot listener catches the
+    redirect; without it, the person pastes the address the browser landed on."""
     import msal   # here, so the offline tests of the rest need no MSAL
     app = msal.PublicClientApplication(client_id, authority=f"https://login.microsoftonline.com/{tenant_id}")
     # .default: every scope an admin consented to for this client on this API, here AgentDisable.Decide.
     scopes = [f"{api_app_id}/.default"]
     flow = app.initiate_auth_code_flow(scopes=scopes, redirect_uri=REDIRECT_URI, prompt="select_account")
     write("1. Open this address in your browser and sign in:\n\n" + flow["auth_uri"] + "\n")
-    write(f"2. The browser then fails to load a {REDIRECT_URI} page. That is expected. Copy its whole address.\n")
-    try:
-        pasted = read("3. Paste the address here: ")
-    except EOFError:
-        raise SignInError("no address was pasted") from None
+    if listen_address:
+        write("2. After you sign in, the browser says \"Signed in\". Then come back here.\n")
+        pasted = wait_for_redirect(listen_address, flow["state"])
+        if pasted is None:
+            raise SignInError(f"no sign-in arrived within {WAIT_FOR_SIGN_IN_SECONDS // 60} minutes")
+    else:
+        write(f"2. The browser then fails to load a {REDIRECT_URI} page. That is expected. Copy its whole address.\n")
+        try:
+            pasted = read("3. Paste the address here: ")
+        except EOFError:
+            raise SignInError("no address was pasted") from None
     try:
         result = app.acquire_token_by_auth_code_flow(flow, parse_redirect(pasted), scopes=scopes)
     except ValueError:   # MSAL's check of the state failed: not the answer to this sign-in
@@ -315,7 +379,8 @@ def main(argv: list[str] | None = None) -> int:
     options = sys.argv[1:] if argv is None else argv
     try:
         session = sign_in(os.environ["TENANT_ID"], os.environ["AGENT_DISABLE_CLI_APP_ID"],
-                          os.environ["IDENTITY_API_APP_ID"], input, print)
+                          os.environ["IDENTITY_API_APP_ID"], input, print,
+                          os.environ.get("APPROVE_LISTEN_ADDRESS") or None)
         if "--show-delegation-claims" in options or "--show-obo-claims" in options:
             # A v2 token: the scope is named by the blueprint's app ID, and aud is that app ID.
             tc = session.token_for(f"{os.environ['GUARDIAN_BLUEPRINT_APP_ID']}/access_as_user")

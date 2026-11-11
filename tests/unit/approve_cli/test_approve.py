@@ -6,6 +6,7 @@ import time
 import sys
 import types
 import urllib.error
+import urllib.request
 
 import pytest
 
@@ -74,7 +75,7 @@ def test_ask_accepts_the_three_words(answer, choice):
     assert ask(typed(answer), lambda line: None) == choice
 
 
-@pytest.mark.parametrize("stray", ["y", "yes", "a", "", "approved", "approve deny"])
+@pytest.mark.parametrize("stray", ["y", "yes", "a", "approved", "approve deny"])
 def test_only_the_full_word_approves(stray):
     # A stray answer decides nothing: it asks again, then the end of input means skip.
     assert ask(typed(stray), lambda line: None) == "skip"
@@ -82,6 +83,14 @@ def test_only_the_full_word_approves(stray):
 
 def test_the_end_of_input_decides_nothing():
     assert ask(typed(), lambda line: None) == "skip"
+
+
+@pytest.mark.parametrize("enter", ["", "   "])
+def test_enter_alone_skips_at_once(enter):
+    lines = []
+
+    assert ask(typed(enter, "approve"), lines.append) == "skip"   # never reaches the second answer
+    assert lines == []
 
 
 @pytest.mark.parametrize("choice", ["approve", "deny"])
@@ -503,3 +512,95 @@ def test_with_nothing_pending_the_cli_says_so_and_exits(monkeypatch, capsys):
     assert run_main(monkeypatch, api) == 0
     assert api.listed == 1
     assert "No pending requests." in capsys.readouterr().out
+
+
+# The sign-in redirect, caught by a one-shot listener
+
+def free_port():
+    import socket
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def listen_in_background(port, timeout_seconds=5):
+    import threading
+    result, ready = {}, threading.Event()
+    def run():
+        result["url"] = approve.wait_for_redirect("127.0.0.1", "abc", port, timeout_seconds, ready.set)
+    thread = threading.Thread(target=run)
+    thread.start()
+    ready.wait(2)
+    return thread, result
+
+
+def get(port, path):
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, b""
+
+
+def test_the_listener_returns_the_redirect_and_tells_the_browser_it_is_done():
+    port = free_port()
+    thread, result = listen_in_background(port)
+
+    status, body = get(port, "/?code=the-code&state=abc&session_state=s")
+    thread.join(5)
+
+    assert (status, body) == (200, approve.SIGNED_IN_PAGE)
+    assert result["url"] == "http://localhost:18400/?code=the-code&state=abc&session_state=s"
+    assert approve.parse_redirect(result["url"]) == {"code": "the-code", "state": "abc", "session_state": "s"}
+
+
+def test_the_listener_ignores_requests_without_a_code_and_keeps_waiting():
+    port = free_port()
+    thread, result = listen_in_background(port)
+
+    assert get(port, "/favicon.ico")[0] == 404
+    get(port, "/?error=access_denied&state=abc")
+    thread.join(5)
+
+    assert result["url"].endswith("/?error=access_denied&state=abc")
+
+
+def test_the_listener_gives_up_after_its_timeout():
+    port = free_port()
+    thread, result = listen_in_background(port, timeout_seconds=0.2)
+    thread.join(5)
+
+    assert result["url"] is None
+
+
+def test_with_a_listener_the_sign_in_needs_no_paste(monkeypatch):
+    app = FakeMsalApp({"access_token": "token"})
+    use_msal(monkeypatch, app)
+    monkeypatch.setattr(approve, "wait_for_redirect", lambda address, state: LANDED if state == "abc" else None)
+    def no_paste(prompt):
+        raise AssertionError("nothing should be pasted when the CLI listens")
+
+    session = approve.sign_in("tenant", "client", "api-app", no_paste, [].append, listen_address="0.0.0.0")
+
+    assert session.token == "token"
+    assert app.redeemed == (FLOW, {"code": "the-code", "state": "abc", "session_state": "s"}, ["api-app/.default"])
+
+
+def test_a_sign_in_that_never_arrives_is_a_sign_in_error(monkeypatch):
+    use_msal(monkeypatch, FakeMsalApp({"access_token": "token"}))
+    monkeypatch.setattr(approve, "wait_for_redirect", lambda address, state: None)
+
+    with pytest.raises(approve.SignInError, match="no sign-in arrived"):
+        approve.sign_in("tenant", "client", "api-app", typed(), [].append, listen_address="0.0.0.0")
+
+
+def test_an_old_redirect_from_an_earlier_sign_in_is_ignored_and_the_wait_goes_on():
+    port = free_port()
+    thread, result = listen_in_background(port)
+
+    status, body = get(port, "/?code=old-code&state=from-an-earlier-run")
+    get(port, "/?code=the-code&state=abc")
+    thread.join(5)
+
+    assert (status, body) == (400, b"")   # urllib's HTTPError hides the body; the status is what matters
+    assert result["url"] == "http://localhost:18400/?code=the-code&state=abc"

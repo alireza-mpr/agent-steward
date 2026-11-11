@@ -62,7 +62,7 @@ For the architecture these decisions belong to, see [Agent Steward architecture]
 
 **Consequences:**
 
-- **A manual step.** The command runs in a container and has no listener, so the person pastes the final address into the terminal. This is a lab shortcut. An enterprise tool would catch the redirect itself, or use a web page.
+- **A listener catches the redirect** (since 11 November 2026; before, the person pasted the final address into the terminal). The command runs in a container, so the one-shot listener runs on the container's `0.0.0.0:18400`, and Docker publishes it only on the host's `127.0.0.1:18400` (`docker compose run --service-ports`). If another local program held the port and caught the redirect, the code would still be useless to it without this run's PKCE verifier ([RFC 7636](https://www.rfc-editor.org/rfc/rfc7636)).
 - **A fixed local port.** The command uses `http://localhost:18400`, because the author's machine had a web server on port 80. Entra ignores the port when it matches a `localhost` redirect URI ([Learn](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url)), so the registered `http://localhost` covers it.
 - **Public client flows are off** on the client app, because nothing needs them now.
 
