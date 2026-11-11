@@ -185,7 +185,9 @@ A person reviews the pending requests in the CLI, within 24 hours, and answers e
 
 * **Approve:** the Identity API records the decision. Then the CLI lends the person's rights for that one request: it sends Tc to the executor, which disables the agent with OBO (FR4).
 * **Deny:** the Identity API records the decision, and nothing else happens. A later propose phase may ask again.
-* **Skip:** nothing is sent. The request stays pending, the CLI does not ask about it again in this session, and it expires after 24 hours if nobody decides.
+* **Skip:** nothing is sent. The request stays pending until the next run of the CLI, and it expires after 24 hours if nobody decides.
+
+The CLI lists the pending requests once, asks about each one, and exits.
 
 Who calls whom after an approval (an arrow points from the caller to the one it calls):
 
@@ -305,11 +307,9 @@ sequenceDiagram
     E->>E: check code_verifier against code_challenge
     E-->>C: the approver's access token<br/>(aud: the Identity API, azp: the CLI, oid: the person, idtyp: user,<br/>scp: AgentDisable.Decide, roles: AgentDisable.Approve),<br/>plus an ID token and a refresh token, in MSAL's in-memory cache
 
-    loop Every 5 seconds, until Ctrl+C
-        C->>A: GET /disableRequests?status=pending + Bearer token
-        A->>A: check_approver: signature, issuer, aud, exp,<br/>idtyp is user, not an agent, azp is the CLI,<br/>scp has AgentDisable.Decide, roles has AgentDisable.Approve
-        A-->>C: pending requests
-    end
+    C->>A: GET /disableRequests?status=pending + Bearer token (once)
+    A->>A: check_approver: signature, issuer, aud, exp,<br/>idtyp is user, not an agent, azp is the CLI,<br/>scp has AgentDisable.Decide, roles has AgentDisable.Approve
+    A-->>C: pending requests
 
     C->>P: show the facts, and the model's reason labelled untrusted
     P->>C: approve (the full word) or deny

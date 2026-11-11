@@ -466,3 +466,40 @@ def test_the_spinner_writes_nothing_when_the_output_is_not_a_terminal():
         time.sleep(0.03)
 
     assert out.getvalue() == ""
+
+
+# One pass: list the pending requests once, ask about each, exit
+
+def run_main(monkeypatch, api, *answers):
+    for name in ("TENANT_ID", "AGENT_DISABLE_CLI_APP_ID", "IDENTITY_API_APP_ID", "GUARDIAN_BLUEPRINT_APP_ID"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setattr(approve, "sign_in", lambda *arguments: approve.Session("token", None, None))
+    monkeypatch.setattr(approve, "IdentityApi", lambda url, token: api)
+    monkeypatch.setattr("builtins.input", typed(*answers))
+    return approve.main([])
+
+
+class CountingApi(FakeApi):
+    def __init__(self, *requests):
+        super().__init__(*requests)
+        self.listed = 0
+
+    def pending(self):
+        self.listed += 1
+        return super().pending()
+
+
+def test_the_cli_lists_once_asks_about_each_and_exits(monkeypatch, capsys):
+    api = CountingApi(REQUEST)
+
+    assert run_main(monkeypatch, api, "skip") == 0
+    assert api.listed == 1
+    assert capsys.readouterr().out.rstrip().endswith("No more pending requests.")
+
+
+def test_with_nothing_pending_the_cli_says_so_and_exits(monkeypatch, capsys):
+    api = CountingApi()
+
+    assert run_main(monkeypatch, api) == 0
+    assert api.listed == 1
+    assert "No pending requests." in capsys.readouterr().out

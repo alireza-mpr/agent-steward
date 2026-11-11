@@ -11,6 +11,8 @@ The person pastes the final URL back, because the command runs in a container an
 a listener in it. That is a lab shortcut: an enterprise tool would catch the redirect itself, or use a
 web page. The code in that URL works once, and only with this run's PKCE verifier.
 
+It lists the pending requests once, asks about each one, and exits.
+
 Everything shown here is data, never instructions. The reason comes from the model, so it is labelled
 as untrusted. An agent's name comes from whoever registered it. Both have their control characters
 removed, so they cannot move the cursor or rewrite what the terminal shows.
@@ -44,7 +46,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-POLL_EVERY_SECONDS = 5
 # Registered on the client app without a port (setup/bicep/agent-disable-approvers.bicep): Entra ignores
 # the port of a localhost redirect URI. A port nothing listens on, so no local program gets the address.
 REDIRECT_URI = "http://localhost:18400"
@@ -187,13 +188,15 @@ def spinner(out=sys.stdout, every_seconds: float = 0.1):
 
 
 def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[str], None],
-           delegate: Callable[["PendingRequest"], str] | None = None) -> None:
-    """Ask about every pending request, once each. A request the person skipped is not asked again.
-    After an approval, delegate hands the person's rights to the guardian for that one request and
-    returns what the guardian answered."""
+           delegate: Callable[["PendingRequest"], str] | None = None) -> int:
+    """Ask about every pending request, once each, and return how many were shown. A request the
+    person skipped is not asked again. After an approval, delegate hands the person's rights to the
+    guardian for that one request and returns what the guardian answered."""
+    shown = 0
     for request in api.pending():
         if request.request_id in skipped:
             continue
+        shown += 1
         write(show(request))
         choice = ask(read, write)
         if choice == "skip":
@@ -220,6 +223,7 @@ def review(api, skipped: set[str], read: Callable[[str], str], write: Callable[[
                 write("Not disabled: the guardian's executor could not be reached.")
                 continue
             write(DELEGATION_RESULTS.get(result, f"Not disabled: {plain(result)}"))
+    return shown
 
 
 def parse_redirect(pasted: str) -> dict[str, str]:
@@ -334,13 +338,10 @@ def main(argv: list[str] | None = None) -> int:
     executor_url = os.environ.get("EXECUTOR_URL", "http://executor-sidecar:8200")
     def delegate(request: PendingRequest) -> str:
         return send_delegation(executor_url, request, session.token_for(blueprint_scope))
-    skipped: set[str] = set()
-    print("Waiting for requests. Press Ctrl+C to stop.", flush=True)
+    # One pass: the propose phase has created every request before the approver opens the CLI, so
+    # the CLI lists them once, asks about each, and exits. A skipped request stays pending.
     try:
-        while True:
-            # The guardian asks one agent at a time, so the next request can arrive after this decision.
-            review(api, skipped, input, print, delegate)
-            time.sleep(POLL_EVERY_SECONDS)
+        shown = review(api, set(), input, print, delegate)
     except KeyboardInterrupt:
         return 0
     except urllib.error.HTTPError as error:
@@ -349,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as error:
         print(f"The Identity API gave no usable answer: {type(error).__name__}", file=sys.stderr)
         return 1
+    print("No more pending requests." if shown else "No pending requests.")
+    return 0
 
 
 if __name__ == "__main__":
