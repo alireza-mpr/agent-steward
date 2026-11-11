@@ -35,6 +35,29 @@ An AI agent is much more than just a Large Language Model (LLM). It is a logical
 3. **The Tools (on the MCP Server):** The MCP server is a separate component, outside the harness. In an enterprise setup, a single MCP server can serve many different agents. It only acts when called by the harness, and it enforces its own security checks (such as a role-to-tool mapping, which decides which agent may use which tool, and human approval gates). Inside the MCP server, the tools call downstream APIs like Microsoft Graph. Those downstream APIs are **not** tools; they are independent resource servers in their own trust boundaries that validate the token of whatever calls them.
 4. **The Identity (The Agent Identity in Entra):** This defines *who* the agent is, while its assigned roles dictate what its tokens are allowed to do. Because it is a directory record living inside Entra's trust boundary rather than a running piece of code, it has no credential of its own. Another component must sign in on its behalf: in our enterprise reference design, the **harness** signs in; in the Guardian's local design, the **MCP server** signs in (via the sidecar).
 
+The running parts, and who calls whom (an arrow points from the caller to the one it calls):
+
+```mermaid
+flowchart TB
+    subgraph AGENT["Agent"]
+        HARNESS["<b>Harness</b><br/>runs the agent loop<br/>the MCP host:<br/>holds the MCP client"]
+        MCP["<b>MCP server</b><br/>the agent's tools"]
+        MODEL["<b>Model</b><br/>hosted by the provider"]
+    end
+    API["<b>API</b><br/>a downstream<br/>resource server"]
+
+    HARNESS -->|"task, tool definitions,<br/>tool results"| MODEL
+    HARNESS -->|"MCP: tools/call"| MCP
+    MCP -->|"HTTPS, with a token"| API
+
+    style AGENT stroke-dasharray: 6 4
+    style MODEL stroke-dasharray: 6 4
+```
+
+* **Dashed boxes:** the agent is a logical boundary, not one process, and the model runs outside the organization, at its provider.
+* **The API is outside the agent:** it is not a tool. It checks the token of whatever calls it.
+* **The identity is not drawn:** it is a directory record in Entra, not a running part. It shows up as the token on the calls.
+
 **The Takeaway:** An agent is the combination of all four parts working together. The harness coordinates, the model decides, the tools act, and the identity authorizes. The model never touches the MCP server or sees a token. In Microsoft Entra Agent ID, the agent identity represents this entire four-part system—the LLM itself has no identity.
 
 **A note on "brain" and "hands".** Anthropic's engineering blog uses these words with a different split: the "brain" is Claude *and* its harness, and the "hands" are the sandboxes and tools that perform actions ([Scaling Managed Agents: Decoupling the brain from the hands](https://www.anthropic.com/engineering/managed-agents), 8 April 2026). So this document uses the plain terms: model, harness and tools.
