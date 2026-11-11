@@ -100,6 +100,7 @@ So the guardian holds no standing write permission: its app-only write role was 
 The containers of one local run ([docker-compose.yml](../docker-compose.yml)), what each holds, and who calls whom. An arrow points from the caller to the one it calls. A namespace box is a shared network namespace: the containers in it talk over 127.0.0.1, like containers in one Kubernetes pod, and nothing outside the box can reach the sidecar in it.
 
 ```mermaid
+%%{init: {"flowchart": {"subGraphTitleMargin": {"top": 0, "bottom": 30}}}}%%
 flowchart LR
     MODEL["<b>Claude</b><br/>Anthropic"]
     ENTRA["<b>Entra ID</b>"]
@@ -110,6 +111,7 @@ flowchart LR
             MCP["<b>mcp-server</b><br/>tools, allow-list<br/>holds: no stored secret"]
             SIDECAR["<b>sidecar</b><br/>app-only tokens<br/>holds: the certificate"]
         end
+        JAEGER["<b>jaeger</b><br/>trace viewer<br/>both networks<br/>gets spans from every<br/>service but the sidecars<br/>UI on 127.0.0.1:16686"]
         API["<b>identity-api</b><br/>both networks · port 8000<br/>holds: no secret"]
         APPROVE["<b>approve</b><br/>CLI · approval network<br/>signs the approver in at Entra ID<br/>holds: the approver's tokens,<br/>in memory"]
         subgraph NSX["executor sidecar's network namespace · approval network"]
@@ -132,10 +134,12 @@ flowchart LR
     EXEC -->|"OBO token: PATCH (disable)"| GRAPH
     %% invisible link: keeps Graph in the right column, next to Entra ID
     API ~~~ GRAPH
+    %% invisible link: keeps jaeger in the middle, clear of the other lines
+    JAEGER ~~~ API
 ```
 
 * **Two networks:** the guardian is on the agent network only, so it cannot reach the executor. The approve CLI and the executor's sidecar are on the approval network only. The Identity API and Jaeger are on both, and they do not join the two networks to each other.
-* **Jaeger, not drawn:** the trace viewer is on both networks and receives the spans of every service but the two sidecars. Its edges would cross the whole diagram, so it is only in the table below.
+* **Jaeger, no arrows:** the trace viewer receives the spans of every service but the two sidecars. Five arrows to it would cross the whole diagram, so its box says it instead.
 * **Not shown:** the containers that run only on demand for tests and checks (`integration-tests`, `mcp-integration-tests`, `agent-eval`, `token-claims`, `obo-claims`). Each one joins one of the two networks or namespaces above.
 
 To verify our security posture, here is exactly what each container holds and what it can reach over the network:
