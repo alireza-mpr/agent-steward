@@ -18,6 +18,7 @@ This document shows how this project's **Guardian** agent is built today: its pa
   * [The Two Phases: Propose, Then Approve](#the-two-phases-propose-then-approve)
   * [The Propose Phase](#the-propose-phase)
   * [The Approve Phase](#the-approve-phase)
+  * [A Disabled Agent: Code Decides, Not the Model](#a-disabled-agent-code-decides-not-the-model)
   * [Architectural Shortcuts (Where the Guardian Differs)](#architectural-shortcuts-where-the-guardian-differs)
 * [2. Blast Radius](#2-blast-radius)
 
@@ -96,6 +97,55 @@ So the guardian holds no standing write permission: its app-only write role was 
 
 ### Component Inventory: Who Holds What?
 
+The containers of one local run ([docker-compose.yml](../docker-compose.yml)), what each holds, and who calls whom. An arrow points from the caller to the one it calls. A namespace box is a shared network namespace: the containers in it talk over 127.0.0.1, like containers in one Kubernetes pod, and nothing outside the box can reach the sidecar.
+
+```text
+  Docker Compose on one host. [agent] and [approval] are the two Docker networks.
+  Outside the host: Claude (Anthropic), Entra ID and Microsoft Graph.
+
+  PROPOSE PHASE                             APPROVE PHASE
+
+  +-----------------------------------+     +-----------------------------------+
+  | guardian                [agent]   |     | approve              [approval]   |
+  | the harness: the agent loop       |     | the approver's CLI, on demand     +-----+
+  | holds: the Anthropic API key      |     | holds: the approver's tokens,     |     |
+  | calls: Claude                     |     | in memory only                    |     | list,
+  +-------+---------------------------+     | calls: Entra ID (sign-in)         |     | decision
+          |                                 +-------+---------------------------+     |
+          | MCP, no token (D1)                      |                                 |
+          | sidecar:8100/mcp                        | Tc, after an approval           |
+          v                                         | executor-sidecar:8200           |
+  +- sidecar's namespace -------------+             v                                 |
+  |  [agent]                          |     +- executor-sidecar's namespace ----+     |
+  |  +------------------------------+ |     |  [approval]                       |     |
+  |  | mcp-server                   | |     |  +------------------------------+ |     |
+  |  | tools, allow-list            | |     |  | executor                     | |     |
+  |  | calls: Graph (read)          | |     |  | the only write               | |     |
+  |  +---------------+--------------+ |     |  | calls: Graph (read, PATCH)   | |     |
+  |                  | 127.0.0.1:5000 |     |  +---------------+--------------+ |     |
+  |                  v                |     |                  | 127.0.0.1:5000 |     |
+  |  +------------------------------+ |     |                  v                |     |
+  |  | sidecar                      | |     |  +------------------------------+ |     |
+  |  | the certificate, app-only    | |     |  | executor-sidecar             | |     |
+  |  | calls: Entra ID              | |     |  | the certificate, OBO         | |     |
+  |  +------------------------------+ |     |  | calls: Entra ID              | |     |
+  +-------+---------------------------+     |  +------------------------------+ |     |
+          |                                 +-------+---------------------------+     |
+          | findings, requests                      |                                 |
+          | app-only token                          | claim, outcome                  |
+          |                                         | app-only token                  |
+          v                                         v                                 v
+  +------------------------------------------------------------------------------------+
+  | identity-api                                          [agent] [approval]           |
+  | checks every token, stores the findings, the requests and the decisions,           |
+  | and writes the audit lines. No published port: identity-api:8000                   |
+  | holds: no secret (it checks tokens with Entra's public signing keys)               |
+  +------------------------------------------------------------------------------------+
+```
+
+* **Two networks:** the guardian is on the agent network only, so it cannot reach the executor. The approve CLI and the executor's sidecar are on the approval network only. The Identity API is on both.
+* **Not shown:** the containers that run only on demand for tests and checks (`integration-tests`, `mcp-integration-tests`, `agent-eval`, `token-claims`, `obo-claims`). Each one joins one of the two networks or namespaces above.
+
 To verify our security posture, here is exactly what each container holds and what it can reach over the network:
 
 | Component | Agent Part | Credentials Held | Network Reach |
@@ -127,7 +177,7 @@ The two phases meet only at the Identity API, which stores the findings, the req
 3. **running:** The executor claimed the approved request, right before its write. A claim happens once, so an approval cannot be used twice.
 4. **succeeded or failed:** The executor recorded what the write did. A failed request is final too: the guardian may ask again with a new request, which needs a new approval.
 
-The guardian asks again only after denied, expired or failed. The last three names are Microsoft Graph's [longRunningOperationStatus](https://learn.microsoft.com/en-us/graph/api/resources/longrunningoperation) values. The dormant rule skips agents that are already disabled, so a disabled agent is never asked for again.
+The guardian asks again only after denied, expired or failed. The last three names are Microsoft Graph's [longRunningOperationStatus](https://learn.microsoft.com/en-us/graph/api/resources/longrunningoperation) values. The dormant rule skips agents that are already disabled, so a disabled agent is never asked for again ([how](#a-disabled-agent-code-decides-not-the-model)).
 
 ### The Propose Phase
 
@@ -331,6 +381,50 @@ sequenceDiagram
 ```
 
 The token answers two questions: `scp` says the CLI may send decisions for this person, and `roles` says this person may approve. `azp` is a third check, in case the scope is ever granted to another app by mistake.
+
+### A Disabled Agent: Code Decides, Not the Model
+
+The scan flags risky agents again on every run, but it never leads to a second disable. Code makes that decision, before the model sees anything and again before the write. The model only follows the findings it gets.
+
+```mermaid
+flowchart TD
+    subgraph SCAN["MCP server: scan_registry (code, no model)"]
+        A[Run the four rules] --> B{Agent disabled?}
+        B -- yes --> C[The dormant rule skips it]
+        B -- no --> D[The dormant rule checks the last sign-in]
+        C --> E[Orphan, expiring credential and<br/>over-permissioned still run]
+        D --> E
+    end
+    E --> F
+    subgraph MODEL["Model"]
+        F[Reads the findings, writes the report] --> G{Asks for a disable?}
+    end
+    G -- no --> R[Report only]
+    G -- yes --> H
+    subgraph TOOL["MCP server: submit_disable_agent_request (code)"]
+        H{Already disabled?} -- yes --> X1[Refused, and nobody is asked]
+    end
+    H -- no --> P[Pending: a human decides]
+    P -- approved --> J
+    subgraph EXEC["Executor (code)"]
+        J{Already disabled?} -- yes --> X2[Refused before the write]
+        J -- no --> K[OBO write, then succeeded or failed]
+    end
+```
+
+1. **The scan runs the rules:** `scan_registry` runs the four rules in the MCP server ([rules.py](../src/mcp_server/rules.py)). It is plain code, with no model.
+2. **The dormant rule skips disabled agents:** the only fix for a dormant agent is to disable it, so a disabled agent is already fixed and gets no dormant finding.
+3. **The other rules still flag it:** a disabled agent that is over-permissioned, orphaned or has an expiring credential is still reported on every run, until someone fixes it. That is on purpose, because the risk is still there.
+4. **The model asks only for dormant agents:** the system prompt says so ([harness.py](../src/guardian/harness.py)). A disabled agent has no dormant finding, so the model has no reason to ask.
+5. **The request tool refuses anyway:** if the model still asks, for example because injected text fooled it, the tool refuses and writes a `disable_refused` line with the reason `already disabled`.
+6. **The executor refuses before the write:** if the agent was disabled after the request was created, the executor's check refuses it. The tool and the executor share one check ([disable_checks.py](../src/mcp_server/disable_checks.py)), so the two cannot drift apart. That check also refuses the guardian's own agents and agents that are no longer dormant.
+
+The cases:
+
+* ✅ **Disabled and over-permissioned:** it is reported on every run, and no disable is requested.
+* ✅ **Disabled and dormant:** no dormant finding, and no request. Any other flaw it has is still reported.
+* ✅ **The model is fooled and asks to disable a disabled agent:** the request tool refuses, and nobody is asked.
+* ✅ **The agent is disabled after the request was created:** the approver may still approve, but the executor refuses before the write, and the agent stays as it is.
 
 ### Architectural Shortcuts (Where the Guardian Differs)
 
