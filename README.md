@@ -9,10 +9,11 @@ It finds risky agents on its own, in four categories:
 - expiring credentials,
 - excessive permissions.
 
-The agent writes a report, and submits a request to disable each risky agent. Then a person with the approver role signs in, reviews the disable requests, and approves or denies each one. So **the agent proposes, and the approver decides**.
+The agent writes a report, and submits a request to disable each risky agent. Then a person with the approver role signs in, reviews the disable requests, and approves or denies each one. After an approval, the agent runs the disable itself, but with the approver's rights, not its own. 
+So **the agent proposes, the approver decides, and the agent executes on behalf of the approver**.
 
 ```mermaid
-flowchart LR
+flowchart TB
     TENANT[("🏢 Agent identities<br/>in Microsoft Entra")]
 
     subgraph PROPOSE["🤖 The agent proposes"]
