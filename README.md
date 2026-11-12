@@ -14,13 +14,12 @@ So **the agent proposes, the approver decides, and the agent executes on behalf 
 
 ```mermaid
 flowchart LR
-    subgraph TENANT["Agent identities <br/> Microsoft Entra"]
-        direction TB
+    subgraph TENANT["Agent identities in Microsoft Entra"]
+        direction LR
         F1["👻 No sponsor"]
         F2["⏳ Credential expiring"]
         F3["🔑 Too many permissions"]
         F4["💤 Dormant"]
-        F1 ~~~ F2 ~~~ F3 ~~~ F4
     end
 
     subgraph PROPOSE["🕵️ The agent proposes"]
@@ -33,11 +32,11 @@ flowchart LR
 
     subgraph DECIDE["⚖️ The approver decides"]
         HUMAN(["🧑‍💼 Approver<br/>signs in and reviews"])
-        ACT{{"🤖 Agent Steward disables it<br/>with the approver's rights"}}
+        ACT{{"🤖 Agent Steward<br/>disables it"}}
         DISABLED["🔒 Agent disabled"]
         STAYS["😌 Agent stays as it is"]
         HUMAN -- "✅ approve" --> ACT
-        ACT --> DISABLED
+        ACT -- "with the approver's rights" --> DISABLED
         HUMAN -- "❌ deny" --> STAYS
     end
 
