@@ -14,30 +14,34 @@ So **the agent proposes, the approver decides, and the agent executes on behalf 
 
 ```mermaid
 flowchart LR
-    TENANT[("🏢 Agent identities<br/>in Microsoft Entra")]
-
-    subgraph PROPOSE["🤖 The agent proposes"]
-        GUARD{{"🛡️ Guardian"}}
+    subgraph TENANT["Agent identities <br/> Microsoft Entra"]
+        direction TB
         F1["👻 No sponsor"]
         F2["⏳ Credential expiring"]
         F3["🔑 Too many permissions"]
         F4["💤 Dormant"]
+        F1 ~~~ F2 ~~~ F3 ~~~ F4
+    end
+
+    subgraph PROPOSE["🕵️ The agent proposes"]
+        GUARD{{"🤖 Agent Steward"}}
         REPORT["📋 Report"]
         ASK["📨 Disable request"]
-        GUARD --> F1 & F2 & F3 & F4
-        F1 & F2 & F3 & F4 --> REPORT
+        GUARD --> REPORT
         REPORT --> ASK
     end
 
     subgraph DECIDE["⚖️ The approver decides"]
         HUMAN(["🧑‍💼 Approver<br/>signs in and reviews"])
-        DISABLED["🔒 Agent disabled<br/>with the approver's own rights"]
+        ACT{{"🤖 Agent Steward disables it<br/>with the approver's rights"}}
+        DISABLED["🔒 Agent disabled"]
         STAYS["😌 Agent stays as it is"]
-        HUMAN -- "✅ approve" --> DISABLED
+        HUMAN -- "✅ approve" --> ACT
+        ACT --> DISABLED
         HUMAN -- "❌ deny" --> STAYS
     end
 
-    TENANT -- "🔍 reads every agent" --> GUARD
+    TENANT -- "🔍 scans agent registry" --> GUARD
     ASK --> HUMAN
 
     %% An invisible box on the far right: GitHub's zoom buttons sit on it, not on the picture
@@ -51,14 +55,15 @@ flowchart LR
     classDef good fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#0f172a
     classDef calm fill:#f1f5f9,stroke:#64748b,color:#0f172a
     classDef spacer fill:none,stroke:none,color:transparent
-    class GUARD agent
+    class GUARD,ACT agent
     class F1,F2,F3,F4 risk
     class HUMAN human
     class DISABLED good
-    class TENANT,REPORT,ASK,STAYS calm
+    class REPORT,ASK,STAYS calm
     class PAD spacer
     style PROPOSE fill:transparent,stroke:#2563eb,stroke-width:2px,stroke-dasharray: 6 4
     style DECIDE fill:transparent,stroke:#d97706,stroke-width:2px,stroke-dasharray: 6 4
+    style TENANT fill:transparent,stroke:#64748b,stroke-width:2px
 ```
 
 ## Contents
