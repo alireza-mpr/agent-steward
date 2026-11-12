@@ -21,6 +21,7 @@ How this project creates tenant objects as code: Bicep, Azure Resource Manager (
   - [Run the Agent ID scripts](#run-the-agent-id-scripts)
 - [Local run: the sidecar](#local-run-the-sidecar)
 - [The CLI](#the-cli)
+- [The telemetry container](#the-telemetry-container)
 - [Tracing: OpenTelemetry and Jaeger](#tracing-opentelemetry-and-jaeger)
 - [Audit logs: Loki and Grafana](#audit-logs-loki-and-grafana)
   - [The Agent disables dashboard](#the-agent-disables-dashboard)
@@ -340,9 +341,24 @@ docker compose run --rm --service-ports approve python approve.py --show-claims
 
 The sign-in fails with `AADSTS530035` only if the device code flow comes back: security defaults block that flow ([ADR-002](decisions.md#adr-002-the-approver-signs-in-with-the-authorization-code-flow-not-the-device-code-flow)).
 
+## The telemetry container
+
+Jaeger (traces), Loki (logs) and Grafana (the UI and dashboards) run together in one container, `telemetry`, built from [observability/Dockerfile](../observability/Dockerfile). Each program is copied unchanged from its pinned official image, so the tools are the standard ones. Only the packaging is ours.
+
+**The usual practice:** "It's best practice to separate areas of concern by using one service per container" ([Docker: run multiple processes in a container](https://docs.docker.com/engine/containers/multi-service_container/)). So each part starts, stops and updates on its own. The well-known image with everything in one container is Grafana's `grafana/otel-lgtm`, which uses Tempo for traces instead of Jaeger.
+
+**Where we differ, and why:** one container for all telemetry is simpler to run in a lab, and it keeps Jaeger's GenAI view. Docker allows it, with a wrapper script (the same page). The costs:
+
+- **A start script watches the three, not Docker:** [start-telemetry.sh](../observability/start-telemetry.sh) starts them. When one stops, it stops the other two, and the container exits with an error, so a crash shows as a stopped container.
+- **One restart restarts all three:** Jaeger keeps its traces in memory, so a restart empties it. Loki's lines stay on the `telemetry-data` volume.
+- **We update the versions ourselves:** the three image tags are in the Dockerfile.
+- **Grafana shares the container's networks:** any container on the two networks can reach its UI, which has no sign-in. They could already reach Loki's API ([A9](../THREATMODEL.md#accepted-risks)).
+
+**The ports:** 4318 takes the spans (OTLP/HTTP) and 3100 takes the log records (OTLP, path `/otlp`). Jaeger's UI (16686) and Grafana (3000) are published on the host's `127.0.0.1` only. Loki's port is not published. Inside the container, Grafana reaches the other two on `localhost`.
+
 ## Tracing: OpenTelemetry and Jaeger
 
-Every service sends its spans to Jaeger, which runs in docker compose with the rest of the stack (NFR4). Jaeger keeps them in memory only, so a restart empties it.
+Every service sends its spans to Jaeger, which runs in [the telemetry container](#the-telemetry-container) with the rest of the stack (NFR4). Jaeger keeps them in memory only, so a restart empties it.
 
 1. **Start the stack:** `docker compose up -d --build`.
 2. **Run the guardian:** `docker compose run --rm harness`. Its last line gives the run's trace ID and a Jaeger link.
@@ -359,7 +375,7 @@ Every service sends its spans to Jaeger, which runs in docker compose with the r
 **How it is set up** ([telemetry.py](../src/shared/telemetry.py), one file that every image copies):
 
 - **`OTEL_SERVICE_NAME`:** set per service in compose. It turns the SDK on, so every span and every audit line gets a real trace ID.
-- **`OTEL_EXPORTER_OTLP_ENDPOINT`:** `http://jaeger:4318` for every service. It sends the spans over OTLP/HTTP. Without it, the IDs still exist, but nothing is sent.
+- **`OTEL_EXPORTER_OTLP_ENDPOINT`:** `http://telemetry:4318` for every service. It sends the spans over OTLP/HTTP. Without it, the IDs still exist, but nothing is sent.
 - **The instrumentations:** urllib in the MCP server, the executor and the CLI (outgoing calls, with the `traceparent` header), and FastAPI in the Identity API and the executor (incoming calls). The Anthropic and MCP SDKs create their own spans.
 - **What spans hold:** never a token: the instrumentations record no headers and no bodies. The model calls' spans do hold content: the harness sets `ANTHROPIC_OPEN_TELEMETRY_TRACES_CONTENT_MODE: content`, so each one holds the messages the model was sent (the system prompt, the task, the tool results) and its answer. That is untrusted text, such as the planted prompt injection, and tenant data, as are the agent names and the object IDs in Graph URLs. So the Jaeger UI is published on the host's `127.0.0.1` only, and these spans must not go to a hosted viewer as they are.
 
@@ -371,7 +387,7 @@ Every service sends its spans to Jaeger, which runs in docker compose with the r
 
 The audit lines (FR8) of the Identity API, the MCP server and the executor also go to Loki, a log store, and Grafana shows them next to the traces (NFR4). Unlike Jaeger, Loki keeps its data on a volume, so the lines survive a restart.
 
-1. **Start the stack:** `docker compose up -d --build`. It starts `loki` and `grafana` with the rest.
+1. **Start the stack:** `docker compose up -d --build`. It starts the `telemetry` container, with Loki and Grafana in it, with the rest.
 2. **Run something:** a guardian run or an approval writes audit lines, as before.
 3. **Open Grafana:** http://localhost:3000, then Explore, with the Loki data source. No sign-in.
 4. **Query:** for example `{service_name="executor"}` for the executor's lines, `{service_name=~".+"} | event="disable_failed"` for every failed write, or `{service_name=~".+"} | trace_id="<trace ID>"` for every line of one run.
@@ -381,7 +397,7 @@ The audit lines (FR8) of the Identity API, the MCP server and the executor also 
 
 - **One function writes every line:** `audit()` in [telemetry.py](../src/shared/telemetry.py). It prints the JSON line to stdout, as before, so `docker compose logs` still shows it. When `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is set, it also sends the line as an OpenTelemetry log record.
 - **The record:** its body is the same JSON line. It carries the trace ID and span ID of the current span, and the event as an attribute.
-- **The address:** `http://loki:3100/otlp/v1/logs`, set per service in compose. Loki takes OTLP itself, so no Collector sits in between. The logs need their own address because Jaeger takes traces only.
+- **The address:** `http://telemetry:3100/otlp/v1/logs`, set per service in compose. Loki takes OTLP itself, so no Collector sits in between. The logs need their own address because Jaeger takes traces only.
 - **In Loki:** `service.name` becomes the label `service_name`. The trace ID, the span ID and the event are stored as structured metadata ([observability/loki.yaml](../observability/loki.yaml)).
 - **The harness's progress lines too:** the harness writes no audit lines, but its `[harness]`, `[model]` and `[mcp]` lines also go to Loki (`export_logging` in [telemetry.py](../src/shared/telemetry.py)), with the run's trace ID and the logger's name as the `logger` attribute. They are operational lines, not part of the audit trail: they say what the harness saw, while the audit lines say what was decided and done.
 - **In Grafana:** the Loki and Jaeger data sources, and the links between them, are set up when Grafana starts ([observability/grafana](../observability/grafana/provisioning/datasources/datasources.yaml)).
@@ -389,8 +405,8 @@ The audit lines (FR8) of the Identity API, the MCP server and the executor also 
 **Where it falls short:**
 
 - **Grafana's Jaeger data source works only by trace ID.** Jaeger 2.23 no longer serves the older HTTP API that the data source uses for its health check and its search, so "Save & test" shows a 404 error. Opening a trace by its ID works. Search for traces in Jaeger's own UI.
-- **No sign-in, no checks:** Grafana has anonymous access, and Loki accepts records from any container on the two networks. The lines hold tenant data and the approver's name, so Grafana is published on the host's `127.0.0.1` only, and Loki is not published at all ([A9](../THREATMODEL.md#accepted-risks)).
-- **`docker compose down -v` deletes the lines,** with the `loki-data` volume.
+- **No sign-in, no checks:** Grafana has anonymous access, and Loki accepts records from any container on the two networks. The lines hold tenant data and the approver's name, so Grafana is published on the host's `127.0.0.1` only, and Loki is not published at all. Both can still be reached from the two networks ([the telemetry container](#the-telemetry-container), [A9](../THREATMODEL.md#accepted-risks)).
+- **`docker compose down -v` deletes the lines,** with the `telemetry-data` volume.
 
 ### The Agent disables dashboard
 

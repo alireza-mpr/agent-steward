@@ -97,7 +97,7 @@ So the guardian holds no standing write permission: its app-only write role was 
 
 ### Component Inventory: Who Holds What?
 
-The containers of one local run ([docker-compose.yml](../docker-compose.yml)), what each holds, and who calls whom. An arrow points from the caller to the one it calls. A namespace box is a shared network namespace: the containers in it talk over 127.0.0.1, like containers in one Kubernetes pod, and nothing outside the box can reach the sidecar in it.
+The containers of one local run ([docker-compose.yml](../docker-compose.yml)), what each holds, and who calls whom. An arrow points from the caller to the one it calls. A namespace box is a shared network namespace: the containers in it talk over 127.0.0.1, like containers in one Kubernetes pod, and nothing outside the box can reach the sidecar in it. The telemetry box is different: one container that runs three programs.
 
 ```mermaid
 %%{init: {"flowchart": {"subGraphTitleMargin": {"top": 0, "bottom": 30}}}}%%
@@ -111,9 +111,11 @@ flowchart LR
             MCP["<b>mcp-server</b><br/>tools, allow-list<br/>holds: no stored secret"]
             SIDECAR["<b>sidecar</b><br/>app-only tokens<br/>holds: the certificate"]
         end
-        JAEGER["<b>jaeger</b><br/>trace viewer<br/>both networks<br/>gets spans from every<br/>service but the sidecars<br/>OTLP/HTTP on port 4318"]
-        LOKI["<b>loki</b><br/>audit log store<br/>both networks<br/>gets the audit lines of<br/>identity-api, mcp-server<br/>and executor, and the<br/>harness's progress lines<br/>OTLP on 3100"]
-        GRAFANA["<b>grafana</b><br/>log viewer · telemetry network<br/>reads loki and jaeger"]
+        subgraph TEL["telemetry container · both networks"]
+            JAEGER["<b>Jaeger</b><br/>traces<br/>gets spans from every<br/>service but the sidecars<br/>OTLP/HTTP on port 4318"]
+            LOKI["<b>Loki</b><br/>audit log store<br/>gets the audit lines of<br/>identity-api, mcp-server<br/>and executor, and the<br/>harness's progress lines<br/>OTLP on 3100"]
+            GRAFANA["<b>Grafana</b><br/>UI and dashboards<br/>reads Loki and Jaeger"]
+        end
         API["<b>identity-api</b><br/>both networks · port 8000<br/>holds: no secret"]
         APPROVE["<b>approve</b><br/>CLI · approval network<br/>signs the approver in at Entra ID<br/>holds: the approver's tokens,<br/>in memory"]
         subgraph NSX["executor sidecar's network namespace · approval network"]
@@ -136,15 +138,15 @@ flowchart LR
     EXEC -->|"OBO token: PATCH (disable)"| GRAPH
     %% invisible link: keeps Graph in the right column, next to Entra ID
     API ~~~ GRAPH
-    %% invisible link: keeps jaeger in the middle, clear of the other lines
-    JAEGER ~~~ API
-    GRAFANA -->|"queries"| LOKI
-    GRAFANA -->|"trace by ID"| JAEGER
+    %% invisible link: keeps the telemetry container in the middle, clear of the other lines
+    TEL ~~~ API
+    GRAFANA -->|"queries, localhost"| LOKI
+    GRAFANA -->|"trace by ID, localhost"| JAEGER
 ```
 
-* **Two networks:** the guardian is on the agent network only, so it cannot reach the executor. The approve CLI and the executor's sidecar are on the approval network only. The Identity API, Jaeger and Loki are on both, and they do not join the two networks to each other.
-* **Jaeger and Loki, no arrows in:** the trace viewer receives the spans of every service but the two sidecars, and Loki receives the audit lines of the three services that write them. The arrows to them would cross the whole diagram, so their boxes say it instead.
-* **A third network, telemetry:** Grafana, Loki and Jaeger only. Grafana reads from the other two and reaches none of the services.
+* **Two networks:** the guardian is on the agent network only, so it cannot reach the executor. The approve CLI and the executor's sidecar are on the approval network only. The Identity API and the telemetry container are on both, and they do not join the two networks to each other.
+* **The telemetry container, no arrows in:** the trace viewer receives the spans of every service but the two sidecars, and Loki receives the audit lines of the three services that write them. The arrows to them would cross the whole diagram, so their boxes say it instead.
+* **One container for telemetry:** Jaeger, Loki and Grafana run in one container, with a start script ([why, and what it costs](infra.md#the-telemetry-container)). Grafana reads the other two on localhost.
 * **Not shown:** the containers that run only on demand for tests and checks (`integration-tests`, `mcp-integration-tests`, `agent-eval`, `token-claims`, `obo-claims`). Each one joins one of the two networks or namespaces above.
 
 To verify our security posture, here is exactly what each container holds and what it can reach over the network:
@@ -159,9 +161,7 @@ To verify our security posture, here is exactly what each container holds and wh
 | **`executor-sidecar`** | Token acquisition, OBO | The blueprint's certificate file, plus the OBO settings. | Can reach Entra ID. Listens strictly on loopback. |
 | **`approve`** | The approver's client (CLI) | The approver's tokens, in memory only. | Can reach `identity-api` and the executor. |
 | **`identity-api`** | Resource API | *No secrets* (validates tokens using Entra's public signing keys). | *Nothing* (only responds to incoming API calls). |
-| **`jaeger`** | Trace viewer (NFR4) | *Nothing* | *Nothing* (only receives spans). Every service can send spans to it, and nothing checks who sent them ([A9](../THREATMODEL.md#accepted-risks)). |
-| **`loki`** | Audit log store (FR8, NFR4) | *Nothing* (holds the audit lines, on a volume) | *Nothing* (only receives log records and answers Grafana). Any container on the two networks can send it records, and nothing checks who sent them ([A9](../THREATMODEL.md#accepted-risks)). |
-| **`grafana`** | Log viewer (FR8, NFR4) | *Nothing* | Can reach `loki` and `jaeger` only. Its UI has no sign-in, so it is published on the host's loopback only. |
+| **`telemetry`** | Traces, logs and dashboards (NFR4, FR8): Jaeger, Loki and Grafana | *Nothing* (holds the audit lines, on a volume) | *Nothing outside itself* (only receives spans and log records; Grafana reads Jaeger and Loki on localhost). Any container on the two networks can send it spans and records, and nothing checks who sent them ([A9](../THREATMODEL.md#accepted-risks)). The UIs have no sign-in, so they are published on the host's loopback only, but the two networks can reach them too. |
 
 *(Transport Note: The communication between the harness and the MCP server uses **MCP over Streamable HTTP**, the standard transport for standalone networked MCP services. The client sends each MCP message as an HTTP POST to a single `/mcp` endpoint, and the server either replies with a standard JSON payload or streams the response back over the same connection).*
 

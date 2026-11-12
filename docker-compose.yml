@@ -5,17 +5,18 @@
 name: agent-steward
 
 # OpenTelemetry (NFR4), the same for every traced service: the SDK is on (OTEL_SERVICE_NAME, set per
-# service), and the spans go to Jaeger over OTLP/HTTP (src/shared/telemetry.py).
+# service), and the spans go to Jaeger, in the telemetry container, over OTLP/HTTP (src/shared/telemetry.py).
 x-otel-exporter: &otel-exporter
-  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://telemetry:4318
 
 # The services whose lines also go to Loki, as OpenTelemetry log records: the audit lines (FR8) of
 # the Identity API, the MCP server and the executor, the harness's progress lines, and, when
 # HTTP_BODY_LOG is 1, the HTTP calls of the MCP server, the executor and the approve CLI.
-# The logs address is given whole, because Jaeger takes traces only (src/shared/telemetry.py).
+# The logs address is given whole: the logs go to Loki, in the same telemetry container, and Jaeger
+# takes traces only (src/shared/telemetry.py).
 x-otel-logs: &otel-logs
-  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
-  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://loki:3100/otlp/v1/logs
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://telemetry:4318
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://telemetry:3100/otlp/v1/logs
   # 1: every outgoing HTTP call is also logged to Loki with its bodies and its Authorization header,
   # tokens included (THREATMODEL.md, A10). For debugging only. Set it in .env; off by default.
   HTTP_BODY_LOG: ${HTTP_BODY_LOG:-0}
@@ -125,8 +126,7 @@ services:
       - agent      # the MCP server's sidecar
       - approval   # the executor's sidecar and the approve CLI
     depends_on:
-      - jaeger
-      - loki
+      - telemetry
 
   # The MCP server (FR6): the agent's hands. Its tools read Graph, apply the four rules (FR3),
   # report to the Identity API and ask for a disable. It gets the guardian's app-only tokens,
@@ -157,8 +157,7 @@ services:
     depends_on:
       - sidecar
       - identity-api
-      - jaeger
-      - loki
+      - telemetry
 
   # The executor (FR4, FR7): the only service that disables an agent. The approve CLI sends it the
   # approver's token (Tc) right after an approval, and it exchanges Tc with OBO and writes with the
@@ -179,8 +178,7 @@ services:
     depends_on:
       - executor-sidecar
       - identity-api
-      - jaeger
-      - loki
+      - telemetry
 
   # The guardian's harness (FR6): the agent loop. The guardian is the whole agent (the harness, the
   # model, the MCP server and the executor); this container is only its loop. One run: Claude asks for
@@ -214,47 +212,26 @@ services:
       - agent
     depends_on:
       - mcp-server
-      - jaeger
-      - loki
-
-  # Jaeger (NFR4): An OTEL collector. receives every service's spans over OTLP/HTTP (port 4318) and shows each run as
-  # one trace at http://localhost:16686. It is a distribution of the OpenTelemetry Collector, and it
-  # keeps the spans in memory only, so a restart empties it. The spans hold tenant data (agent
-  # names, object IDs in Graph URLs), so the UI is published on the host's loopback only.
-  # It joins both networks, so both phases can send to it. It does not join them to each other:
-  # a container on the agent network still cannot reach the approval network.
-  jaeger:
-    image: cr.jaegertracing.io/jaegertracing/jaeger:2.23.0
-    ports:
-      - "127.0.0.1:16686:16686"   # the UI
-    networks:
-      - agent
-      - approval
-      - telemetry   # Grafana reads the traces from here
-
-  # Loki (FR8, NFR4): stores the audit lines that the Identity API, the MCP server and the executor
-  # send over OTLP (port 3100, path /otlp). The lines stay on the loki-data volume across restarts.
-  # They hold tenant data and the approver's name, so no port is published: Grafana reads them.
-  # Like Jaeger, it joins both networks without joining them to each other.
-  loki:
-    image: grafana/loki:3.7.9
-    command: ["-config.file=/etc/loki/loki.yaml"]
-    volumes:
-      - ./observability/loki.yaml:/etc/loki/loki.yaml:ro
-      - loki-data:/loki
-    networks:
-      - agent
-      - approval
       - telemetry
 
-  # Grafana (FR8, NFR4): the UI for the audit lines in Loki, at http://localhost:3000 (Explore, then
-  # Loki). Each line's trace ID opens its trace in Jaeger, and each span shows its audit lines. The data
-  # sources and the "Agent disables" dashboard (observability/grafana/dashboards) are set up when it
-  # starts (observability/grafana/provisioning). No sign-in: it is for this machine only, so the UI is
-  # published on the host's loopback only. It is on the telemetry network only, so it reaches Loki and
-  # Jaeger but none of the services.
-  grafana:
-    image: grafana/grafana:13.3.0
+  # The telemetry container (NFR4, FR8): traces, logs and dashboards in one container, built from
+  # observability/Dockerfile. Each program is copied unchanged from its pinned official image.
+  # - Jaeger: receives every service's spans over OTLP/HTTP (port 4318) and shows each run as one trace
+  #   at http://localhost:16686. It is a distribution of the OpenTelemetry Collector, and it keeps the
+  #   spans in memory only, so a restart empties it.
+  # - Loki: stores the audit lines of the Identity API, the MCP server and the executor, and the
+  #   harness's progress lines, sent over OTLP (port 3100, path /otlp). They stay on the
+  #   telemetry-data volume across restarts.
+  # - Grafana: shows the lines at http://localhost:3000 (Explore, then Loki). Each line's trace ID
+  #   opens its trace in Jaeger, and each span shows its lines. The data sources and the "Agent
+  #   disables" dashboard are set up when it starts (observability/grafana). No sign-in.
+  # The spans and lines hold tenant data and the approver's name, so the two UIs are published on the
+  # host's loopback only, and Loki's port is not published. It joins both networks, so both phases can
+  # send to it. It does not join them to each other: a container on the agent network still cannot
+  # reach the approval network.
+  telemetry:
+    build: observability
+    init: true   # a small init as process 1, so docker compose stop reaches the start script
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
@@ -263,15 +240,16 @@ services:
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
     volumes:
+      - ./observability/loki.yaml:/etc/loki/loki.yaml:ro
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - telemetry-data:/loki
     ports:
-      - "127.0.0.1:3000:3000"   # the UI
+      - "127.0.0.1:16686:16686"   # Jaeger's UI
+      - "127.0.0.1:3000:3000"     # Grafana
     networks:
-      - telemetry
-    depends_on:
-      - loki
-      - jaeger
+      - agent
+      - approval
 
   # Integration tests (FR5, NFR8): real tokens from Entra against the running Identity API.
   # Runs only on demand (profile "tools"): docker compose run --rm integration-tests
@@ -417,8 +395,7 @@ services:
       - approval
     depends_on:
       - identity-api
-      - jaeger
-      - loki
+      - telemetry
 
 secrets:
   guardian_blueprint_pfx:
@@ -432,9 +409,6 @@ networks:
   # is not on it, so it cannot reach the executor.
   approval:
     driver: bridge
-  # Grafana, Loki and Jaeger: Grafana reads from the other two, and reaches nothing else.
-  telemetry:
-    driver: bridge
 
 volumes:
-  loki-data:   # the audit lines in Loki (FR8): kept across restarts, until docker compose down -v
+  telemetry-data:   # the audit lines in Loki (FR8): kept across restarts, until docker compose down -v

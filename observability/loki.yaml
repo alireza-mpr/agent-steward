@@ -1,5 +1,6 @@
 # Loki (FR8, NFR4): stores the audit lines that the Identity API, the MCP server and the executor send
-# as OpenTelemetry log records (src/shared/telemetry.py). One process, files on the loki-data volume,
+# as OpenTelemetry log records (src/shared/telemetry.py). It runs in the telemetry container
+# (observability/Dockerfile), with its files on the telemetry-data volume,
 # so the lines survive a restart. Based on the image's own /etc/loki/local-config.yaml (Loki 3.7).
 
 auth_enabled: false   # one tenant, local only: the port is not published on the host

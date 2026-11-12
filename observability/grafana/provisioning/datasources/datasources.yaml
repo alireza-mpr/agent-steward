@@ -1,5 +1,5 @@
 # Grafana's data sources, set up when Grafana starts (FR8, NFR4): Loki holds the audit lines, Jaeger
-# holds the traces. Each one links to the other by the trace ID. In this file, $$ is a literal $:
+# holds the traces. All three run in the telemetry container, so Grafana reaches the other two on localhost. Each one links to the other by the trace ID. In this file, $$ is a literal $:
 # Grafana expands environment variables written as $NAME.
 apiVersion: 1
 
@@ -8,7 +8,7 @@ datasources:
     type: loki
     uid: loki
     access: proxy
-    url: http://loki:3100
+    url: http://localhost:3100
     isDefault: true
     jsonData:
       # From a log line to its trace: the record's trace ID is structured metadata named trace_id,
@@ -36,7 +36,7 @@ datasources:
     type: jaeger
     uid: jaeger
     access: proxy
-    url: http://jaeger:16686
+    url: http://localhost:16686
     jsonData:
       # From a span to its audit lines: the lines in Loki with the same trace ID.
       tracesToLogsV2:
