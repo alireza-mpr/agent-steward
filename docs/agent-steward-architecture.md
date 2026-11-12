@@ -284,7 +284,7 @@ sequenceDiagram
     participant G as Microsoft Graph
 
     P->>C: docker compose run --rm --service-ports approve
-    C->>E: authorization code flow with PKCE,<br/>scope=#lt;Identity API app ID#gt;/.default openid profile offline_access<br/>(the CLI's own listener catches the redirect)
+    C->>E: authorization code flow with PKCE,<br/>scope=#lt;Identity API app ID#gt;/.default openid profile offline_access<br/>
     E-->>C: an access token for the Identity API,<br/>plus an ID token and a refresh token (offline_access)
     C->>A: GET /disableRequests?status=pending<br/>Bearer: the access token for the Identity API
     A-->>C: pending requests
