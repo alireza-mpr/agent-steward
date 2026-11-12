@@ -1,13 +1,13 @@
-# Agent Registry Guardian
+# Agent Steward
 
 An AI agent that governs other AI agents in a Microsoft Entra tenant.
 
 It finds risky agents on its own, in four categories:
 
-- no sponsor,
+- dormant (no sign-in for 30 days),
+- orphan (no sponsor),
 - expiring credentials,
-- excessive permissions,
-- dormant (no sign-in for 30 days).
+- excessive permissions.
 
 The agent writes a report, and submits a request to disable each risky agent. Then a person with the approver role signs in, reviews the disable requests, and approves or denies each one. So **the agent proposes, and the approver decides**.
 
@@ -16,7 +16,7 @@ flowchart LR
     TENANT[("🏢 Agent identities<br/>in Microsoft Entra")]
 
     subgraph PROPOSE["🤖 The agent proposes"]
-        GUARD{{"🛡️ Guardian<br/>an AI agent with its own identity"}}
+        GUARD{{"🛡️ Guardian"}}
         F1["👻 No sponsor"]
         F2["⏳ Credential expiring"]
         F3["🔑 Too many permissions"]
@@ -36,7 +36,7 @@ flowchart LR
         HUMAN -- "❌ deny" --> STAYS
     end
 
-    TENANT -- "🔍 reads every agent<br/>read-only" --> GUARD
+    TENANT -- "🔍 reads every agent" --> GUARD
     ASK --> HUMAN
 
     classDef agent fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#0f172a

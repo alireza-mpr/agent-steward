@@ -171,8 +171,14 @@ With delegation, the downstream service sees two parties: the user, and the serv
 
 Where each party is in a token:
 
-- **In the standard:** `sub` names the subject, and `act` names the actor ([RFC 8693, section 4.1][rfc-4.1]).
-- **In Entra:** `oid` names the subject, and `azp` (v2.0) or `appid` (v1.0) names the client that acts ([Access token claims reference][claims]). The Agent ID claims `xms_sub_fct` and `xms_act_fct` describe the subject and the actor ([the guardian's OBO token](tokens.md#who-is-who-in-the-token)).
+| Party | RFC | Entra |
+|---|---|---|
+| **Actor in the autonomous flow:** the client, acting for itself | `sub` and `client_id` both name the client ([RFC 9068, section 2.2][rfc9068-2.2]). No `act` claim: "neither delegation nor impersonation are in play" ([RFC 8693, section 1.1][rfc-1.1]) | `azp` (v2.0) or `appid` (v1.0). `oid` and `sub` name the same client, and `idtyp` is `app`. For an agent, `xms_act_fct` contains `11` ([TR, claim by claim](tokens.md#tr-claim-by-claim)) |
+| **Actor in OBO:** the current actor | `act.sub`, in the outermost `act` ([RFC 8693, section 4.1][rfc-4.1]). `client_id` names the client that asked for the token ([RFC 8693, section 4.3][rfc-4.3]) | `azp` (v2.0) or `appid` (v1.0). For an agent, `xms_act_fct` contains `11`, and `xms_par_app_azp` names its blueprint ([the OBO token](tokens.md#who-is-who-in-the-token)) |
+| **Subject in OBO:** the user | The top-level `sub` ([RFC 8693, section 4.1][rfc-4.1]) | `oid`. `sub` is pairwise, so its value changes from one client to the next ([Access token claims reference][claims]). `idtyp` is `user`, and `xms_sub_fct` has no `11` or `13` ([the OBO token](tokens.md#who-is-who-in-the-token)) |
+| **Prior actors** | Each one nested in the `act` of the actor after it, the oldest deepest. "Informational only", never for access control ([RFC 8693, section 4.1][rfc-4.1]) | None: no claim names them (searched on 11 November 2026: [Access token claims reference][claims]). The guardian's OBO token does not name the approve CLI, Tc's client ([From Tc to the OBO token](tokens.md#from-tc-to-the-obo-token)) |
+
+**`azp` or `appid`:** the API that receives the token decides, not the flow. It sets the token version in its registration: "The values of `null` and `1` result in v1.0 tokens, and the value of `2` results in v2.0 tokens." ([Access tokens, Token formats][at-formats]) So the guardian's tokens for the Identity API carry `azp` ([identity-api.bicep](../setup/bicep/identity-api.bicep)), and its tokens for Graph carry `appid`.
 
 **The subject is not always a user:** with no user, the agent is both the subject and the actor ([Agent app-only flow][agent-auto]). So write "the user (subject)" and "the agent (actor)" when the case is not clear.
 
@@ -472,22 +478,23 @@ Current pages. The date is the "Last updated on" date the page showed on 12 Nove
 9. **Microsoft identity platform and OAuth 2.0 On-Behalf-Of flow.** Last updated 4 January 2025. Used: the introduction, Client limitations, Protocol diagram, Middle-tier access token request. [Link][obo]
 10. **Microsoft identity platform and the OAuth 2.0 client credentials flow.** Last updated 30 January 2026. Used: the introduction. [Link][cc]
 11. **Access token claims reference.** Last updated 25 June 2026. Used: Payload claims (`azp`), and a search of the page for an actor claim. [Link][claims]
-12. **Agent OAuth flows: On behalf of flow** (Microsoft Entra Agent ID). Last updated 10 August 2026. Used: the introduction, Protocol steps, Permission inheritance. [Link][agent-obo]
-13. **Agent autonomous app OAuth flow - App-only protocol** (Microsoft Entra Agent ID). Last updated 11 June 2026. Used: the introduction, Protocol steps. [Link][agent-auto]
-14. **Trusted Subsystem** (WCF, .NET Framework). Last updated 15 September 2021. Used: the steps and the summary row "Authentication (client)". An archived .NET Framework 3.5 copy from 2009 has the same steps: [ms730288](https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-3.5/ms730288(v=vs.90)). [Link][wcf]
-15. **Basic Scenarios for Securing Data in Multi-Tier Applications** (COM+). Last updated 6 January 2021. Used: the Trusted Server, Impersonation and Hybrid scenarios. [Link][complus-ts]
+12. **Access tokens in the Microsoft identity platform.** Last updated 17 July 2026. Used: Token formats. [Link][at-formats]
+13. **Agent OAuth flows: On behalf of flow** (Microsoft Entra Agent ID). Last updated 10 August 2026. Used: the introduction, Protocol steps, Permission inheritance. [Link][agent-obo]
+14. **Agent autonomous app OAuth flow - App-only protocol** (Microsoft Entra Agent ID). Last updated 11 June 2026. Used: the introduction, Protocol steps. [Link][agent-auto]
+15. **Trusted Subsystem** (WCF, .NET Framework). Last updated 15 September 2021. Used: the steps and the summary row "Authentication (client)". An archived .NET Framework 3.5 copy from 2009 has the same steps: [ms730288](https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-3.5/ms730288(v=vs.90)). [Link][wcf]
+16. **Basic Scenarios for Securing Data in Multi-Tier Applications** (COM+). Last updated 6 January 2021. Used: the Trusted Server, Impersonation and Hybrid scenarios. [Link][complus-ts]
 
 ### Microsoft Patterns and Practices (Retired)
 
 Both pages say: "This content is outdated and is no longer being maintained." They are used here for the definitions, which later sources repeat (the WCF and COM+ pages above).
 
-16. **Trusted Subsystem.** In *Web Service Security: Scenarios, Patterns, and Implementation Guidance for Web Services Enhancements (WSE) 3.0*. Microsoft patterns & practices, December 2005. Used: Forces, Solution, Participants, Process, Enforcing the Trust Relationship, Liabilities, Security Considerations, Extension 1. [Link][pnp]
-17. **"ASP.NET guide": *Building Secure ASP.NET Applications: Authentication, Authorization, and Secure Communication*,** chapter "Authentication and Authorization". J.D. Meier, Alex Mackman, Michael Dunner, Srinath Vasireddy. Microsoft, published November 2002, last revised January 2006. Used: Resource Access Models, The Trusted Subsystem Model, The Impersonation / Delegation Model, Choosing a Resource Access Model, the advantages and disadvantages, Flowing Identity. [Link][bsa-models] The same guide's Glossary: the two model definitions. [Link][bsa-gloss-tsm]
+17. **Trusted Subsystem.** In *Web Service Security: Scenarios, Patterns, and Implementation Guidance for Web Services Enhancements (WSE) 3.0*. Microsoft patterns & practices, December 2005. Used: Forces, Solution, Participants, Process, Enforcing the Trust Relationship, Liabilities, Security Considerations, Extension 1. [Link][pnp]
+18. **"ASP.NET guide": *Building Secure ASP.NET Applications: Authentication, Authorization, and Secure Communication*,** chapter "Authentication and Authorization". J.D. Meier, Alex Mackman, Michael Dunner, Srinath Vasireddy. Microsoft, published November 2002, last revised January 2006. Used: Resource Access Models, The Trusted Subsystem Model, The Impersonation / Delegation Model, Choosing a Resource Access Model, the advantages and disadvantages, Flowing Identity. [Link][bsa-models] The same guide's Glossary: the two model definitions. [Link][bsa-gloss-tsm]
 
 ### Other Sources
 
-18. **N. Hardy, "The Confused Deputy (or why capabilities might have been invented)".** ACM SIGOPS Operating Systems Review 22(4), pages 36-38, October 1988. DOI [10.1145/54289.871709](https://doi.org/10.1145/54289.871709), checked through Crossref. The text was read from a copy at cap-lore.com, which notes "Originally published in Operating Systems Reviews, Vol 22, #4, 1988." [Link][hardy]
-19. **AWS, "The confused deputy problem".** AWS Identity and Access Management User Guide. Used: the definition. [Link][aws-cd]
+19. **N. Hardy, "The Confused Deputy (or why capabilities might have been invented)".** ACM SIGOPS Operating Systems Review 22(4), pages 36-38, October 1988. DOI [10.1145/54289.871709](https://doi.org/10.1145/54289.871709), checked through Crossref. The text was read from a copy at cap-lore.com, which notes "Originally published in Operating Systems Reviews, Vol 22, #4, 1988." [Link][hardy]
+20. **AWS, "The confused deputy problem".** AWS Identity and Access Management User Guide. Used: the definition. [Link][aws-cd]
 
 ### Seen but Not Used
 
@@ -530,6 +537,7 @@ Found during the research, but not quoted here: they are secondary sources, or t
 [obo-steps]: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow#protocol-diagram
 [obo-request]: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow#middle-tier-access-token-request
 [cc]: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow
+[at-formats]: https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#token-formats
 [claims]: https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference#payload-claims
 [agent-obo]: https://learn.microsoft.com/en-us/entra/agent-id/agent-on-behalf-of-oauth-flow
 [agent-obo-steps]: https://learn.microsoft.com/en-us/entra/agent-id/agent-on-behalf-of-oauth-flow#protocol-steps
