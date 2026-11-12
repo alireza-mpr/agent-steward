@@ -308,7 +308,7 @@ docker compose run --rm agent-eval              # agent eval (NFR3): 3 guardian 
 
 What the guardian prints, what each trace mode shows, and its settings file ([config/guardian.json](../config/guardian.json)) are described in [The harness](harness.md).
 
-`token-claims` prints the decoded claims, never the token itself ([example](screenshots/phase2-guardian-token-claims.png)). The claims hold real tenant and object IDs, so redact them in any screenshot. For what each claim means, see [Agent tokens](tokens.md).
+`token-claims` prints the decoded claims, never the token itself. The claims hold real tenant and object IDs, so redact them before you share the output. For what each claim means, see [Agent tokens](tokens.md).
 
 **Three settings that matter.**
 

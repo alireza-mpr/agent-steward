@@ -10,7 +10,7 @@ Usage, from the repo root:
     .venv/bin/python tools/token_exchange.py [--api identity-api|graph] [--mask]
 
 It prints decoded headers and claims, never a raw token. --mask keeps only the first and
-last 4 characters of IDs and opaque values, for screenshots and docs.
+last 4 characters of IDs and opaque values, for docs.
 """
 
 import argparse

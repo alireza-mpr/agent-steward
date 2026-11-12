@@ -186,7 +186,6 @@ Here is exactly what is running in our current environment (as of late October 2
 * **Trial Expirations:** 
   * Microsoft 365 trials end on **21 November 2026**. 
   * Agent 365 trial ends on **22 November 2026** (Started Oct 22, runs one month). 
-  * *Note: All screenshots for DEMO.md must be captured before these dates.*
 
 ### Project Requirements Mapping
 

@@ -13,7 +13,7 @@ each conversation in its own sections:
     docker compose run --rm -e GUARDIAN_TRACE=json harness    # as JSON, each model message once, no settings
     docker compose run --rm -e GUARDIAN_TRACE=full harness    # the exact request and response bodies, in full
 The trace holds real tenant data (agent names, IDs), so keep it out of git (run*.txt is ignored)
-and redact it in any screenshot.
+and redact it before you share it.
 
 A run scans, reports, and asks a human to approve disabling each dormant agent (FR7). Each request
 returns at once as pending: the approver's decision and the disable come later, in the approve CLI.

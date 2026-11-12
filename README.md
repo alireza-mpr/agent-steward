@@ -12,7 +12,6 @@ The point of this project: demonstrate, end to end, how an autonomous agent can 
   - **[Agent architecture](docs/agent-architecture.md):** the enterprise design the guardian is compared with.
 - **[Threat model](THREATMODEL.md):** each OWASP agentic risk, and how it is handled.
 - **[All documents](docs/):** the reference documents, in the `docs/` folder.
-- **[Demo](DEMO.md):** what works, shown with screenshots from the live tenant.
 - **[Delivery status](docs/delivery-status.md):** every requirement, its status, and its evidence.
 
 ## Contents
@@ -88,7 +87,8 @@ Status: as for the functional requirements above.
   - Cut: the gitleaks history scan, because it is not specific to agentic AI.
 - [✅] **NFR7 - Threat model.** Every OWASP Agentic Top 10 risk is marked mitigated, accepted or out of scope, with a reason, mapped to a MAESTRO layer, and pointing at the code or config that implements the control. See [THREATMODEL.md](THREATMODEL.md).
 - [▶️] **NFR8 - Tests.** Offline tests for all policy logic (allow-list, approval gate, token claim checks). One live test per auth flow.
-- [▶️] **NFR9 - Durable proof.** [DEMO.md](DEMO.md) walks through every control with screenshots captured while the tenant was live, so the whole story is reviewable without running anything.
+- [✂️] **NFR9 - Durable proof.** A walkthrough of every control with screenshots from the live tenant.
+  - Cut: the project keeps no demo page and no screenshots. The code, the tests and the docs are the record.
 
 ## Deliberately out of code scope
 
@@ -116,9 +116,8 @@ src/mcp_server/   MCP server (official Python SDK): the guardian's tools, the fo
 src/executor/     The executor (Python / FastAPI): the one write, disabling an agent with the approver's rights (OBO)
 tests/            Unit tests, offline (unit/); integration tests against the running stack (integration/): the Identity API with real Entra tokens (identity_api/), and the MCP tools from the guardian's network (mcp_server/); an agent eval that runs the guardian with Claude against a planted prompt injection (agent_eval/)
 tools/            Dev tools that print token claims, never tokens (token-claims: the guardian's token from the sidecar; token_exchange: T1 and TR side by side)
-docs/             Delivery status (delivery-status.md); reference (GLOSSARY.md: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP; DESIGN-NOTES.md: written designs for out-of-scope patterns; entra.md, infra.md, agent-id.md, tokens.md, agent-architecture.md, agent-steward-architecture.md, investigating-agent-activity.md, from-microservices-to-agents.md, conditional-access-and-revocation.md, authentication.md, jwt-bearer-and-token-exchange.md, apps-and-apis.md, messages-api.md), harness reference (harness.md), MCP reference (mcp.md), the permission each tool needs (tool-permissions.md), testing the agent's behaviour with evals (testing-ai-agents.md), decision log (decisions.md), control register (security-controls.md), screenshots
+docs/             Delivery status (delivery-status.md); reference (GLOSSARY.md: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP; DESIGN-NOTES.md: written designs for out-of-scope patterns; entra.md, infra.md, agent-id.md, tokens.md, agent-architecture.md, agent-steward-architecture.md, investigating-agent-activity.md, from-microservices-to-agents.md, conditional-access-and-revocation.md, authentication.md, jwt-bearer-and-token-exchange.md, apps-and-apis.md, messages-api.md), harness reference (harness.md), MCP reference (mcp.md), the permission each tool needs (tool-permissions.md), testing the agent's behaviour with evals (testing-ai-agents.md), decision log (decisions.md), control register (security-controls.md)
 THREATMODEL.md    OWASP Agentic Top 10 x MAESTRO
-DEMO.md           Screenshot walkthrough
 ```
 
 ## Delivery status

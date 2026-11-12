@@ -150,8 +150,6 @@ So a span without `gen_ai.operation.name` is a plain span to Jaeger: no icon and
 
 So the arrows are Jaeger's, not part of the data: the span holds the parts as JSON, and the arrow only says which way the part goes, to a tool (`→`) or back from one (`←`). How the roles and blocks work is in [The Messages API](messages-api.md#9-in-the-guardian-one-real-run-round-by-round). The GenAI conventions have the status "Development", so a later Jaeger version may map the values differently.
 
-Screenshots of one harness run: [the trace view](screenshots/nfr4-harness-run-trace.png) and [the graph view with the GenAI summary](screenshots/nfr4-harness-trace-graph-genai-summary.png).
-
 ## Notes
 
 - **What spans hold:** never a token: the instrumentations record no headers and no bodies, and the MCP SDK records no tool arguments or results. The `anthropic.messages.create` spans do hold content, because the harness sets `ANTHROPIC_OPEN_TELEMETRY_TRACES_CONTENT_MODE: content` ([docker-compose.yml](../docker-compose.yml)): the messages the model was sent (the system prompt, the task and the tool results) and its answer, up to 750,000 bytes per span. That content is untrusted text (it includes the planted prompt injection) and tenant data. The SDK's other value, `metadata_only`, is its default.

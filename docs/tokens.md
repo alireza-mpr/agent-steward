@@ -147,7 +147,7 @@ CLI ──(Tc)──────────────────────
 docker compose run --rm token-claims graph
 ```
 
-The tool prints the claims, never the token itself, so its output cannot be replayed. The claims hold real tenant and object IDs, so redact them in any screenshot ([example](screenshots/phase2-guardian-token-claims.png)). For the setup, see [Local run: the sidecar](infra.md#local-run-the-sidecar).
+The tool prints the claims, never the token itself, so its output cannot be replayed. The claims hold real tenant and object IDs, so redact them before you share the output. For the setup, see [Local run: the sidecar](infra.md#local-run-the-sidecar).
 
 Two runs a few minutes apart showed the same `iat` and `exp`. So the sidecar caches the token and reuses it while it is valid. It does not ask Entra on every call.
 
@@ -211,7 +211,7 @@ The sidecar keeps T1 to itself. To see it, the dev tool [token_exchange.py](../t
 .venv/bin/python tools/token_exchange.py --mask
 ```
 
-It is a dev-only exception: it reads the guardian blueprint's private key from `secrets/`, which in normal runs only the sidecar holds. `--mask` keeps the first and last 4 characters of IDs and opaque values ([screenshot](screenshots/phase2-t1-t2-claims.png)).
+It is a dev-only exception: it reads the guardian blueprint's private key from `secrets/`, which in normal runs only the sidecar holds. `--mask` keeps the first and last 4 characters of IDs and opaque values.
 
 ### What changes from T1 to TR
 
@@ -293,7 +293,7 @@ TR, from request 2 (client: the agent identity, for the Identity API):
 }
 ```
 
-Seen in this lab on 27 October 2026. The screenshot comes from a later run, so the values that change with every token differ: the times, `aio`, `uti`, `xms_ftd`, and the order of the facet numbers.
+Seen in this lab on 27 October 2026.
 
 ### Where Entra checks the parent blueprint
 

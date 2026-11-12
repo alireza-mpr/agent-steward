@@ -176,4 +176,4 @@ docker compose run --rm -e GUARDIAN_TRACE=json harness
 docker compose run --rm -e GUARDIAN_TRACE=full harness > run.txt
 ```
 
-A trace holds real tenant data (agent names, IDs). So git ignores `run*.txt`, and any screenshot of a trace must be redacted. For the whole local run, with the sidecar and the other services, see [Local run: the sidecar](infra.md#local-run-the-sidecar).
+A trace holds real tenant data (agent names, IDs). So git ignores `run*.txt`, and a trace must be redacted before you share it. For the whole local run, with the sidecar and the other services, see [Local run: the sidecar](infra.md#local-run-the-sidecar).

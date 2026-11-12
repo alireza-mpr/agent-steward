@@ -4,7 +4,7 @@ Usage (inside the sidecar's network namespace): python token_claims.py <api>
 <api> is required: the name of a downstream API in the sidecar's config, for example graph.
 
 Prints only the decoded claims, never the token itself, so the output cannot be
-replayed. The claims hold real tenant and object IDs: redact them in any screenshot.
+replayed. The claims hold real tenant and object IDs: redact them before you share the output.
 """
 
 import argparse
