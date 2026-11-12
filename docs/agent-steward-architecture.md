@@ -284,7 +284,7 @@ sequenceDiagram
     participant G as Microsoft Graph
 
     P->>C: docker compose run --rm --service-ports approve
-    C->>E: authorization code flow with PKCE<br/>(the CLI's own listener catches the redirect)
+    C->>E: authorization code flow with PKCE,<br/>scope=#lt;Identity API app ID#gt;/.default openid profile offline_access<br/>(the CLI's own listener catches the redirect)
     E-->>C: an access token for the Identity API,<br/>plus an ID token and a refresh token (offline_access)
     C->>A: GET /disableRequests?status=pending<br/>Bearer: the access token for the Identity API
     A-->>C: pending requests
@@ -301,7 +301,7 @@ sequenceDiagram
         C->>A: POST .../{requestId}/decision (approve)<br/>Bearer: the access token for the Identity API
         A->>A: check the token, decide once, store who decided
         A-->>C: approved
-        C->>E: POST /token: grant_type=refresh_token,<br/>the sign-in's refresh token, scope=#lt;blueprint app ID#gt;/access_as_user<br/>(no new prompt. A different API: an Entra deviation from RFC 6749)
+        C->>E: POST /token: grant_type=refresh_token,<br/>the sign-in's refresh token, scope=#lt;blueprint app ID#gt;/access_as_user<br/>(no new prompt. A different API: an Entra deviation from RFC 6749,<br/>see "The refresh for Tc" below the diagram)
         E-->>C: Tc (aud: the blueprint, scp: access_as_user),<br/>plus a new refresh token
         C->>X: POST .../{requestId}/delegation<br/>Bearer: Tc
         X->>S: GET /Validate<br/>Bearer: Tc
@@ -326,6 +326,10 @@ sequenceDiagram
         C->>P: Disabled, with your own rights.
     end
 ```
+
+**The refresh for Tc:** the CLI signed in for the Identity API, yet it uses that sign-in's refresh token to get Tc, a token for a different API (the guardian's blueprint). Standard OAuth does not allow that: a refresh can only renew or narrow the access first granted. Entra allows it, because its refresh tokens are bound to the user and the client, not to one API. The standard, Entra's rule and their sources: [Deviation: one refresh token, many APIs](tokens.md#deviation-one-refresh-token-many-apis).
+
+**The scope at sign-in:** the CLI asks only for `<Identity API app ID>/.default`. MSAL adds `openid profile offline_access` itself, and `offline_access` is what returns the refresh token.
 
 Every refusal on the executor's path leaves the agent enabled: no token, a token that is not the approver's, a request that is not approved or already executed, an agent that is already disabled or no longer dormant, a failed exchange or a failed write. After the claim, a failed exchange or a failed write ends the request as `failed`, so the scan does not take it for a disable.
 

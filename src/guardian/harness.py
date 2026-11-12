@@ -25,7 +25,7 @@ import span_names as names
 # last part of the name as a tag: [model] and [mcp] for the two peers, [harness] for the harness itself.
 MODEL_LOG = logging.getLogger("guardian.model")
 MCP_LOG = logging.getLogger("guardian.mcp")
-# The run's root span. Without the OpenTelemetry SDK (guardian_telemetry.py) it records nothing.
+# The run's root span. Without the OpenTelemetry SDK (src/shared/telemetry.py) it records nothing.
 TRACER = trace.get_tracer(names.HARNESS_TRACER)
 
 
@@ -312,9 +312,13 @@ class BodyLog:
         return {"request": [self.request], "response": [self.response]}
 
 
-async def run_agent(claude: Any, mcp_client: Any, settings: HarnessSettings, trace: Any = None,
+async def run_agent(claude: Any, mcp_connection: Any, settings: HarnessSettings, trace: Any = None,
                     show_thinking: bool = False, task: str = TASK) -> RunResult:
     """One run of the agent loop: the task, then model call and tool calls until the report.
+
+    mcp_connection is an MCP client that is not connected yet (mcp.Client): run_agent connects it
+    inside the run's span, so the MCP SDK's handshake (server/discover) is part of the run's trace
+    instead of a trace of its own, and a failed connection fails the run's span.
 
     Each step goes to the progress log, one line per step: model steps to guardian.model, MCP
     steps to guardian.mcp. With a trace (Trace, or the chat view), every message to and from the
@@ -333,7 +337,8 @@ async def run_agent(claude: Any, mcp_client: Any, settings: HarnessSettings, tra
         if span.get_span_context().is_valid:   # not without the SDK
             result.trace_id = format_trace_id(span.get_span_context().trace_id)
         try:
-            return await agent_loop(claude, mcp_client, settings, trace, show_thinking, task, result)
+            async with mcp_connection as mcp_client:   # the handshake: the span's first child
+                return await agent_loop(claude, mcp_client, settings, trace, show_thinking, task, result)
         except Exception as error:
             span.set_attribute(names.ERROR_TYPE, type(error).__name__)   # the span also records the error
             raise

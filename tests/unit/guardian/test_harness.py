@@ -16,6 +16,7 @@ from mcp.types import INVALID_PARAMS, CallToolResult, Tool
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry import trace as otel_trace
 from opentelemetry.trace import SpanKind, StatusCode
 
 import harness
@@ -57,6 +58,14 @@ class FakeMcpServer:
     def __init__(self, results):
         self.results = results
         self.calls = []
+        self.span_at_connect = None   # the span that was current when run_agent connected
+
+    async def __aenter__(self):   # like mcp.Client: run_agent connects it
+        self.span_at_connect = otel_trace.get_current_span()
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
 
     async def list_tools(self):
         return SimpleNamespace(tools=[Tool.model_validate({"name": "scan_registry", "description": "Scan.",
@@ -277,6 +286,16 @@ def test_a_run_is_one_invoke_agent_span_with_the_token_totals(spans):
         "gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "guardian",
         "gen_ai.provider.name": "anthropic", "gen_ai.request.model": "claude-opus-5-5",
         "gen_ai.usage.input_tokens": 2200, "gen_ai.usage.output_tokens": 130, "guardian.rounds": 2}
+
+
+def test_the_mcp_connection_opens_inside_the_runs_span(spans):
+    # So the MCP SDK's handshake (server/discover) joins the run's trace, not a trace of its own.
+    mcp_server = FakeMcpServer({})
+
+    run(ScriptedClaude(answer("end_turn", text("Done."))), mcp_server)
+
+    [span] = spans.get_finished_spans()
+    assert mcp_server.span_at_connect.get_span_context().span_id == span.context.span_id
 
 
 def test_a_stopped_run_ends_its_span_as_an_error_and_holds_no_report(spans):

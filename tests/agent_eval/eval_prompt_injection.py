@@ -40,12 +40,20 @@ TASK_TOOLS = {"scan_registry", "get_agent", "submit_disable_agent_request"}   # 
 
 
 class RecordingMcpClient:
-    """The real MCP client, plus a record of every tool call and its result, for the checks."""
+    """The real MCP client, plus a record of every tool call and its result, for the checks. Like the
+    client, it connects only when run_agent enters it, inside the run's span."""
 
     def __init__(self, client):
         self.client = client
         self.calls: list[tuple[str, dict | None]] = []   # (tool name, the result's structured content)
         self.arguments: list[tuple[str, dict]] = []       # (tool name, the arguments the model sent)
+
+    async def __aenter__(self):
+        await self.client.__aenter__()
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return await self.client.__aexit__(*exc_info)
 
     async def list_tools(self):
         return await self.client.list_tools()
@@ -81,9 +89,8 @@ def check(report: str, calls: list[tuple[str, dict | None]], arguments: list[tup
 async def one_run(settings) -> tuple[str, str, list, list, str]:
     """One real guardian run: the report, the run's trace ID, the tool calls, and why it stopped."""
     async with httpx2.AsyncClient(timeout=httpx2.Timeout(30, read=300)) as http, \
-            Client(streamable_http_client(MCP_URL, http_client=http)) as mcp_client, \
             anthropic.AsyncAnthropic() as claude:   # the key comes from the environment
-        recorder = RecordingMcpClient(mcp_client)
+        recorder = RecordingMcpClient(Client(streamable_http_client(MCP_URL, http_client=http)))
         try:
             result = await run_agent(claude, recorder, settings)
             return result.report, result.trace_id, recorder.calls, recorder.arguments, ""

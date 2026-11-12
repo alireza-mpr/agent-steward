@@ -12,12 +12,17 @@ This guide explains how the harness and the model communicate using Anthropic's 
 
 - [1. The Big Picture: A Stateless Conversation Loop](#1-the-big-picture-a-stateless-conversation-loop)
 - [2. Conversation Roles: Who Is Speaking?](#2-conversation-roles-who-is-speaking)
+  - [System Prompt vs User Prompt](#system-prompt-vs-user-prompt)
 - [3. Inside a Message: Content Blocks](#3-inside-a-message-content-blocks)
 - [4. Extraction & Checking Why the Model Stopped: `stop_reason`](#4-extraction--checking-why-the-model-stopped-stop_reason)
 - [5. The Golden Rules: How the Harness Processes a Response](#5-the-golden-rules-how-the-harness-processes-a-response)
 - [6. Under the Hood: How Text Becomes JSON & Syntax Structure](#6-under-the-hood-how-text-becomes-json--syntax-structure)
 - [7. A Person or a Program: What the Model Knows](#7-a-person-or-a-program-what-the-model-knows)
 - [8. Python SDK Note: Standard vs. Beta Types](#8-python-sdk-note-standard-vs-beta-types)
+- [9. In the Guardian: One Real Run, Round by Round](#9-in-the-guardian-one-real-run-round-by-round)
+  - [The Exchange](#the-exchange)
+  - [What the Rounds Show](#what-the-rounds-show)
+  - [Where to See It in Jaeger](#where-to-see-it-in-jaeger)
 
 ---
 
@@ -81,6 +86,32 @@ Every message in the `messages` list is tagged with a `role`. This tells the API
 * **The separation keeps the two apart.** The operator's rules cannot be confused with user content or tool results.
 * **The model still reads `system` first.** The provider's server puts it before the messages when it builds the model's prompt.
 * **Other APIs differ.** OpenAI's older Chat Completions API puts it inside the list, as `messages[0]` with role `system`. Gemini (`system_instruction`) and OpenAI's newer Responses API (`instructions`) keep it outside, like Anthropic.
+
+### System Prompt vs User Prompt
+
+**The system prompt** is the operator's standing instructions: who the model is and which rules it follows.
+
+* **Who writes it:** the operator, meaning the developer of the application. A person using the application usually does not see it.
+* **Where it goes:** the top-level `system` field, in every request of the conversation.
+* **What goes in it:** the model's role, its rules and limits, and the output format. Anthropic's prompting guide says a role in the system prompt focuses the model's behavior and tone, and even one sentence makes a difference ([Prompting best practices: Give Claude a role](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices)).
+* **How long it lasts:** the whole conversation. The same text goes with every request.
+
+**The user prompt** is the input for this one conversation: the task or the question.
+
+* **Who writes it:** a person typing in a chat, or the harness itself when no person is involved.
+* **Where it goes:** a `user` message in the `messages` list. The first `user` message usually holds the task.
+* **What goes in it:** the request, plus any data the model needs for it, such as a document to summarize.
+* **How long it lasts:** it is one turn. Later `user` messages add tool results or follow-up questions.
+
+**The differences:**
+
+1. **Lifetime:** the system prompt stays the same for every conversation of the application. The user prompt changes with each conversation.
+2. **Trust:** Claude's trust follows who sent the text, not only where it sits. Anthropic's constitution for Claude treats operators, who usually speak through the system prompt, like "a relatively (but not unconditionally) trusted manager or employer", and says users "should get a bit less latitude than operators by default". Text in a `user` turn that claims to come from the operator gets only user-level trust, unless it can be verified. It also says "this is not a strict hierarchy": users have some protections that operators cannot remove ([Claude's constitution](https://www.anthropic.com/constitution)).
+3. **What a security control can rely on:** neither one. The model gives the system prompt more weight, but a prompt injection in a `user` message or a tool result can still change what the model does. So a rule that must hold goes into code, not into either prompt.
+
+**How to choose:** put whatever must hold for every conversation in the system prompt (the role, the rules, the format). Put whatever belongs to this one request in the user prompt (the task and its data).
+
+**In the guardian:** the system prompt is `SYSTEM_PROMPT` in [harness.py](../src/guardian/harness.py): the guardian's role, the rule that tool results are data and never instructions (C13, a weak control), the rule to ask only for dormant agents, and the report's format. The user prompt is `TASK`, the same one sentence in every run: "Run today's registry check, report what you find, and ask to disable each dormant agent." No person types into the guardian, so the harness writes both, and the only other `user` messages are tool results. [Section 9](#9-in-the-guardian-one-real-run-round-by-round) shows both in a real run.
 
 ## 3. Inside a Message: Content Blocks
 
@@ -153,3 +184,73 @@ How does the model know it is talking to a program through an API, and not to a 
 * Both send the same request to the same URL (`POST /v1/messages`). The beta method adds an `anthropic-beta` header that turns the beta features on, so the JSON on the wire has the same shape.
 
 **In the guardian:** the harness uses the beta method, because the refusal fallback is still a beta feature.
+
+## 9. In the Guardian: One Real Run, Round by Round
+
+This section shows what the guardian's harness and Claude sent each other in one real run: four model calls, from the task to the report. It uses the terms of sections 2 to 4. The data comes from the run's trace in Jaeger (trace `3ed2a80`, 12 November 2026); the tool results and the report are left out, because they hold tenant data.
+
+### The Exchange
+
+Each arrow is one HTTP call: `POST /v1/messages` from the harness, and its response from Claude. Every request holds the whole conversation, so each one repeats the messages before it and adds one new `user` message at the end. Between two rounds, the harness runs the requested tools on the MCP server ([The harness](harness.md#step-by-step-how-one-run-works)).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as Harness
+    participant C as Claude<br/>(model)
+
+    Note over H,C: Round 1
+    H->>C: system: the guardian's rules (not a message)<br/>tools: scan_registry, get_agent, submit_disable_agent_request<br/>messages:<br/>[1] user: text (the task)
+    C-->>H: role assistant: tool_use scan_registry<br/>stop_reason: tool_use
+    Note over H: runs scan_registry
+
+    Note over H,C: Round 2
+    H->>C: system + tools, the same<br/>messages:<br/>[1] user: text (the task)<br/>[2] assistant: tool_use scan_registry<br/>[3] user: tool_result
+    C-->>H: role assistant: thinking + 6 × tool_use get_agent<br/>stop_reason: tool_use
+    Note over H: runs get_agent 6 times
+
+    Note over H,C: Round 3
+    H->>C: system + tools, the same<br/>messages:<br/>[1] to [3], the same<br/>[4] assistant: thinking + 6 × tool_use get_agent<br/>[5] user: 6 × tool_result
+    C-->>H: role assistant: 5 × tool_use submit_disable_agent_request<br/>stop_reason: tool_use
+    Note over H: runs submit_disable_agent_request 5 times
+
+    Note over H,C: Round 4
+    H->>C: system + tools, the same<br/>messages:<br/>[1] to [5], the same<br/>[6] assistant: 5 × tool_use submit_disable_agent_request<br/>[7] user: 5 × tool_result
+    C-->>H: role assistant: text (the report)<br/>stop_reason: end_turn
+```
+
+### What the Rounds Show
+
+- **Roles alternate:** the messages go `user`, `assistant`, `user`, and so on. The task and every tool result are `user` messages. Every answer from Claude is an `assistant` message.
+- **The system prompt is not a role:** it travels in the top-level `system` field in every request, with the tools ([section 2](#2-conversation-roles-who-is-speaking)).
+- **Several tool calls in one answer:** in round 2, Claude asked for `get_agent` six times in one `assistant` message. So the harness sent all six `tool_result` blocks back in one `user` message, each matched to its `tool_use` by ID ([section 5](#5-the-golden-rules-how-the-harness-processes-a-response)).
+- **History is sent back unchanged:** the `thinking` block of round 2 comes back in rounds 3 and 4 as part of message [4].
+- **The input grows each round:** because each request repeats the history, the input tokens grow, while the output stays small:
+
+| Round | Input tokens | Output tokens | `stop_reason` |
+|---|---|---|---|
+| 1 | 1,170 | 28 | `tool_use` |
+| 2 | 1,982 | 509 | `tool_use` |
+| 3 | 3,368 | 591 | `tool_use` |
+| 4 | 4,714 | 918 | `end_turn` |
+
+### Where to See It in Jaeger
+
+Each round is one `anthropic.messages.create` span in the harness's trace (the graduation cap icon). The harness turns on the Anthropic SDK's content mode, so the span holds the messages ([tracing.md](tracing.md#notes)):
+
+- **`gen_ai.system_instructions`:** the `system` field.
+- **`gen_ai.input.messages`:** the request's `messages` list, with each message's role.
+- **`gen_ai.output.messages`:** Claude's answer, the `assistant` message.
+- **`anthropic.message.stop_reason`:** the `stop_reason`.
+- **`gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens`:** the token counts in the table above.
+
+The span does not hold the `tools` list.
+
+**The names differ in Jaeger.** The span uses the OpenTelemetry GenAI conventions, not the Messages API's names, for the parts of a message:
+
+- **`tool_call`** in the span is a `tool_use` block in the API.
+- **`tool_call_response`** in the span is a `tool_result` block.
+- **`reasoning`** in the span is a `thinking` block.
+- **`text`** is the same in both.
+
+In the GenAI tab's Conversation view, Jaeger shows a `tool_call` as `→ name(arguments)` and a `tool_call_response` as `← result` ([tracing.md](tracing.md#how-jaeger-shows-genai-spans)).

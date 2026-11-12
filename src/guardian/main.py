@@ -85,19 +85,20 @@ async def main() -> int:
     # Streamable HTTP: the MCP client sends every message as a POST to this one path. The full log
     # prints each request's real method and path; the other traces print this.
     mcp_endpoint = f"POST {urllib.parse.urlsplit(MCP_URL).path}"
-    async with mcp_http, Client(streamable_http_client(MCP_URL, http_client=mcp_http)) as mcp_client, \
-            anthropic.AsyncAnthropic(http_client=model_http) as claude:   # the key comes from the environment
+    # Not connected yet: run_agent connects inside the run's span, so the handshake is in its trace.
+    mcp_connection = Client(streamable_http_client(MCP_URL, http_client=mcp_http))
+    async with mcp_http, anthropic.AsyncAnthropic(http_client=model_http) as claude:   # the key comes from the environment
         try:
             if full:
-                result = await run_agent(claude, mcp_client, settings, show_thinking=True)
+                result = await run_agent(claude, mcp_connection, settings, show_thinking=True)
             elif TRACE == "json":
-                result = await run_agent(claude, mcp_client, settings,
+                result = await run_agent(claude, mcp_connection, settings,
                                          trace=Trace(mcp_endpoint=mcp_endpoint), show_thinking=True)
             elif TRACE:
-                result = await run_agent(claude, mcp_client, settings,
+                result = await run_agent(claude, mcp_connection, settings,
                                          trace=ChatTrace(mcp_endpoint=mcp_endpoint), show_thinking=True)
             else:
-                result = await run_agent(claude, mcp_client, settings)
+                result = await run_agent(claude, mcp_connection, settings)
         except (ModelStopped, RoundLimitReached, ToolCallRejected) as error:
             log.error(f"run stopped: {error}")
             return 1
