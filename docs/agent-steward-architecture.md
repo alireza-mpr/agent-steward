@@ -112,6 +112,8 @@ flowchart LR
             SIDECAR["<b>sidecar</b><br/>app-only tokens<br/>holds: the certificate"]
         end
         JAEGER["<b>jaeger</b><br/>trace viewer<br/>both networks<br/>gets spans from every<br/>service but the sidecars<br/>OTLP/HTTP on port 4318"]
+        LOKI["<b>loki</b><br/>audit log store<br/>both networks<br/>gets the audit lines of<br/>identity-api, mcp-server<br/>and executor, and the<br/>harness's progress lines<br/>OTLP on 3100"]
+        GRAFANA["<b>grafana</b><br/>log viewer · telemetry network<br/>reads loki and jaeger"]
         API["<b>identity-api</b><br/>both networks · port 8000<br/>holds: no secret"]
         APPROVE["<b>approve</b><br/>CLI · approval network<br/>signs the approver in at Entra ID<br/>holds: the approver's tokens,<br/>in memory"]
         subgraph NSX["executor sidecar's network namespace · approval network"]
@@ -136,10 +138,13 @@ flowchart LR
     API ~~~ GRAPH
     %% invisible link: keeps jaeger in the middle, clear of the other lines
     JAEGER ~~~ API
+    GRAFANA -->|"queries"| LOKI
+    GRAFANA -->|"trace by ID"| JAEGER
 ```
 
-* **Two networks:** the guardian is on the agent network only, so it cannot reach the executor. The approve CLI and the executor's sidecar are on the approval network only. The Identity API and Jaeger are on both, and they do not join the two networks to each other.
-* **Jaeger, no arrows:** the trace viewer receives the spans of every service but the two sidecars. Five arrows to it would cross the whole diagram, so its box says it instead.
+* **Two networks:** the guardian is on the agent network only, so it cannot reach the executor. The approve CLI and the executor's sidecar are on the approval network only. The Identity API, Jaeger and Loki are on both, and they do not join the two networks to each other.
+* **Jaeger and Loki, no arrows in:** the trace viewer receives the spans of every service but the two sidecars, and Loki receives the audit lines of the three services that write them. The arrows to them would cross the whole diagram, so their boxes say it instead.
+* **A third network, telemetry:** Grafana, Loki and Jaeger only. Grafana reads from the other two and reaches none of the services.
 * **Not shown:** the containers that run only on demand for tests and checks (`integration-tests`, `mcp-integration-tests`, `agent-eval`, `token-claims`, `obo-claims`). Each one joins one of the two networks or namespaces above.
 
 To verify our security posture, here is exactly what each container holds and what it can reach over the network:
@@ -155,6 +160,8 @@ To verify our security posture, here is exactly what each container holds and wh
 | **`approve`** | The approver's client (CLI) | The approver's tokens, in memory only. | Can reach `identity-api` and the executor. |
 | **`identity-api`** | Resource API | *No secrets* (validates tokens using Entra's public signing keys). | *Nothing* (only responds to incoming API calls). |
 | **`jaeger`** | Trace viewer (NFR4) | *Nothing* | *Nothing* (only receives spans). Every service can send spans to it, and nothing checks who sent them ([A9](../THREATMODEL.md#accepted-risks)). |
+| **`loki`** | Audit log store (FR8, NFR4) | *Nothing* (holds the audit lines, on a volume) | *Nothing* (only receives log records and answers Grafana). Any container on the two networks can send it records, and nothing checks who sent them ([A9](../THREATMODEL.md#accepted-risks)). |
+| **`grafana`** | Log viewer (FR8, NFR4) | *Nothing* | Can reach `loki` and `jaeger` only. Its UI has no sign-in, so it is published on the host's loopback only. |
 
 *(Transport Note: The communication between the harness and the MCP server uses **MCP over Streamable HTTP**, the standard transport for standalone networked MCP services. The client sends each MCP message as an HTTP POST to a single `/mcp` endpoint, and the server either replies with a standard JSON payload or streams the response back over the same connection).*
 
@@ -209,7 +216,7 @@ sequenceDiagram
     G-->>M: the data
     M->>M: run the four rules
     M->>A: POST /findings<br/>Bearer: the guardian's app-only token (Findings.Submit)
-    M->>A: GET /agents/{agentId}/disableRequests, for each dormant agent<br/>Bearer: the guardian's app-only token (AgentDisable.Request)
+    M->>A: GET /agents/{agentId}/disableRequests, for each dormant agent<br/>Bearer: the guardian's app-only token for the Identity API,<br/>role AgentDisable.Request
     M-->>H: the findings, and each dormant<br/>agent's latest request
     H->>L: the findings
 
@@ -222,7 +229,7 @@ sequenceDiagram
         alt The agent is unknown, is the guardian's own, or is not dormant
             M-->>H: tool error: refused, and nobody is asked
         else The agent can be disabled
-            M->>A: POST /agents/{agentId}/disableRequests<br/>Bearer: the guardian's app-only token (AgentDisable.Request)<br/>body: facts from Graph, the model's reason
+            M->>A: POST /agents/{agentId}/disableRequests<br/>Bearer: the guardian's app-only token for the Identity API,<br/>role AgentDisable.Request<br/>body: facts from Graph, the model's reason
             A-->>M: 201, pending for 24 hours<br/>(409 if one is already pending: tool error)
             M-->>H: pending: nothing is disabled now
         end
@@ -306,23 +313,29 @@ sequenceDiagram
         C->>X: POST .../{requestId}/delegation<br/>Bearer: Tc
         X->>S: GET /Validate<br/>Bearer: Tc
         S-->>X: Tc's claims, after the signature, audience and scope checks
-        X->>A: GET the request<br/>Bearer: the guardian's app-only token (AgentDisable.Request)
-        A-->>X: approved, and decided by Tc's oid?
-        X->>G: read the agent again<br/>Bearer: the guardian's app-only token
+        X->>A: GET the request<br/>Bearer: the guardian's app-only token for the Identity API,<br/>role AgentDisable.Request
+        A-->>X: the request: its status and decidedBy
+        X->>X: approved, and decidedBy = the approver's oid from Tc's claims?<br/>(the person who lends their rights must be the person who approved)
+        X->>G: read the agent again, and the sign-in log<br/>Bearer: the guardian's app-only token for Graph,<br/>roles AgentIdentity.Read.All and AuditLog.Read.All
         G-->>X: the facts: dormant, not the guardian's own?
-        X->>A: POST .../{requestId}/execution<br/>Bearer: the guardian's app-only token (AgentDisable.Request)<br/>body: delegatingUser = Tc's oid
+        X->>A: Claiming the request<br/>POST .../{requestId}/execution<br/>Bearer: the guardian's app-only token for the Identity API,<br/>role AgentDisable.Request<br/>body: delegatingUser = the approver's oid<br/>(only the ID: Tc itself never leaves the executor and its sidecar)
         A-->>X: running (409 unless approved, within 10 minutes, by this person)
-        X->>S: GET /AuthorizationHeader/graph-delegated<br/>Bearer: Tc
-        S->>E: request 1: the blueprint's certificate,<br/>fmi_path = the guardian's agent identity
-        E-->>S: T1
-        S->>E: request 2 (OBO): client_id = the agent identity,<br/>client_assertion = T1, assertion = Tc
-        E-->>S: Graph token: the approver's oid,<br/>scp AgentIdentity.EnableDisable.All
-        S-->>X: the OBO token
+        rect rgba(127, 127, 127, 0.12)
+            Note over E,S: The OBO exchange: a Graph token with the approver's rights
+            X->>S: GET /AuthorizationHeader/graph-delegated<br/>Bearer: Tc
+            S->>E: request 1: the blueprint's certificate,<br/>fmi_path = the guardian's agent identity
+            E-->>S: T1
+            S->>E: request 2 (OBO): client_id = the agent identity,<br/>client_assertion = T1, assertion = Tc
+            E-->>S: Graph token: the approver's oid,<br/>scp AgentIdentity.EnableDisable.All
+            S-->>X: the OBO token
+        end
         X->>G: PATCH accountEnabled = false<br/>Bearer: the OBO token
         G-->>X: 204
-        X->>G: read accountEnabled back<br/>Bearer: the guardian's app-only token
-        G-->>X: false
-        X->>A: POST .../{requestId}/outcome<br/>Bearer: the guardian's app-only token (AgentDisable.Request)<br/>body: outcome = succeeded (failed if the exchange or the write failed)
+        loop up to 6 reads, 5 seconds apart, until Graph shows false
+            X->>G: read accountEnabled back<br/>Bearer: the guardian's app-only token for Graph,<br/>role AgentIdentity.Read.All
+            G-->>X: true (Graph lags behind the write), or false
+        end
+        X->>A: POST .../{requestId}/outcome<br/>Bearer: the guardian's app-only token for the Identity API,<br/>role AgentDisable.Request<br/>body: outcome = succeeded (failed if the exchange or the write failed)
         A-->>X: succeeded
         X-->>C: disabled, or why not
         C->>P: Disabled, with your own rights.
@@ -330,6 +343,10 @@ sequenceDiagram
 ```
 
 **The refresh for Tc:** the CLI signed in for the Identity API, yet it uses that sign-in's refresh token to get Tc, a token for a different API (the guardian's blueprint). Standard OAuth does not allow that: a refresh can only renew or narrow the access first granted. Entra allows it, because its refresh tokens are bound to the user and the client, not to one API. The standard, Entra's rule and their sources: [Deviation: one refresh token, many APIs](tokens.md#deviation-one-refresh-token-many-apis).
+
+**Why the executor uses the guardian's own token at the Identity API, not OBO:** the token type follows whose authority a call uses ([RFC 6749, section 1.3.4](https://www.rfc-editor.org/rfc/rfc6749#section-1.3.4); [delegated and app-only access](https://learn.microsoft.com/en-us/entra/identity-platform/permissions-consent-overview)). The PATCH to Graph uses the approver's rights, so it goes through OBO. Reading the request, claiming it and recording the outcome manage the guardian's own workflow: the guardian created the request, and the approver already used their own authority at the decision call, with their own token. So these calls use client credentials. This is a gray area, not a rule the sources settle: Microsoft also advises to "avoid granting app permissions when delegated permissions would suffice" ([Agent ID best practices](https://learn.microsoft.com/en-us/entra/agent-id/best-practices-agent-id)), and here they would. An OBO token would give the Identity API the approver's `oid`, signed by Entra, where today it trusts the executor for `delegatingUser`. We kept client credentials because Graph already enforces the approver's rights on the only privileged write, and OBO here would need a new scope and new checks on the Identity API.
+
+**The read-back loop:** Graph is eventually consistent. In this lab, a read still showed `accountEnabled: true` about 10 seconds after the write. So the executor reads up to 6 times, 5 seconds apart, and stops at the first `false`. If no read shows it, the audit line says `confirmed: false`, and the outcome is still `succeeded`, because Graph accepted the PATCH ([graph_writer.py](../src/executor/graph_writer.py)).
 
 **The scope at sign-in:** the CLI asks only for `<Identity API app ID>/.default`. MSAL adds `openid profile offline_access` itself, and `offline_access` is what returns the refresh token.
 

@@ -32,7 +32,7 @@ from approval import SERVICE_ERRORS, ApprovalError, DisableRequest, IdentityApiA
 from disable_checks import GUID, check_can_be_disabled
 from graph_reader import AgentDetails, GraphClient, fetch_agent_details, fetch_agents, fetch_blueprints, fetch_last_sign_ins
 from rules import Finding, load_permission_policy, run_all_rules
-from telemetry import setup_tracing, trace_fields
+from telemetry import audit, setup_tracing
 
 SIDECAR_URL = os.environ.get("SIDECAR_URL", "http://127.0.0.1:5000")
 API_URL = os.environ.get("API_URL", "http://identity-api:8000")
@@ -114,11 +114,6 @@ SERVER_NAME = "agent-steward-mcp-server"
 SERVER_VERSION = "1.0.0"
 
 
-def audit(**fields) -> None:
-    """Write one audit line on stdout, like the Identity API's (FR8), with the current trace ID and
-    span ID (NFR4): the Identity API's lines for the same call carry the same trace ID. Never pass a token in here."""
-    record = {"timestamp": datetime.now(timezone.utc).isoformat(), **trace_fields(), **fields}
-    print(json.dumps(record), file=sys.stdout, flush=True)
 
 
 class AllowListedServer(MCPServer):

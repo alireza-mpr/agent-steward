@@ -1,0 +1,12 @@
+# Grafana's dashboards, loaded when Grafana starts (FR8, NFR2): every JSON file in the folder that
+# compose mounts at /etc/grafana/dashboards. The files in the repo are the source: a change made in
+# the UI cannot be saved, so export the JSON and replace the file instead.
+apiVersion: 1
+
+providers:
+  - name: agent-steward
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards

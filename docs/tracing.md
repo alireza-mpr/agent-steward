@@ -24,11 +24,11 @@ A system reports what it does in three main kinds of telemetry. OpenTelemetry ca
 
 OpenTelemetry also lists **baggage** as a signal: key-value pairs that travel with a request from service to service. It is context passed along, not a record that is stored. Profiles are still in development.
 
-Each signal usually has its own kind of backend. Jaeger is a tracing backend: it stores spans only, no log lines. A log platform such as Splunk stores log events and searches across them. The two are linked by the trace ID: a log line that carries it leads to its trace.
+Each signal usually has its own kind of backend. Jaeger is a tracing backend: it stores spans only, no log lines. A log platform such as Splunk, Elastic or Grafana Loki stores log events and searches across them. The two are linked by the trace ID: a log line that carries it leads to its trace.
 
 **In this project:**
 
-- **Logs:** the audit lines (FR8). The Identity API, the MCP server and the executor print them as JSON to stdout, and `docker compose logs` reads them. They are not sent over OpenTelemetry, and they carry the trace ID and span ID of the span that wrote them.
+- **Logs:** the audit lines (FR8). The Identity API, the MCP server and the executor print them as JSON to stdout, and also send them over OTLP to Loki, a log store, as OpenTelemetry log records. The harness's progress lines go there too, as operational lines. Each line carries the trace ID and span ID of the span that wrote it, so Grafana links a line to its trace in Jaeger ([infra.md](infra.md#audit-logs-loki-and-grafana)).
 - **Metrics:** none yet. The token counts are span attributes, not metrics.
 - **Traces:** every service sends its spans over OTLP to Jaeger. The rest of this page is about them.
 

@@ -17,11 +17,9 @@ Run: uvicorn executor:app --host 0.0.0.0 --port 8200
 import asyncio
 import json
 import os
-import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -30,7 +28,7 @@ from approval import CLAIMED, SERVICE_ERRORS, ApprovalError, DisableRequest, Ide
 from disable_checks import GUID, check_can_be_disabled
 from graph_reader import GraphClient
 from graph_writer import GraphWriter, disable_agent_identity
-from telemetry import setup_tracing, trace_fields
+from telemetry import audit, setup_tracing
 
 SIDECAR_URL = os.environ.get("SIDECAR_URL", "http://127.0.0.1:5000")
 API_URL = os.environ.get("API_URL", "http://identity-api:8000")
@@ -46,11 +44,6 @@ if setup_tracing():   # only when OTEL_SERVICE_NAME is set (src/shared/telemetry
     URLLibInstrumentor().instrument()
 
 
-def audit(**fields) -> None:
-    """Write one audit line on stdout, like the Identity API's and the MCP server's (FR8), with the
-    current trace ID and span ID (NFR4). Never pass a token in here."""
-    record = {"timestamp": datetime.now(timezone.utc).isoformat(), **trace_fields(), **fields}
-    print(json.dumps(record), file=sys.stdout, flush=True)
 
 
 def audit_request(event: str, request: DisableRequest, **fields) -> None:

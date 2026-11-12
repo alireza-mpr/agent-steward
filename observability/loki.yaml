@@ -1,0 +1,38 @@
+# Loki (FR8, NFR4): stores the audit lines that the Identity API, the MCP server and the executor send
+# as OpenTelemetry log records (src/shared/telemetry.py). One process, files on the loki-data volume,
+# so the lines survive a restart. Based on the image's own /etc/loki/local-config.yaml (Loki 3.7).
+
+auth_enabled: false   # one tenant, local only: the port is not published on the host
+
+server:
+  http_listen_port: 3100
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2026-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Required for OTLP: everything in a log record except its body and timestamps, such as the
+  # trace ID, the span ID and the event attribute, is kept as structured metadata.
+  allow_structured_metadata: true
+
+analytics:
+  reporting_enabled: false   # no usage reports to Grafana Labs

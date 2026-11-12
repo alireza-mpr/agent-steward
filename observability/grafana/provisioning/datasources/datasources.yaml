@@ -1,0 +1,47 @@
+# Grafana's data sources, set up when Grafana starts (FR8, NFR4): Loki holds the audit lines, Jaeger
+# holds the traces. Each one links to the other by the trace ID. In this file, $$ is a literal $:
+# Grafana expands environment variables written as $NAME.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    jsonData:
+      # From a log line to its trace: the record's trace ID is structured metadata named trace_id,
+      # so the link matches that label, not a pattern in the line's text.
+      # Two links on the same trace ID: Jaeger's own UI, which also shows the GenAI view, and
+      # Grafana's trace view next to the log line.
+      derivedFields:
+        - name: Jaeger
+          matcherType: label
+          matcherRegex: trace_id
+          url: "http://localhost:16686/trace/$${__value.raw}"
+          urlDisplayLabel: Open in Jaeger
+        - name: Trace
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: jaeger
+          url: "$${__value.raw}"
+          urlDisplayLabel: Open the trace in Grafana
+
+  # Only the lookup by trace ID works. Jaeger 2.23 no longer serves the older HTTP API that Grafana's
+  # Jaeger data source uses for its health check and its search (/api/services, /api/traces?service=):
+  # those answer 404, while /api/traces/{traceId} still works. So "Save & test" shows an error, and
+  # trace search stays in Jaeger's own UI.
+  - name: Jaeger
+    type: jaeger
+    uid: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    jsonData:
+      # From a span to its audit lines: the lines in Loki with the same trace ID.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: "-10m"
+        spanEndTimeShift: "10m"
+        customQuery: true
+        query: '{service_name=~".+"} | trace_id="$${__trace.traceId}"'

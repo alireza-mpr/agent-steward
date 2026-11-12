@@ -36,7 +36,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from harness import (BodyLog, ModelStopped, RoundLimitReached, SettingsError, ToolCallRejected, Trace,
                      TASK, check_arguments, load_settings, run_agent, setup_logging)
-from telemetry import setup_tracing
+from telemetry import export_logging, setup_tracing
 from trace_view import ChatTrace
 
 MCP_URL = os.environ.get("MCP_URL", "http://sidecar:8100/mcp")
@@ -66,6 +66,9 @@ async def main() -> int:
     check_arguments(sys.argv[1:])
     setup_logging(TRACE)
     setup_tracing()   # only when OTEL_SERVICE_NAME is set (src/shared/telemetry.py)
+    # The progress lines ([harness], [model], [mcp]) also go to Loki when the logs address is set,
+    # each with the run's trace ID. They are operational lines, not audit lines.
+    export_logging("guardian")
     try:
         settings = load_settings(SETTINGS_PATH)
     except SettingsError as error:

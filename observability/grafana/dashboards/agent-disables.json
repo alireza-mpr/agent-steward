@@ -1,0 +1,120 @@
+{
+  "uid": "agent-disables",
+  "title": "Agent disables",
+  "description": "How each agent was disabled: who asked, who approved, whose rights the write used, and which agent identity acted (FR8, NFR2). One disable spans two traces, so its lines are joined by request_id.",
+  "tags": ["audit"],
+  "editable": true,
+  "schemaVersion": 41,
+  "time": { "from": "now-7d", "to": "now" },
+  "timezone": "browser",
+  "templating": {
+    "list": [
+      {
+        "name": "request_id",
+        "label": "Request ID",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" },
+        "description": "Click a request ID in the table, or paste one."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Writes: one row per disable attempt",
+      "description": "The executor's write lines. agent_disabled: the write ran (confirmed: a read shows it). disable_failed: Graph refused it (http_status). disable_abandoned: the outcome is unknown, so check the tenant.",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 11 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "queryType": "range",
+          "expr": "{service_name=\"executor\"} | event=~\"agent_disabled|disable_failed|disable_abandoned\" | json agent, request_id, approver_name, delegating_user, agent_app_id, mode, confirmed, http_status, stage"
+        }
+      ],
+      "transformations": [
+        { "id": "extractFields", "options": { "source": "labels", "replace": false } },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "labels": true, "Line": true, "id": true, "tsNs": true, "labelTypes": true,
+              "detected_level": true, "flags": true, "scope_name": true, "service_instance_id": true,
+              "service_name": true, "severity_number": true, "severity_text": true, "span_id": true,
+              "telemetry_sdk_language": true, "telemetry_sdk_name": true, "telemetry_sdk_version": true
+            },
+            "indexByName": {
+              "Time": 0, "event": 1, "agent": 2, "approver_name": 3, "delegating_user": 4,
+              "agent_app_id": 5, "mode": 6, "confirmed": 7, "http_status": 8, "stage": 9,
+              "request_id": 10, "trace_id": 11
+            },
+            "renameByName": {
+              "agent": "Disabled agent",
+              "approver_name": "Approver",
+              "delegating_user": "Rights of (user oid)",
+              "agent_app_id": "Acting agent identity",
+              "mode": "Mode"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "request_id" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show this request's chain",
+                    "url": "/d/agent-disables/agent-disables?var-request_id=${__value.raw}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "trace_id" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  { "title": "Open the approval's trace in Jaeger", "url": "http://localhost:16686/trace/${__value.raw}", "targetBlank": true }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "Time", "desc": true }] }
+    },
+    {
+      "id": 2,
+      "type": "logs",
+      "title": "Chain of request $request_id",
+      "description": "Every audit line of one request, oldest first: the guardian asks (mcp-server, identity-api), the approver decides (identity-api), the executor claims it and writes (identity-api, executor), the outcome is recorded (identity-api).",
+      "gridPos": { "x": 0, "y": 11, "w": 24, "h": 14 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "queryType": "range",
+          "expr": "{service_name=~\"mcp-server|identity-api|executor\"} | json request_id | request_id != \"\" | request_id = \"$request_id\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    }
+  ]
+}

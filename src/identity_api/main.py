@@ -9,9 +9,7 @@ becomes one JSON audit line on stdout.
 Run: uvicorn main:app --host 0.0.0.0 --port 8000
 """
 
-import json
 import os
-import sys
 import time
 from datetime import datetime, timezone
 from collections.abc import Callable
@@ -23,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from disable_requests import (AlreadyFinal, AlreadyPending, DisableRequest, DisableRequestStore, NotExecutable,
                               NotFound, NotRunning, Status)
-from telemetry import setup_tracing, trace_fields
+from telemetry import audit, setup_tracing, trace_fields
 from token_validation import ApiSettings, Approver, Caller, TokenRejected, verify_agent, verify_approver
 
 SETTINGS = ApiSettings(
@@ -45,10 +43,6 @@ if setup_tracing():   # only when OTEL_SERVICE_NAME is set (src/shared/telemetry
     FastAPIInstrumentor.instrument_app(app, excluded_urls="health", exclude_spans=["receive", "send"])
 
 
-def audit(**fields) -> None:
-    """Write one audit line (FR8), with the current trace ID and span ID (NFR4). Never pass a token in here."""
-    record = {"timestamp": datetime.now(timezone.utc).isoformat(), **trace_fields(), **fields}
-    print(json.dumps(record), file=sys.stdout, flush=True)
 
 
 T = TypeVar("T")

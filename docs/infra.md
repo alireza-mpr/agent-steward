@@ -22,6 +22,9 @@ How this project creates tenant objects as code: Bicep, Azure Resource Manager (
 - [Local run: the sidecar](#local-run-the-sidecar)
 - [The CLI](#the-cli)
 - [Tracing: OpenTelemetry and Jaeger](#tracing-opentelemetry-and-jaeger)
+- [Audit logs: Loki and Grafana](#audit-logs-loki-and-grafana)
+  - [The Agent disables dashboard](#the-agent-disables-dashboard)
+  - [Request and response bodies (debugging only)](#request-and-response-bodies-debugging-only)
 - [Cost](#cost)
 - [Known issue: Bicep on Apple Silicon](#known-issue-bicep-on-apple-silicon)
 - [Not in scope](#not-in-scope)
@@ -362,7 +365,65 @@ Every service sends its spans to Jaeger, which runs in docker compose with the r
 
 **Every span name, and who chose it:** [Trace and span names](tracing.md).
 
-**Find a run's audit lines:** `docker compose logs identity-api mcp-server | grep <trace ID>`.
+**Find a run's audit lines:** in Grafana ([Audit logs](#audit-logs-loki-and-grafana)), or `docker compose logs identity-api mcp-server executor | grep <trace ID>`.
+
+## Audit logs: Loki and Grafana
+
+The audit lines (FR8) of the Identity API, the MCP server and the executor also go to Loki, a log store, and Grafana shows them next to the traces (NFR4). Unlike Jaeger, Loki keeps its data on a volume, so the lines survive a restart.
+
+1. **Start the stack:** `docker compose up -d --build`. It starts `loki` and `grafana` with the rest.
+2. **Run something:** a guardian run or an approval writes audit lines, as before.
+3. **Open Grafana:** http://localhost:3000, then Explore, with the Loki data source. No sign-in.
+4. **Query:** for example `{service_name="executor"}` for the executor's lines, `{service_name=~".+"} | event="disable_failed"` for every failed write, or `{service_name=~".+"} | trace_id="<trace ID>"` for every line of one run.
+5. **Jump to the trace:** open a line's details. Its `trace_id` has two links: "Open in Jaeger" opens Jaeger's own UI, and "Open the trace in Grafana" shows the trace next to the line.
+
+**How a line gets there:**
+
+- **One function writes every line:** `audit()` in [telemetry.py](../src/shared/telemetry.py). It prints the JSON line to stdout, as before, so `docker compose logs` still shows it. When `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is set, it also sends the line as an OpenTelemetry log record.
+- **The record:** its body is the same JSON line. It carries the trace ID and span ID of the current span, and the event as an attribute.
+- **The address:** `http://loki:3100/otlp/v1/logs`, set per service in compose. Loki takes OTLP itself, so no Collector sits in between. The logs need their own address because Jaeger takes traces only.
+- **In Loki:** `service.name` becomes the label `service_name`. The trace ID, the span ID and the event are stored as structured metadata ([observability/loki.yaml](../observability/loki.yaml)).
+- **The harness's progress lines too:** the harness writes no audit lines, but its `[harness]`, `[model]` and `[mcp]` lines also go to Loki (`export_logging` in [telemetry.py](../src/shared/telemetry.py)), with the run's trace ID and the logger's name as the `logger` attribute. They are operational lines, not part of the audit trail: they say what the harness saw, while the audit lines say what was decided and done.
+- **In Grafana:** the Loki and Jaeger data sources, and the links between them, are set up when Grafana starts ([observability/grafana](../observability/grafana/provisioning/datasources/datasources.yaml)).
+
+**Where it falls short:**
+
+- **Grafana's Jaeger data source works only by trace ID.** Jaeger 2.23 no longer serves the older HTTP API that the data source uses for its health check and its search, so "Save & test" shows a 404 error. Opening a trace by its ID works. Search for traces in Jaeger's own UI.
+- **No sign-in, no checks:** Grafana has anonymous access, and Loki accepts records from any container on the two networks. The lines hold tenant data and the approver's name, so Grafana is published on the host's `127.0.0.1` only, and Loki is not published at all ([A9](../THREATMODEL.md#accepted-risks)).
+- **`docker compose down -v` deletes the lines,** with the `loki-data` volume.
+
+### The Agent disables dashboard
+
+The dashboard shows how each agent was disabled: who asked, who approved, whose rights the write used, and which agent identity acted (FR8, NFR2). It is at http://localhost:3000/d/agent-disables, and Grafana loads it when it starts.
+
+1. **Find the write:** the top table has one row per disable attempt, from the executor's lines. `agent_disabled` means the write ran, `disable_failed` means Graph refused it (see `http_status`), and `disable_abandoned` means the outcome is unknown, so check the tenant.
+2. **Open the chain:** click a row's `request_id`. The bottom panel then shows every line of that request, oldest first: the guardian asks, the approver decides, the executor claims the request and writes, and the outcome is recorded.
+3. **Open a trace:** click a row's `trace_id` to open the approval's trace in Jaeger.
+
+**How it works:**
+
+- **Joined by `request_id`, not by trace ID:** one disable spans two traces, the guardian's run and the approval, so only the request ID ties all its lines together.
+- **The files:** the dashboard is [agent-disables.json](../observability/grafana/dashboards/agent-disables.json), mounted at `/etc/grafana/dashboards`. [dashboards.yaml](../observability/grafana/provisioning/dashboards/dashboards.yaml) tells Grafana to load that folder.
+- **Changes go through the file:** a change made in the UI cannot be saved. Export the JSON from the UI and replace the file instead.
+
+```logql
+# The table: one row per write
+{service_name="executor"} | event=~"agent_disabled|disable_failed|disable_abandoned" | json agent, request_id, approver_name, delegating_user, agent_app_id, mode, confirmed, http_status, stage
+
+# The chain: every line of one request
+{service_name=~"mcp-server|identity-api|executor"} | json request_id | request_id != "" | request_id = "$request_id"
+```
+
+### Request and response bodies (debugging only)
+
+With `HTTP_BODY_LOG=1` in `.env`, every outgoing HTTP call of the MCP server, the executor and the approve CLI also goes to Loki: the method, the URL, the status, the `Authorization` header, the request body and the response body, with the call's trace ID. **This includes live tokens** ([A10](../THREATMODEL.md#accepted-risks)), so keep it off outside debugging. It is `0` in `.env.example`.
+
+1. **Turn it on:** set `HTTP_BODY_LOG=1` in `.env`, then `docker compose up -d` (the long-running services pick it up when they are recreated).
+2. **Make calls:** a guardian run or an approval.
+3. **Query:** `{service_name=~".+"} | scope_name="http"`, or add `| trace_id="<trace ID>"` for one run. Each line is one call, as JSON.
+4. **Turn it off:** set it back to `0`, and `docker compose up -d`. The lines already in Loki stay until `docker compose down -v`.
+
+**How it works:** one urllib handler in [telemetry.py](../src/shared/telemetry.py), installed for the whole process. It reads each response, logs the call, and hands the caller an identical response, so no calling code changes. It runs before urllib raises an `HTTPError`, so a 403 or a 409 is logged too. Each body is cut at 100,000 characters. The harness is not covered: it calls the model and the MCP server through httpx, and its bodies are in `GUARDIAN_TRACE=full` and, for the model, in the Jaeger spans.
 
 ## Cost
 
