@@ -13,6 +13,7 @@ When a request passes through several services, the last service must decide who
   - [When a New Token Is Needed](#when-a-new-token-is-needed)
 - [2. Delegation](#2-delegation)
   - [Delegation, Defined](#delegation-defined)
+  - [The Two Parties: Subject and Actor](#the-two-parties-subject-and-actor)
   - [How Delegation Works in the Standard](#how-delegation-works-in-the-standard)
   - [The Data: the act Claim](#the-data-the-act-claim)
   - [Deviation: Entra's On-Behalf-Of Flow](#deviation-entras-on-behalf-of-flow)
@@ -152,6 +153,35 @@ With delegation, the downstream service sees two parties: the user, and the serv
 - **Its name:** "Such a token is sometimes referred to as a composite token because it is composed of information about multiple subjects." ([RFC 8693, section 1.1][rfc-1.1])
 - **A loose definition to avoid:** "the user's context is carried across the hops". It also fits impersonation, whose credential "continues to identify B as the authorized entity" ([RFC 8693, section 1.1][rfc-1.1]). In delegation, the actor stays visible too ([RFC 8693, section 1.1][rfc-1.1]).
 
+### The Two Parties: Subject and Actor
+
+**In one line:** the subject is the party the token is about, and the actor is the party that uses the token for it. In OBO, the subject is the end user and the actor is the agent. This page uses these two words for every vendor.
+
+- **The subject, in the standard:**
+
+  > A security token that represents the identity of the party on behalf of whom the request is being made. ([RFC 8693, section 2.1][rfc-2.1])
+
+- **The actor, in the standard:**
+
+  > A security token that represents the identity of the acting party. ([RFC 8693, section 2.1][rfc-2.1])
+
+- **The same words in Entra Agent ID:**
+
+  > The agent identity (actor) is used to obtain a token for itself (subject). ([Agent app-only flow][agent-auto])
+
+Where each party is in a token:
+
+- **In the standard:** `sub` names the subject, and `act` names the actor ([RFC 8693, section 4.1][rfc-4.1]).
+- **In Entra:** `oid` names the subject, and `azp` (v2.0) or `appid` (v1.0) names the client that acts ([Access token claims reference][claims]). The Agent ID claims `xms_sub_fct` and `xms_act_fct` describe the subject and the actor ([the guardian's OBO token](tokens.md#who-is-who-in-the-token)).
+
+**The subject is not always a user:** with no user, the agent is both the subject and the actor ([Agent app-only flow][agent-auto]). So write "the user (subject)" and "the agent (actor)" when the case is not clear.
+
+**Why not "resource owner":** OAuth defines it by the right to grant access, not by ownership:
+
+> An entity capable of granting access to a protected resource. ([RFC 6749, section 1.1][rfc6749-1.1])
+
+But a token can have a subject and no resource owner. With "the client credentials grant", `sub` names the client application ([RFC 9068, section 2.2][rfc9068-2.2]). The client can even reach "those of another resource owner that have been previously arranged with the authorization server" ([RFC 6749, section 4.4][rfc6749-4.4]). So "subject" covers every case, and "resource owner" does not.
+
 ### How Delegation Works in the Standard
 
 1. **The middle tier receives a token:** for example, "service16 receiving a token in a call from service77" ([RFC 8693, section 4.1][rfc-4.1]).
@@ -234,6 +264,10 @@ On the right, for comparison, is an app-only token: service16 calls service26 fo
 
 So service26 reads the two tokens differently. On the left, it applies the user's rights, with service16 as the current actor ([RFC 8693, section 4.1][rfc-4.1]). On the right, it applies service16's own rights (*inference* from [RFC 9068, section 2.2][rfc9068-2.2]).
 
+A real Entra app-only token is TR, the guardian's own token for the Identity API: `sub` and `oid` name the agent identity, and there is no `act` claim ([TR and T1, masked](tokens.md#the-claims-masked)).
+
+A real Entra delegation token is the guardian's OBO token for Graph: `oid` names the approver, `appid` names the agent identity that acts for them, and there is no `act` claim and no chain ([The OBO token](tokens.md#the-obo-token-the-agent-acting-for-the-approver)).
+
 ### Deviation: Entra's On-Behalf-Of Flow
 
 Microsoft calls its On-Behalf-Of (OBO) flow delegation: "Referred to as delegation in OAuth, the intent is to pass a user's identity and permissions through the request chain." ([OBO flow][obo])
@@ -255,7 +289,7 @@ Where it differs from the standard:
 
   The RFC's definitions are written for principals: "With delegation semantics, principal A still has its own identity separate from B" ([RFC 8693, section 1.1][rfc-1.1]). So the standard does not limit the subject to users (*inference* from the same section).
 - **The rights stay with the user:** "It only uses delegated scopes and not application roles. Roles remain attached to the principal (the user) and never to the application operating on the user's behalf." ([OBO flow][obo])
-- **One actor, no chain:** `azp` is "The application ID of the client using the token. The application can act as itself or on behalf of a user." ([Access token claims reference][claims]) The reference lists no `act` claim and no claim for earlier actors (searched on 11 November 2026: [Access token claims reference][claims]). So after a second OBO hop, the token names the user and the second middle tier, not the first (*inference* from the `azp` text).
+- **One actor, no chain:** `azp` is "The application ID of the client using the token. The application can act as itself or on behalf of a user." ([Access token claims reference][claims]) The reference lists no `act` claim and no claim for earlier actors (searched on 11 November 2026: [Access token claims reference][claims]). So after a second OBO hop, the token names the user and the second middle tier, not the first (*inference* from the `azp` text). Seen in this lab: the OBO token for Graph does not name the approve CLI, Tc's client ([From Tc to the OBO token](tokens.md#from-tc-to-the-obo-token)).
 - **For agents:** "User delegation enables agent identities to operate on behalf of signed-in users using standard OAuth 2.0 On-Behalf-Of flows with agent-specific impersonation." ([Agent OBO flow][agent-obo]) The user's token must be issued for the agent's blueprint: "a token audienced to another resource (for example, Microsoft Graph) is rejected with `AADSTS50013`" ([Agent OBO flow, Protocol steps][agent-obo-steps]). An agent's own app-only token is refused as well: see [the live test](#where-each-model-appears).
 - **Other vendors:** not covered here. Each one would need its own primary source.
 
@@ -429,30 +463,31 @@ Checked on 11 and 12 November 2026. "Used" names the sections this page quotes.
 5. **Transaction Tokens, draft-ietf-oauth-transaction-tokens-11.** A. Tulshibagwale, G. Fletcher, P. Kasselman. IETF Internet-Draft, 30 July 2026, expires 31 January 2027. Work in progress, not an RFC. Used: the header, Abstract, Status of This Memo, sections 1, 3 and 4. [The draft][txn], and its status on the [IETF datatracker][txn-dt].
 6. **Model Context Protocol specification, version 2026-07-28: Authorization Security Considerations.** Used: Access Token Privilege Restriction. [Link][mcp-sec-priv]
 7. **Model Context Protocol, Security Best Practices** (documentation for version 2026-07-28). Used: Token Passthrough. [Link][mcp-bp-passthrough]
+8. **RFC 6749, The OAuth 2.0 Authorization Framework.** D. Hardt (Ed.). IETF, Standards Track, October 2012. Used: sections 1.1 and 4.4. [rfc-editor.org/rfc/rfc6749](https://www.rfc-editor.org/rfc/rfc6749.html)
 
 ### Microsoft Learn
 
 Current pages. The date is the "Last updated on" date the page showed on 12 November 2026.
 
-8. **Microsoft identity platform and OAuth 2.0 On-Behalf-Of flow.** Last updated 4 January 2025. Used: the introduction, Client limitations, Protocol diagram, Middle-tier access token request. [Link][obo]
-9. **Microsoft identity platform and the OAuth 2.0 client credentials flow.** Last updated 30 January 2026. Used: the introduction. [Link][cc]
-10. **Access token claims reference.** Last updated 25 June 2026. Used: Payload claims (`azp`), and a search of the page for an actor claim. [Link][claims]
-11. **Agent OAuth flows: On behalf of flow** (Microsoft Entra Agent ID). Last updated 10 August 2026. Used: the introduction, Protocol steps, Permission inheritance. [Link][agent-obo]
-12. **Agent autonomous app OAuth flow - App-only protocol** (Microsoft Entra Agent ID). Last updated 11 June 2026. Used: the introduction, Protocol steps. [Link][agent-auto]
-13. **Trusted Subsystem** (WCF, .NET Framework). Last updated 15 September 2021. Used: the steps and the summary row "Authentication (client)". An archived .NET Framework 3.5 copy from 2009 has the same steps: [ms730288](https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-3.5/ms730288(v=vs.90)). [Link][wcf]
-14. **Basic Scenarios for Securing Data in Multi-Tier Applications** (COM+). Last updated 6 January 2021. Used: the Trusted Server, Impersonation and Hybrid scenarios. [Link][complus-ts]
+9. **Microsoft identity platform and OAuth 2.0 On-Behalf-Of flow.** Last updated 4 January 2025. Used: the introduction, Client limitations, Protocol diagram, Middle-tier access token request. [Link][obo]
+10. **Microsoft identity platform and the OAuth 2.0 client credentials flow.** Last updated 30 January 2026. Used: the introduction. [Link][cc]
+11. **Access token claims reference.** Last updated 25 June 2026. Used: Payload claims (`azp`), and a search of the page for an actor claim. [Link][claims]
+12. **Agent OAuth flows: On behalf of flow** (Microsoft Entra Agent ID). Last updated 10 August 2026. Used: the introduction, Protocol steps, Permission inheritance. [Link][agent-obo]
+13. **Agent autonomous app OAuth flow - App-only protocol** (Microsoft Entra Agent ID). Last updated 11 June 2026. Used: the introduction, Protocol steps. [Link][agent-auto]
+14. **Trusted Subsystem** (WCF, .NET Framework). Last updated 15 September 2021. Used: the steps and the summary row "Authentication (client)". An archived .NET Framework 3.5 copy from 2009 has the same steps: [ms730288](https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-3.5/ms730288(v=vs.90)). [Link][wcf]
+15. **Basic Scenarios for Securing Data in Multi-Tier Applications** (COM+). Last updated 6 January 2021. Used: the Trusted Server, Impersonation and Hybrid scenarios. [Link][complus-ts]
 
 ### Microsoft Patterns and Practices (Retired)
 
 Both pages say: "This content is outdated and is no longer being maintained." They are used here for the definitions, which later sources repeat (the WCF and COM+ pages above).
 
-15. **Trusted Subsystem.** In *Web Service Security: Scenarios, Patterns, and Implementation Guidance for Web Services Enhancements (WSE) 3.0*. Microsoft patterns & practices, December 2005. Used: Forces, Solution, Participants, Process, Enforcing the Trust Relationship, Liabilities, Security Considerations, Extension 1. [Link][pnp]
-16. **"ASP.NET guide": *Building Secure ASP.NET Applications: Authentication, Authorization, and Secure Communication*,** chapter "Authentication and Authorization". J.D. Meier, Alex Mackman, Michael Dunner, Srinath Vasireddy. Microsoft, published November 2002, last revised January 2006. Used: Resource Access Models, The Trusted Subsystem Model, The Impersonation / Delegation Model, Choosing a Resource Access Model, the advantages and disadvantages, Flowing Identity. [Link][bsa-models] The same guide's Glossary: the two model definitions. [Link][bsa-gloss-tsm]
+16. **Trusted Subsystem.** In *Web Service Security: Scenarios, Patterns, and Implementation Guidance for Web Services Enhancements (WSE) 3.0*. Microsoft patterns & practices, December 2005. Used: Forces, Solution, Participants, Process, Enforcing the Trust Relationship, Liabilities, Security Considerations, Extension 1. [Link][pnp]
+17. **"ASP.NET guide": *Building Secure ASP.NET Applications: Authentication, Authorization, and Secure Communication*,** chapter "Authentication and Authorization". J.D. Meier, Alex Mackman, Michael Dunner, Srinath Vasireddy. Microsoft, published November 2002, last revised January 2006. Used: Resource Access Models, The Trusted Subsystem Model, The Impersonation / Delegation Model, Choosing a Resource Access Model, the advantages and disadvantages, Flowing Identity. [Link][bsa-models] The same guide's Glossary: the two model definitions. [Link][bsa-gloss-tsm]
 
 ### Other Sources
 
-17. **N. Hardy, "The Confused Deputy (or why capabilities might have been invented)".** ACM SIGOPS Operating Systems Review 22(4), pages 36-38, October 1988. DOI [10.1145/54289.871709](https://doi.org/10.1145/54289.871709), checked through Crossref. The text was read from a copy at cap-lore.com, which notes "Originally published in Operating Systems Reviews, Vol 22, #4, 1988." [Link][hardy]
-18. **AWS, "The confused deputy problem".** AWS Identity and Access Management User Guide. Used: the definition. [Link][aws-cd]
+18. **N. Hardy, "The Confused Deputy (or why capabilities might have been invented)".** ACM SIGOPS Operating Systems Review 22(4), pages 36-38, October 1988. DOI [10.1145/54289.871709](https://doi.org/10.1145/54289.871709), checked through Crossref. The text was read from a copy at cap-lore.com, which notes "Originally published in Operating Systems Reviews, Vol 22, #4, 1988." [Link][hardy]
+19. **AWS, "The confused deputy problem".** AWS Identity and Access Management User Guide. Used: the definition. [Link][aws-cd]
 
 ### Seen but Not Used
 
@@ -473,6 +508,8 @@ Found during the research, but not quoted here: they are secondary sources, or t
 [rfc-4.3]: https://www.rfc-editor.org/rfc/rfc8693.html#section-4.3
 [rfc-5]: https://www.rfc-editor.org/rfc/rfc8693.html#section-5
 [rfc9068-2.2]: https://www.rfc-editor.org/rfc/rfc9068.html#section-2.2
+[rfc6749-1.1]: https://www.rfc-editor.org/rfc/rfc6749.html#section-1.1
+[rfc6749-4.4]: https://www.rfc-editor.org/rfc/rfc6749.html#section-4.4
 [rfc9068-4]: https://www.rfc-editor.org/rfc/rfc9068.html#section-4
 [rfc9700-2.2.1]: https://www.rfc-editor.org/rfc/rfc9700.html#section-2.2.1
 [rfc9700-2.3]: https://www.rfc-editor.org/rfc/rfc9700.html#section-2.3

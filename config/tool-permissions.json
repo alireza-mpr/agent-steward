@@ -1,0 +1,32 @@
+{
+  "description": "The calls each MCP tool makes as the guardian, and the permission each call needs: the least privileged one that the API's docs list (docs/tool-permissions.md, NFR1). The executor is not a tool, but it acts as the guardian too, so its calls are here as well. Each permission names its API, as in agent-permissions.json. type is application (an app-only token) or delegated (the OBO token, with the approver's rights). Nothing reads this file at run time: a unit test checks it against the calls the code makes and against the grants (tests/unit/mcp_server/test_tool_permissions.py).",
+  "tools": {
+    "scan_registry": [
+      {"call": "GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity", "permission": "Microsoft Graph/AgentIdentity.Read.All", "type": "application", "why": "the agent identities, with their sponsors (the orphan check)"},
+      {"call": "GET /v1.0/servicePrincipals/{id}/appRoleAssignments", "permission": "Microsoft Graph/Application.Read.All", "type": "application", "why": "each agent's own app role assignments (the over-permissioned check)"},
+      {"call": "GET /beta/servicePrincipals/{id}/microsoft.graph.agentIdentity/inheritedAppRoleAssignments", "permission": "Microsoft Graph/Application.Read.All", "type": "application", "why": "the app role assignments each agent inherits from its blueprint"},
+      {"call": "GET /v1.0/servicePrincipals/{id}", "permission": "Microsoft Graph/Application.Read.All", "type": "application", "why": "the role names of each API that an agent holds roles on"},
+      {"call": "GET /v1.0/applications/microsoft.graph.agentIdentityBlueprint", "permission": "Microsoft Graph/AgentIdentityBlueprint.Read.All", "type": "application", "why": "the blueprints and their credentials (the expiring check)"},
+      {"call": "GET /beta/auditLogs/signIns", "permission": "Microsoft Graph/AuditLog.Read.All", "type": "application", "why": "the sign-ins of the last 30 days (the dormant check)"},
+      {"call": "POST /findings", "permission": "agent-steward-identity-api/Findings.Submit", "type": "application", "why": "the findings, into the audit log"},
+      {"call": "GET /agents/{agent_id}/disableRequests", "permission": "agent-steward-identity-api/AgentDisable.Request", "type": "application", "why": "the latest disable request for each dormant agent"}
+    ],
+    "get_agent": [
+      {"call": "GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity", "permission": "Microsoft Graph/AgentIdentity.Read.All", "type": "application", "why": "one agent identity, by its app ID"}
+    ],
+    "submit_disable_agent_request": [
+      {"call": "GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity", "permission": "Microsoft Graph/AgentIdentity.Read.All", "type": "application", "why": "the agent and the guardian: not the guardian's own, and not disabled yet"},
+      {"call": "GET /beta/auditLogs/signIns", "permission": "Microsoft Graph/AuditLog.Read.All", "type": "application", "why": "is the agent dormant?"},
+      {"call": "POST /agents/{agent_id}/disableRequests", "permission": "agent-steward-identity-api/AgentDisable.Request", "type": "application", "why": "the disable request, for an approver"}
+    ]
+  },
+  "executor": [
+    {"call": "GET /agents/{agent_id}/disableRequests/{request_id}", "permission": "agent-steward-identity-api/AgentDisable.Request", "type": "application", "why": "the request: approved, and by this approver?"},
+    {"call": "GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity", "permission": "Microsoft Graph/AgentIdentity.Read.All", "type": "application", "why": "the same checks as the request tool, and the agent's object ID for the write"},
+    {"call": "GET /beta/auditLogs/signIns", "permission": "Microsoft Graph/AuditLog.Read.All", "type": "application", "why": "is the agent still dormant?"},
+    {"call": "POST /agents/{agent_id}/disableRequests/{request_id}/execution", "permission": "agent-steward-identity-api/AgentDisable.Request", "type": "application", "why": "claim the request, right before the write"},
+    {"call": "PATCH /beta/servicePrincipals/{id}/microsoft.graph.agentIdentity", "permission": "Microsoft Graph/AgentIdentity.EnableDisable.All", "type": "delegated", "why": "the disable, with the approver's rights"},
+    {"call": "GET /beta/servicePrincipals/{id}/microsoft.graph.agentIdentity", "permission": "Microsoft Graph/AgentIdentity.Read.All", "type": "application", "why": "read accountEnabled back, until Graph shows the change"},
+    {"call": "POST /agents/{agent_id}/disableRequests/{request_id}/outcome", "permission": "agent-steward-identity-api/AgentDisable.Request", "type": "application", "why": "what the write did"}
+  ]
+}

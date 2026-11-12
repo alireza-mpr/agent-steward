@@ -28,6 +28,12 @@ This doc explains why an API must be registered before any token exists for it, 
 - [The approver's token: a delegated token](#the-approvers-token-a-delegated-token)
   - [The claims, with placeholders](#the-claims-with-placeholders)
   - [What differs from TR](#what-differs-from-tr)
+- [The OBO token: the agent acting for the approver](#the-obo-token-the-agent-acting-for-the-approver)
+  - [The OBO claims, masked](#the-obo-claims-masked)
+  - [Who is who in the token](#who-is-who-in-the-token)
+  - [From Tc to the OBO token](#from-tc-to-the-obo-token)
+  - [Compared with RFC 8693 delegation](#compared-with-rfc-8693-delegation)
+  - [Other claims](#other-claims)
 - [Scopes and app roles](#scopes-and-app-roles)
   - [The two side by side](#the-two-side-by-side)
   - [The standard](#the-standard)
@@ -131,7 +137,7 @@ CLI ──(Tc)──────────────────────
 - **The approver's token (the CLI):** `aud` is the Identity API, and `sub` is the approver ([the claims](#the-approvers-token-a-delegated-token)).
 - **The guardian's autonomous token (TR):** `aud` is the Identity API or Graph. It is app-only, so `sub` is the agent identity, not a user ([the claims](#tr-claim-by-claim)).
 - **The approver's second token (Tc):** `aud` is the guardian's blueprint, and the person is the user (`oid`). The CLI gets it after an approval with the refresh token grant ([the deviation](#deviation-one-refresh-token-many-apis)) and sends it to the executor (seen live on 10 November 2026: `scp` was `access_as_user`, `azp` the CLI, version 2.0).
-- **The OBO token for the disable:** `aud` is Graph. The user is still the approver (`oid`), and the client is the guardian's agent identity (`appid`), with `xms_par_app_azp` naming the blueprint (seen live on 10 November 2026, version 1.0).
+- **The OBO token for the disable:** `aud` is Graph. The user is still the approver (`oid`), and the client is the guardian's agent identity (`appid`), with `xms_par_app_azp` naming the blueprint (seen live on 10 November 2026, version 1.0; [the claims](#the-obo-token-the-agent-acting-for-the-approver), 12 November 2026).
 
 ## See a real token
 
@@ -383,6 +389,92 @@ It was captured on 3 November 2026 with `docker compose run --rm approve python 
 
 This is the token `check_approver` accepts ([token_validation.py](../src/identity_api/token_validation.py)): `idtyp` is `user`, `xms_act_fct` has no `11` (the client is not an agent), `xms_sub_fct` has no `13` (the person is not an agent's user account), `azp` is the CLI, `scp` has `AgentDisable.Decide`, and `roles` has `AgentDisable.Approve`. It lived 95 minutes. Learn documents only `11` and `13` among the facet values, so the other values are not read.
 
+## The OBO token: the agent acting for the approver
+
+**In one line:** this is the Graph token the executor gets when it exchanges Tc with OBO. The approver is the subject, and the guardian's agent identity is the client that acts for them. It is Entra's version of a delegation token ([Delegation](delegation-and-trusted-subsystem.md#2-delegation)).
+
+It was captured on 12 November 2026 from Loki, with `HTTP_BODY_LOG=1` ([how](infra.md#request-and-response-bodies-debugging-only)): the token was in the sidecar's answer to the executor. Its payload was decoded locally, and the token itself was not kept. It lived 68 minutes. The approver's details are replaced with placeholders. The guardian's IDs are masked as in [TR](#the-claims-masked), so the same values can be matched.
+
+### The OBO claims, masked
+
+```jsonc
+{
+  "aud": "https://graph.microsoft.com",
+  "iss": "https://sts.windows.net/6dfa…8171/", // The v1.0 form, so this is a v1.0 token.
+  "iat": 1794474622,
+  "nbf": 1794474622,
+  "exp": 1794478707,
+  "acct": 0,
+  "acr": "1",
+  "acrs": ["p1", "pfdr"],
+  "aio": "AZQA…B67p",
+  "amr": ["pwd", "mfa"], // How the approver signed in.
+  "app_displayname": "agent-steward-guardian-01",
+  "appid": "1927…9d25", // The agent identity - the client acting for the approver. TR's azp has the same value.
+  "appidacr": "2",
+  "family_name": "<APPROVER_FAMILY_NAME>",
+  "given_name": "<APPROVER_GIVEN_NAME>",
+  "idtyp": "user",
+  "ipaddr": "<APPROVER_IP_ADDRESS>",
+  "name": "<APPROVER_NAME>",
+  "oid": "<APPROVER_OBJECT_ID>", // The approver - the subject.
+  "platf": "5",
+  "puid": "<opaque>",
+  "rh": "1.AU…CAA.",
+  "scp": "AgentIdentity.EnableDisable.All profile openid",
+  "sid": "<SESSION_ID>",
+  "sub": "<PAIRWISE_SUBJECT>",
+  "tenant_region_scope": "OC",
+  "tid": "6dfa…8171",
+  "unique_name": "<APPROVER_UPN>",
+  "upn": "<APPROVER_UPN>",
+  "uti": "MHac…0oAA",
+  "ver": "1.0",
+  "wids": ["62e9…5e10", "b79f…5509"],
+  "xms_act_fct": "3 9 11", // Contains 11: the actor is an agent identity.
+  "xms_aud_guid": "00000003-0000-0000-c000-000000000000",
+  "xms_ftd": "44MU…c21z",
+  "xms_idrel": "26 1",
+  "xms_par_app_azp": "b445…63b4", // The blueprint, the agent's parent.
+  "xms_pftexp": 1794565107,
+  "xms_sess_fct": "21 16",
+  "xms_st": { "sub": "<opaque>" },
+  "xms_sub_fct": "3 12", // No 11 or 13: the subject is a person, not an agent.
+  "xms_tcdt": 1792649921,
+  "xms_tnt_fct": "2 3"
+}
+```
+
+### Who is who in the token
+
+- **The subject, the approver (documented):** `oid` is "the verified identity of the user or service principal", and `idtyp` is `user`. `sub` is pairwise, so use `oid` ([Access token claims reference][claims-ref]).
+- **The actor, the agent identity (documented):** `appid` is "The application ID of the client using the token. The application can act as itself or on behalf of a user." ([Access token claims reference][claims-ref]) Here it acts for the approver. `xms_act_fct` contains `11`, so the actor is an agent identity ([Token claims reference for agent IDs][agent-claims]).
+- **The parent (documented):** `xms_par_app_azp` names the guardian's blueprint ([Token claims reference for agent IDs][agent-claims]).
+- **The rights, the approver's (documented):** `scp` holds the delegated `AgentIdentity.EnableDisable.All`, and there is no `roles` claim. So Graph checks the approver's own rights, through the scope. `wids` lists the approver's directory roles ([Access token claims reference][claims-ref]): `62e9…5e10` is Global Administrator ([Microsoft Entra built-in roles][builtin-roles]). The other ID was not identified. A Global Administrator as approver is a lab simplification.
+- **The approver's sign-in (documented):** `amr` is `pwd` and `mfa`. So the OBO token still says how the person signed in, after the exchange ([Access token claims reference][claims-ref]).
+
+### From Tc to the OBO token
+
+Tc was seen live on 10 November 2026 ([`aud` and `sub` in the guardian](#aud-and-sub-in-the-guardian)). Only these claims of Tc were recorded:
+
+- **The audience (`aud`):** Tc's is the guardian's blueprint. The OBO token's is Graph.
+- **The client (`azp`, then `appid`):** Tc's is the approve CLI. The OBO token's is the agent identity. **The CLI is gone:** no claim names it.
+- **The scope (`scp`):** Tc's is `access_as_user`. The OBO token's is `AgentIdentity.EnableDisable.All`.
+- **The version (`ver`):** Tc's is `2.0`. The OBO token's is `1.0`, so the client is in `appid`, not `azp`.
+- **The person (`oid`):** the same approver in both.
+
+### Compared with RFC 8693 delegation
+
+The RFC's delegation token is in [The Data: the act Claim](delegation-and-trusted-subsystem.md#the-data-the-act-claim).
+
+- **The same idea:** the token is about the user, and it names the party that acts for the user ([RFC 8693, section 1.1][rfc8693-1.1]).
+- **The actor is in another claim:** the RFC uses `act`. Entra uses `appid` (or `azp` in v2.0), and the Agent ID claims `xms_act_fct` and `xms_par_app_azp`.
+- **No chain:** the RFC nests earlier actors inside `act` ([RFC 8693, section 4.1][rfc8693-4.1]). The OBO token names only the current client: the CLI, Tc's client, is not in it.
+
+### Other claims
+
+The internal claims (`aio`, `rh`, `uti`, `acrs` and the `xms_*` claims with no documented meaning) are read as in TR ([Internal claims](#internal-claims)). Three claims here are not in Learn's access token claims reference: `acct`, `platf` and `xms_st`, an object with a `sub` that differs from this token's `sub` (checked on 12 November 2026).
+
 ## Scopes and app roles
 
 **In one line:** a role says what a caller (a person or an app) may do, and a scope says what a client app may do for the signed-in person. When a person uses an app, the API checks both, so the action is allowed only when both allow it.
@@ -523,3 +615,10 @@ So check 5 rejects it: its actor facets do not contain `11`.
 - Real tokens from this lab's guardian agent identity, 26 October 2026.
 - Scopes and app roles: [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749), [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [Overview of permissions and consent](https://learn.microsoft.com/en-us/entra/identity-platform/permissions-consent-overview) (Microsoft Learn), [Okta client credentials](https://developer.okta.com/docs/guides/implement-grant-type/clientcreds/main/) and [Auth0 client grants](https://auth0.com/docs/get-started/applications/application-access-to-apis-client-grants), checked 30 October 2026.
 - `aud` and `sub`: [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068), [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749), [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750), [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693), [Access tokens](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens) and [Refresh tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens) (Microsoft Learn), checked 4 November 2026.
+- The OBO token: [Access token claims reference](https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference) (last updated 24 July 2026), [Microsoft Entra built-in roles](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference) (last updated 13 October 2026) and [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693), checked 12 November 2026. The token was seen in this lab on 12 November 2026.
+
+[claims-ref]: https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference#payload-claims
+[agent-claims]: https://learn.microsoft.com/en-us/entra/agent-id/agent-token-claims
+[builtin-roles]: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference#all-roles
+[rfc8693-1.1]: https://www.rfc-editor.org/rfc/rfc8693.html#section-1.1
+[rfc8693-4.1]: https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1

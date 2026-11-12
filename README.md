@@ -78,7 +78,8 @@ Status: [✅] done, [▶️] in progress, [📄] design only, [⏸️] not start
 
 Status: as for the functional requirements above.
 
-- [▶️] **NFR1 - Least privilege.** Each tool documents the exact permission it needs. No agent holds anything beyond its documented set.
+- [✅] **NFR1 - Least privilege.** Each tool documents the exact permission it needs. No agent holds anything beyond its documented set ([tool permissions](docs/tool-permissions.md)).
+  - Per tool in the code, not in the token: a token carries all the guardian's roles on its API ([why](docs/tool-permissions.md#where-the-guardian-differs)).
 - [▶️] **NFR2 - Attribution.** Any log line traces to exactly one agent identity and, in OBO mode, exactly one human.
 - [✅] **NFR3 - Untrusted content boundary.** Tool outputs and directory data are data, never instructions. Demonstrated with a prompt injection test: a malicious instruction planted in a fixture agent's description field is treated as text, not executed.
 - [▶️] **NFR4 - Observability.** OpenTelemetry trace per guardian request. One ID (the trace ID) links three records: the application trace, the audit line, and the Entra sign-in log. (Per-step token count and cost estimation: optional, first to cut.)
@@ -106,7 +107,7 @@ Every control that is in place, with the threat it stops and the evidence that i
 ## Repository layout
 
 ```
-config/           Policy: the permissions each agent may hold (agent-permissions.json); the MCP server's tool allow-list (tool-allow-list.json); the guardian harness's settings: model, effort, turn limit (guardian.json)
+config/           Policy: the permissions each agent may hold (agent-permissions.json); the MCP server's tool allow-list (tool-allow-list.json); the calls each tool makes and the permission each needs (tool-permissions.json); the guardian harness's settings: model, effort, turn limit (guardian.json)
 setup/            Tenant setup as code: Bicep + Graph PowerShell (blueprint, identities, fixtures)
 src/identity_api/ Identity API (Python / FastAPI): token validation, audit
 src/guardian/     Guardian's harness (Python): the agent loop between Claude and the MCP server
@@ -115,7 +116,7 @@ src/mcp_server/   MCP server (official Python SDK): the guardian's tools, the fo
 src/executor/     The executor (Python / FastAPI): the one write, disabling an agent with the approver's rights (OBO)
 tests/            Unit tests, offline (unit/); integration tests against the running stack (integration/): the Identity API with real Entra tokens (identity_api/), and the MCP tools from the guardian's network (mcp_server/); an agent eval that runs the guardian with Claude against a planted prompt injection (agent_eval/)
 tools/            Dev tools that print token claims, never tokens (token-claims: the guardian's token from the sidecar; token_exchange: T1 and TR side by side)
-docs/             Delivery status (delivery-status.md); reference (GLOSSARY.md: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP; DESIGN-NOTES.md: written designs for out-of-scope patterns; entra.md, infra.md, agent-id.md, tokens.md, agent-architecture.md, agent-steward-architecture.md, investigating-agent-activity.md, from-microservices-to-agents.md, conditional-access-and-revocation.md, authentication.md, jwt-bearer-and-token-exchange.md, apps-and-apis.md, messages-api.md), harness reference (harness.md), MCP reference (mcp.md), testing the agent's behaviour with evals (testing-ai-agents.md), decision log (decisions.md), control register (security-controls.md), screenshots
+docs/             Delivery status (delivery-status.md); reference (GLOSSARY.md: OAuth2/OIDC/CDR terms mapped to Entra Agent ID and MCP; DESIGN-NOTES.md: written designs for out-of-scope patterns; entra.md, infra.md, agent-id.md, tokens.md, agent-architecture.md, agent-steward-architecture.md, investigating-agent-activity.md, from-microservices-to-agents.md, conditional-access-and-revocation.md, authentication.md, jwt-bearer-and-token-exchange.md, apps-and-apis.md, messages-api.md), harness reference (harness.md), MCP reference (mcp.md), the permission each tool needs (tool-permissions.md), testing the agent's behaviour with evals (testing-ai-agents.md), decision log (decisions.md), control register (security-controls.md), screenshots
 THREATMODEL.md    OWASP Agentic Top 10 x MAESTRO
 DEMO.md           Screenshot walkthrough
 ```
