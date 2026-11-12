@@ -182,7 +182,20 @@ With delegation, the downstream service sees two parties: the user, and the serv
 
   > Prior actors identified by any nested "act" claims are informational only and are not to be considered in access control decisions. ([RFC 8693, section 4.1][rfc-4.1])
 
-The RFC's own example is below ([RFC 8693, Figure 6][rfc-fig6]). The token is about the user, service16 is the current actor, and service77 was a prior actor ([RFC 8693, section 4.1][rfc-4.1]).
+The RFC's own example is on the left ([RFC 8693, Figure 6][rfc-fig6]). The token is about the user, service16 is the current actor, and service77 was a prior actor ([RFC 8693, section 4.1][rfc-4.1]).
+
+On the right, for comparison, is an app-only token: service16 calls service26 for its own work, with no user. This example is *my illustration*, not from an RFC. It changes only two things:
+
+- **The subject is the service:** with "the client credentials grant, the value of "sub" SHOULD correspond to an identifier the authorization server uses to indicate the client application" ([RFC 9068, section 2.2][rfc9068-2.2]).
+- **No act claim:** nobody delegated anything, so "neither delegation nor impersonation are in play" ([RFC 8693, section 1.1][rfc-1.1]).
+
+<table>
+<tr>
+<th>Delegation: the user, with service16 acting (RFC 8693, Figure 6)</th>
+<th>App-only: service16 for itself (illustration)</th>
+</tr>
+<tr>
+<td>
 
 ```json
 {
@@ -201,6 +214,25 @@ The RFC's own example is below ([RFC 8693, Figure 6][rfc-fig6]). The token is ab
   }
 }
 ```
+
+</td>
+<td>
+
+```json
+{
+  "aud":"https://service26.example.com",
+  "iss":"https://issuer.example.com",
+  "exp":1443904100,
+  "nbf":1443904000,
+  "sub":"https://service16.example.com"
+}
+```
+
+</td>
+</tr>
+</table>
+
+So service26 reads the two tokens differently. On the left, it applies the user's rights, with service16 as the current actor ([RFC 8693, section 4.1][rfc-4.1]). On the right, it applies service16's own rights (*inference* from [RFC 9068, section 2.2][rfc9068-2.2]).
 
 ### Deviation: Entra's On-Behalf-Of Flow
 
@@ -391,7 +423,7 @@ Checked on 11 and 12 November 2026. "Used" names the sections this page quotes.
 ### Standards and Specifications
 
 1. **RFC 8693, OAuth 2.0 Token Exchange.** M. Jones, A. Nadalin, B. Campbell (Ed.), J. Bradley, C. Mortimore. IETF, Standards Track, January 2020. Used: sections 1.1, 2.1, 4.1, 4.3 and 5, Figure 6. [rfc-editor.org/rfc/rfc8693](https://www.rfc-editor.org/rfc/rfc8693.html)
-2. **RFC 9068, JSON Web Token (JWT) Profile for OAuth 2.0 Access Tokens.** V. Bertocci. IETF, Standards Track, October 2021. Used: section 4. [rfc-editor.org/rfc/rfc9068](https://www.rfc-editor.org/rfc/rfc9068.html)
+2. **RFC 9068, JSON Web Token (JWT) Profile for OAuth 2.0 Access Tokens.** V. Bertocci. IETF, Standards Track, October 2021. Used: sections 2.2 and 4. [rfc-editor.org/rfc/rfc9068](https://www.rfc-editor.org/rfc/rfc9068.html)
 3. **RFC 9700, Best Current Practice for OAuth 2.0 Security.** T. Lodderstedt, J. Bradley, A. Labunets, D. Fett. IETF, Best Current Practice (BCP 240), January 2025. Used: sections 2.2.1, 2.3 and 4.10.2. [rfc-editor.org/rfc/rfc9700](https://www.rfc-editor.org/rfc/rfc9700.html)
 4. **RFC 6750, The OAuth 2.0 Authorization Framework: Bearer Token Usage.** M. Jones, D. Hardt. IETF, Standards Track, October 2012. Used: sections 1.2 and 3.1. [rfc-editor.org/rfc/rfc6750](https://www.rfc-editor.org/rfc/rfc6750.html)
 5. **Transaction Tokens, draft-ietf-oauth-transaction-tokens-11.** A. Tulshibagwale, G. Fletcher, P. Kasselman. IETF Internet-Draft, 30 July 2026, expires 31 January 2027. Work in progress, not an RFC. Used: the header, Abstract, Status of This Memo, sections 1, 3 and 4. [The draft][txn], and its status on the [IETF datatracker][txn-dt].
@@ -440,6 +472,7 @@ Found during the research, but not quoted here: they are secondary sources, or t
 [rfc-fig6]: https://www.rfc-editor.org/rfc/rfc8693.html#figure-6
 [rfc-4.3]: https://www.rfc-editor.org/rfc/rfc8693.html#section-4.3
 [rfc-5]: https://www.rfc-editor.org/rfc/rfc8693.html#section-5
+[rfc9068-2.2]: https://www.rfc-editor.org/rfc/rfc9068.html#section-2.2
 [rfc9068-4]: https://www.rfc-editor.org/rfc/rfc9068.html#section-4
 [rfc9700-2.2.1]: https://www.rfc-editor.org/rfc/rfc9700.html#section-2.2.1
 [rfc9700-2.3]: https://www.rfc-editor.org/rfc/rfc9700.html#section-2.3
