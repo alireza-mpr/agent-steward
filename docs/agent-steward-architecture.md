@@ -313,7 +313,9 @@ sequenceDiagram
         X->>A: POST .../{requestId}/execution<br/>Bearer: the guardian's app-only token (AgentDisable.Request)<br/>body: delegatingUser = Tc's oid
         A-->>X: running (409 unless approved, within 10 minutes, by this person)
         X->>S: GET /AuthorizationHeader/graph-delegated<br/>Bearer: Tc
-        S->>E: OBO request, as the guardian's agent identity
+        S->>E: request 1: the blueprint's certificate,<br/>fmi_path = the guardian's agent identity
+        E-->>S: T1
+        S->>E: request 2 (OBO): client_id = the agent identity,<br/>client_assertion = T1, assertion = Tc
         E-->>S: Graph token: the approver's oid,<br/>scp AgentIdentity.EnableDisable.All
         S-->>X: the OBO token
         X->>G: PATCH accountEnabled = false<br/>Bearer: the OBO token
