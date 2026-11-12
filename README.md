@@ -12,64 +12,7 @@ It finds risky agents on its own, in four categories:
 The agent writes a report, and submits a request to disable each risky agent. Then a person with the approver role signs in, reviews the disable requests, and approves or denies each one. After an approval, the agent runs the disable itself, but with the approver's rights, not its own. 
 So **the agent proposes, the approver decides, and the agent executes on behalf of the approver**.
 
-```mermaid
-flowchart TB
-    %% An invisible frame holds the first row, so the approver's frame can sit below it
-    subgraph TOP[" "]
-        direction LR
-        subgraph TENANT["Agent identities in Microsoft Entra"]
-            direction LR
-            F1["👻 No sponsor"]
-            F2["⏳ Credential expiring"]
-            F3["🔑 Too many permissions"]
-            F4["💤 Dormant"]
-        end
-
-        subgraph PROPOSE["🕵️ The agent proposes"]
-            GUARD{{"🤖 Agent Steward"}}
-            REPORT["📋 Report"]
-            ASK["📨 Disable request"]
-            GUARD --> REPORT
-            REPORT --> ASK
-        end
-
-        TENANT -- "🔍 scans agent registry" --> GUARD
-    end
-
-    %% An invisible box to the left of the approver's frame pushes that frame to the right
-    GAP["________________________"]
-
-    subgraph DECIDE["⚖️ The approver decides"]
-        direction LR
-        HUMAN(["🧑‍💼 Approver<br/>signs in and reviews"])
-        ACT{{"🤖 Agent Steward<br/>disables it"}}
-        DISABLED["🔒 Agent disabled"]
-        STAYS["😌 Agent stays as it is"]
-        HUMAN -- "✅ approve" --> ACT
-        ACT -- "with the approver's rights" --> DISABLED
-        HUMAN -- "❌ deny" --> STAYS
-    end
-
-    TOP ~~~ GAP
-    TOP --> DECIDE
-
-    classDef agent fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#0f172a
-    classDef risk fill:#ffe4e6,stroke:#e11d48,color:#0f172a
-    classDef human fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#0f172a
-    classDef good fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#0f172a
-    classDef calm fill:#f1f5f9,stroke:#64748b,color:#0f172a
-    classDef spacer fill:none,stroke:none,color:transparent
-    class GUARD,ACT agent
-    class F1,F2,F3,F4 risk
-    class HUMAN human
-    class DISABLED good
-    class GAP spacer
-    class REPORT,ASK,STAYS calm
-    style PROPOSE fill:transparent,stroke:#2563eb,stroke-width:2px,stroke-dasharray: 6 4
-    style DECIDE fill:transparent,stroke:#d97706,stroke-width:2px,stroke-dasharray: 6 4
-    style TENANT fill:transparent,stroke:#64748b,stroke-width:2px
-    style TOP fill:transparent,stroke:transparent
-```
+![How Agent Steward works: the agent scans Entra and proposes, the approver decides, and the agent disables with the approver's rights](docs/images/overview.svg)
 
 ## Contents
 
