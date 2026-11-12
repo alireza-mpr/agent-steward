@@ -13,7 +13,7 @@ The agent writes a report, and submits a request to disable each risky agent. Th
 So **the agent proposes, the approver decides, and the agent executes on behalf of the approver**.
 
 ```mermaid
-flowchart TB
+flowchart LR
     TENANT[("🏢 Agent identities<br/>in Microsoft Entra")]
 
     subgraph PROPOSE["🤖 The agent proposes"]
@@ -40,16 +40,23 @@ flowchart TB
     TENANT -- "🔍 reads every agent" --> GUARD
     ASK --> HUMAN
 
+    %% An invisible box on the far right: GitHub's zoom buttons sit on it, not on the picture
+    PAD["________________________"]
+    DISABLED ~~~ PAD
+    STAYS ~~~ PAD
+
     classDef agent fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#0f172a
     classDef risk fill:#ffe4e6,stroke:#e11d48,color:#0f172a
     classDef human fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#0f172a
     classDef good fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#0f172a
     classDef calm fill:#f1f5f9,stroke:#64748b,color:#0f172a
+    classDef spacer fill:none,stroke:none,color:transparent
     class GUARD agent
     class F1,F2,F3,F4 risk
     class HUMAN human
     class DISABLED good
     class TENANT,REPORT,ASK,STAYS calm
+    class PAD spacer
     style PROPOSE fill:transparent,stroke:#2563eb,stroke-width:2px,stroke-dasharray: 6 4
     style DECIDE fill:transparent,stroke:#d97706,stroke-width:2px,stroke-dasharray: 6 4
 ```
