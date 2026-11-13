@@ -120,7 +120,8 @@ _Legend: [✅] done, [▶️] in progress, [📄] design only, [✂️] cut._
   - Per tool in the code, not in the token: a token carries all the guardian's roles on its API ([why](docs/tool-permissions.md#where-the-guardian-differs)).
 - [▶️] **NFR2 - Attribution.** Any log line traces to exactly one agent identity and, in OBO mode, exactly one human.
 - [✅] **NFR3 - Untrusted content boundary.** Tool outputs and directory data are data, never instructions. Tested with a prompt injection planted in a fixture agent's description: it is treated as text, not executed.
-- [▶️] **NFR4 - Observability.** OpenTelemetry trace per guardian request. One ID (the trace ID) links three records: the application trace, the audit line, and the Entra sign-in log. (Per-step token count and cost estimation: optional, first to cut.)
+- [▶️] **NFR4 - Observability.** OpenTelemetry trace per guardian request. Three records are linked: the trace ID links the application trace to the audit line, and the token's ID (`uti`) links the audit line to the Entra sign-in log. (Per-step token count and cost estimation: optional, first to cut.)
+  - Not yet: the link to the Entra sign-in log. The trace ID never reaches Entra, so this link needs the token's ID in each audit line.
 - [▶️] **NFR5 - Reproducibility.** One `docker compose up` runs the app locally. Tenant setup is documented step by step and scripted as code: Bicep (Microsoft Graph Bicep extension) where the object type supports it, Microsoft Graph PowerShell for the rest.
 - [✅] **NFR6 - Repo hygiene.** No secrets, tenant IDs or real data in the repo.
   - Cut: a gitleaks scan of the whole history, because it is not specific to agentic AI.
