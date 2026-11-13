@@ -4,13 +4,17 @@ An AI agent that governs other AI agents in a Microsoft Entra tenant.
 
 It finds risky agents on its own, in four categories:
 
-- dormant (no sign-in for 30 days),
-- orphan (no sponsor),
-- expiring credentials,
-- excessive permissions.
+- 😴 dormant (no sign-in for 30 days),
+- 👻 orphan (no sponsor),
+- ⏳ expiring credentials,
+- 🔑 excessive permissions.
 
-The agent writes a report, and submits a request to disable each risky agent. Then a person with the approver role signs in, reviews the disable requests, and approves or denies each one. After an approval, the agent runs the disable itself, but with the approver's rights, not its own. 
-So **the agent proposes, the approver decides, and the agent executes on behalf of the approver**.
+In short:
+- [🤖] The agent writes a report, and submits a request to disable each risky agent, **_autonomously_**.
+- [🧑‍💼⚖️] Then a person with the approver role signs in, reviews the pending disable requests, and approves or denies each one.
+- [🤖(🧑‍💼)] After an approval, the agent runs the disable itself, with the approver's delegated rights, not its own: **_on behalf of the approver_**.
+
+In summary: **the agent proposes, the approver decides, and the agent executes on behalf of the approver**.
 
 ![How Agent Steward works: the agent scans Entra and proposes, the approver decides, and the agent disables with the approver's rights](docs/images/overview.svg)
 
