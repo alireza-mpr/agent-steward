@@ -5,6 +5,7 @@ This page lists every span you see in Jaeger for this project: which service rec
 ## Contents
 
 - [Background: Logs, Metrics and Traces](#background-logs-metrics-and-traces)
+- [What Ties the Logs Together](#what-ties-the-logs-together)
 - [How to Read a Name](#how-to-read-a-name)
 - [The Two Traces](#the-two-traces)
   - [A Harness Run](#a-harness-run)
@@ -31,6 +32,29 @@ Each signal usually has its own kind of backend. Jaeger is a tracing backend: it
 - **Logs:** the audit lines (FR8). The Identity API, the MCP server and the executor print them as JSON to stdout, and also send them over OTLP to Loki, a log store, as OpenTelemetry log records. The harness's progress lines go there too, as operational lines. Each line carries the trace ID and span ID of the span that wrote it, so Grafana links a line to its trace in Jaeger ([infra.md](infra.md#audit-logs-loki-and-grafana)).
 - **Metrics:** none yet. The token counts are span attributes, not metrics.
 - **Traces:** every service sends its spans over OTLP to Jaeger. The rest of this page is about them.
+
+## What Ties the Logs Together
+
+Every audit line shares four fields ([telemetry.py](../src/shared/telemetry.py)):
+
+- **`timestamp`:** when the line was written, in UTC.
+- **`trace_id`:** the run's ID. It is the same in every line of one run.
+- **`span_id`:** the span, the step, that wrote the line.
+- **`event`:** what happened, for example `disable_request_decided`.
+
+`trace_id` and `span_id` are missing when tracing is off, for example in unit tests. Lines about one disable request also share `request_id`. It ties the propose run and the approve run, which are two traces.
+
+**How the IDs travel:** one header, `traceparent`, holds both ([W3C Trace Context](https://www.w3.org/TR/trace-context/)):
+
+```
+traceparent: 00-<trace ID>-<parent span ID>-<flags>
+```
+
+The trace ID stays the same at every hop. The parent span ID is the caller's span, so it changes at each hop. Into the MCP server, the same context travels in the MCP message's `_meta` instead. The trace ID replaced the earlier `X-Correlation-ID` header on 11 November 2026.
+
+**Find a run's lines:** in Grafana ([infra.md](infra.md#audit-logs-loki-and-grafana)), or `docker compose logs identity-api mcp-server executor | grep <trace ID>`.
+
+**Not proof:** the trace ID comes from the caller, so it only finds records. Who acted comes from the checked token's claims in the same line.
 
 ## How to Read a Name
 
@@ -157,4 +181,3 @@ So the arrows are Jaeger's, not part of the data: the span holds the parts as JS
 - **Old HTTP attribute names:** the urllib and FastAPI instrumentations write the older names (`http.method`, `http.url`, `http.status_code`), while the Anthropic SDK writes the stable ones (`http.request.method`, `url.full`). Setting `OTEL_SEMCONV_STABILITY_OPT_IN=http` makes the instrumentations write the stable names; it is not set yet.
 - **The sidecars send no spans:** the Entra SDK sidecar image (`auth-sidecar` 1.1.2) has no OpenTelemetry SDK or exporter ([its source](https://github.com/AzureAD/microsoft-identity-web/tree/master/src/Microsoft.Identity.Web.Sidecar)), so there is no `sidecar` service in Jaeger, and `OTEL_*` variables on it would change nothing. A call to a sidecar shows only as the caller's client span (`GET 127.0.0.1:5000` under mcp-server or executor), with its duration; the sidecar's own call to Entra is not visible. Building our own sidecar image with OpenTelemetry would mean changing Microsoft's security component, so it is left out.
 - **Status of the GenAI conventions:** "Development", so their names can still change between versions.
-- **The trace ID in audit lines:** every audit line carries the trace ID and span ID of the span that wrote it, so `docker compose logs identity-api mcp-server executor | grep <trace ID>` finds a trace's audit lines.

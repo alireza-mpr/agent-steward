@@ -49,8 +49,8 @@ def claims(token: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
 
 
-def submit_findings(token: str | None, correlation_id: str) -> tuple[int, dict]:
-    headers = {"Content-Type": "application/json", "X-Correlation-ID": correlation_id}
+def submit_findings(token: str | None) -> tuple[int, dict]:
+    headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     report = {"findings": [{"agent_app_id": "integration-test", "agent_name": "integration-test",
@@ -65,7 +65,7 @@ def submit_findings(token: str | None, correlation_id: str) -> tuple[int, dict]:
 
 
 def test_guardian_is_accepted():
-    status, body = submit_findings(sidecar_token("identity-api", env("GUARDIAN_AGENT_APP_ID")), "integration-guardian")
+    status, body = submit_findings(sidecar_token("identity-api", env("GUARDIAN_AGENT_APP_ID")))
     assert (status, body["accepted"]) == (202, 1)
 
 
@@ -73,7 +73,7 @@ def test_agent_without_the_role_is_rejected():
     token = sidecar_token("identity-api", env("GUARDIAN_NOROLE_AGENT_APP_ID"))
     assert "11" in claims(token)["xms_act_fct"].split()             # a real agent...
     assert "Findings.Submit" not in claims(token).get("roles", [])  # ...without the role
-    status, body = submit_findings(token, "integration-norole")
+    status, body = submit_findings(token)
     assert (status, body["detail"]) == (403, "permission: missing app role Findings.Submit")
 
 
@@ -81,15 +81,15 @@ def test_plain_app_is_rejected_even_with_the_role():
     token = plain_app_token()
     assert "Findings.Submit" in claims(token).get("roles", [])           # check 6 alone would pass...
     assert "11" not in str(claims(token).get("xms_act_fct", "")).split()  # ...but it is not an agent
-    status, body = submit_findings(token, "integration-plain-app")
+    status, body = submit_findings(token)
     assert (status, body["detail"]) == (403, "agent: caller is not an agent identity")
 
 
 def test_token_for_another_api_is_rejected():
-    status, _ = submit_findings(sidecar_token("graph", env("GUARDIAN_AGENT_APP_ID")), "integration-graph-token")
+    status, _ = submit_findings(sidecar_token("graph", env("GUARDIAN_AGENT_APP_ID")))
     assert status == 401
 
 
 def test_no_token_is_rejected():
-    status, body = submit_findings(None, "integration-no-token")
+    status, body = submit_findings(None)
     assert (status, body["detail"]) == (401, "no bearer token")
