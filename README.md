@@ -20,7 +20,7 @@ In summary: **the agent proposes, the approver decides, and the agent executes o
 
 ## Contents
 
-- [What It Shows](#what-it-shows)
+- [What It Demonstrates](#what-it-demonstrates)
 - [How It Works](#how-it-works)
   - [The Agents](#the-agents)
 - [Functional and Non-functional requirements](#functional-and-non-functional-requirements)
