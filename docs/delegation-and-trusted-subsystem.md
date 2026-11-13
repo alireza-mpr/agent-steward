@@ -159,12 +159,12 @@ With delegation, the downstream service sees two parties: the user, and the serv
 
 ### The Two Parties: Subject and Actor
 
-- Subject: The subject is the party the token is about, the party whose rights the token carries. The subject is the primary identity or the party on whose behalf a request is being made.
-- Actor: The actor is the party acting on behalf of subject. 
+- **Subject:** the party the token is about, whose rights the token carries. It is the primary identity, the party on whose behalf the request is made ([RFC 8693, section 2.1][rfc-2.1]).
+- **Actor:** the party acting on behalf of the subject.
+
 In OBO, the subject is the end user and the actor is the agent.
 
-
-[RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1) mentions that presence of `act` claim expresses that delegation has occurred.
+**The sign of delegation in a token:** the `act` claim. It "provides a means within a JWT to express that delegation has occurred" ([RFC 8693, section 4.1][rfc-4.1]). Entra's OBO tokens have no `act` claim, so there the actor shows only as the client app ([Deviation: Entra's On-Behalf-Of Flow](#deviation-entras-on-behalf-of-flow)).
 
 - **The subject, in the standard:**
 
