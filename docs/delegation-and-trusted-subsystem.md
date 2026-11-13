@@ -145,6 +145,10 @@ If all three answers are yes, the token can be reused (*inference* from the thre
 
 ### Delegation, Defined
 
+**Acting for someone else, as itself:** when a party acts for someone else and keeps its own identity, RFC 8693 calls it delegation. When it takes on the other party's identity instead, that is impersonation ([RFC 8693, section 1.1][rfc-1.1], and [Impersonation](#3-impersonation)).
+
+**Acting for itself:** RFC 8693 gives this case no name: "When a principal is acting directly on its own behalf, for example, neither delegation nor impersonation are in play" ([RFC 8693, section 1.1][rfc-1.1]). Entra Agent ID calls it autonomous: "App-only operations enable agent identities to act autonomously without user context" ([Agent app-only flow][agent-auto]). The guardian's audit lines use the same word: `mode: autonomous`.
+
 With delegation, the downstream service sees two parties: the user, and the service acting for the user ([RFC 8693, section 1.1][rfc-1.1]).
 
 > With delegation semantics, principal A still has its own identity separate from B, and it is explicitly understood that while B may have delegated some of its rights to A, any actions taken are being taken by A representing B. In a sense, A is an agent for B. ([RFC 8693, section 1.1][rfc-1.1])

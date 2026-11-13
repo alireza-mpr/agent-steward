@@ -161,7 +161,7 @@ Every control in place, with the threat it stops and its evidence, is in the [co
 ## Read More
 
 - **Start here:** [Agent Steward architecture](docs/agent-steward-architecture.md): how the guardian is built, its decisions, and every shortcut it takes. It is compared with the [enterprise design](docs/agent-architecture.md).
-- **Security:** the [threat model](THREATMODEL.md), the [control register](docs/security-controls.md), the [permission each tool needs](docs/tool-permissions.md), and the [decision log](docs/decisions.md).
+- **Security:** the [threat model](THREATMODEL.md), the [control register](docs/security-controls.md), the [permission each tool needs](docs/tool-permissions.md), the [decision log](docs/decisions.md), and a runbook: [who disabled this agent?](docs/who-disabled-this-agent.md).
 - **How it is built:** [the harness](docs/harness.md), [MCP](docs/mcp.md), [infrastructure and local run](docs/infra.md), [traces and span names](docs/tracing.md), and [testing an agent's behaviour](docs/testing-ai-agents.md).
 - **Reference:** [Agent ID](docs/agent-id.md), [tokens](docs/tokens.md), [authentication](docs/authentication.md), [JWT bearer and token exchange](docs/jwt-bearer-and-token-exchange.md), [delegation and the trusted subsystem](docs/delegation-and-trusted-subsystem.md), [from microservices to agents](docs/from-microservices-to-agents.md), and the [glossary](docs/GLOSSARY.md). All documents are in [docs/](docs/).
 - **Status:** [Delivery status](docs/delivery-status.md): every requirement, its status and its evidence.

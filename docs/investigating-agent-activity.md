@@ -1,6 +1,6 @@
 # Investigating Agent Activity: Who, for Whom, and Why
 
-An agent did something in the tenant: it deleted a site, changed a group, or read a mailbox. This page shows how to find which agent did it, whether it acted for a person or on its own, and why. Each claim is marked as verified (with its source) or not checked.
+An agent did something in the tenant: it deleted a site, changed a group, or read a mailbox. This page shows how to find which agent did it, whether it acted for a person or on its own, and why. Each claim is marked as verified (with its source) or not checked. For a step-by-step runbook for one case, a disabled agent, with real audit entries from this tenant, see [Who Disabled This Agent?](who-disabled-this-agent.md).
 
 ## Contents
 
