@@ -155,7 +155,11 @@ With delegation, the downstream service sees two parties: the user, and the serv
 
 ### The Two Parties: Subject and Actor
 
-**In one line:** the subject is the party the token is about, and the actor is the party that uses the token for it. In OBO, the subject is the end user and the actor is the agent. This page uses these two words for every vendor.
+- Subject: The subject is the party the token is about, the party whose rights the token carries.
+- Actor: The actor is the party acting on behalf of subject. 
+In OBO, the subject is the end user and the actor is the agent.
+
+[RFC 8693, section 4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1) mentions that presence of `act` claim expresses that delegation has occurred.
 
 - **The subject, in the standard:**
 
