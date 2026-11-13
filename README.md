@@ -135,7 +135,7 @@ The evidence for each one is in [Delivery status](docs/delivery-status.md), and 
 
 ### Written Design Only
 
-Workload identity federation for non-Microsoft agents, token exchange (RFC 8693), AIMS, Agent 365 governance and dynamic agent registration are written designs in [DESIGN-NOTES.md](docs/DESIGN-NOTES.md), not code. Each note says what a production system would add, and why it was left out.
+Workload identity federation for non-Microsoft agents, RFC 8693 token exchange (the standard grant; the project's token exchange is Entra's OBO, which is built: [why OBO is not RFC 8693](docs/jwt-bearer-and-token-exchange.md#52-obo-is-not-rfc-8693)), AIMS, Agent 365 governance and dynamic agent registration are written designs in [DESIGN-NOTES.md](docs/DESIGN-NOTES.md), not code. Each note says what a production system would add, and why it was left out.
 
 ## Security Controls at a Glance
 
