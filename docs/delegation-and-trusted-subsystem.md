@@ -289,6 +289,13 @@ How it works, in Microsoft's steps ([OBO flow, Protocol diagram][obo-steps]):
 Where it differs from the standard:
 
 - **A different grant:** OBO uses `urn:ietf:params:oauth:grant-type:jwt-bearer`, with `requested_token_use` set to `on_behalf_of` ([OBO flow, Middle-tier access token request][obo-request]). RFC 8693 uses its own token exchange grant ([RFC 8693, section 2.1][rfc-2.1]). Why Microsoft did this: [OBO Is Not RFC 8693](jwt-bearer-and-token-exchange.md#52-obo-is-not-rfc-8693).
+```
+grant_type          = urn:ietf:params:oauth:grant-type:jwt-bearer
+requested_token_use = on_behalf_of
+assertion           = <the incoming user token>
+client_id + credential (secret, certificate, or for an agent: its blueprint's exchange token)
+scope               = <next API>/.default
+```
 - **Users only:**
 
   > If a service principal requested an app-only token and sent it to an API, that API would then exchange a token that doesn't represent the original service principal. This is because the OBO flow only works for user principals. Instead, it must use the client credentials flow to get an app-only token. ([OBO flow, Client limitations][obo-limits])
