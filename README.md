@@ -32,7 +32,7 @@ In summary: **the agent proposes, the approver decides, and the agent executes o
 - [Read More](#read-more)
 - [Repository Layout](#repository-layout)
 
-## What It Shows
+## What It Demonstrates
 
 The point of this project: demonstrate, end to end, how an agent can be **identified, authenticated, authorized, constrained, delegated, observed and revoked** using Microsoft Entra Agent ID - with Zero Trust and least privilege applied at every step:
 
