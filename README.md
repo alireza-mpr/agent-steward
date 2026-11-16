@@ -82,7 +82,7 @@ flowchart LR
     Propose -. "traces, audit lines" .-> Tel["Telemetry<br/>Jaeger, Loki, Grafana"]
     Approve -.-> Tel
     API -.-> Tel
-```
+```ƒ
 
 ### The Agents
 
@@ -93,7 +93,11 @@ flowchart LR
 
 The project is built to demonstrate the below requirements:
 
-_Legend: [✅] done, [▶️] in progress, [📄] design only, [✂️] cut._
+Legend: 
+- ✅: done
+- ▶️: in progress
+- 📄: design only
+- ✂️: cut
 
 ### Functional
 
@@ -123,11 +127,9 @@ _Legend: [✅] done, [▶️] in progress, [📄] design only, [✂️] cut._
 - [▶️] **NFR4 - Observability.** OpenTelemetry trace per guardian request. Three records are linked: the trace ID links the application trace to the audit line, and the token's ID (`uti`) links the audit line to the Entra sign-in log. (Per-step token count and cost estimation: optional, first to cut.)
   - Not yet: the link to the Entra sign-in log. The trace ID never reaches Entra, so this link needs the token's ID in each audit line.
 - [▶️] **NFR5 - Reproducibility.** One `docker compose up` runs the app locally. Tenant setup is documented step by step and scripted as code: Bicep (Microsoft Graph Bicep extension) where the object type supports it, Microsoft Graph PowerShell for the rest.
-- [✅] **NFR6 - Repo hygiene.** No secrets, tenant IDs or real data in the repo.
-  - Cut: a gitleaks scan of the whole history, because it is not specific to agentic AI.
-- [✅] **NFR7 - Threat model.** Every OWASP Agentic Top 10 risk is marked mitigated, accepted or out of scope, with a reason, mapped to a MAESTRO layer, and pointing at the code or config that implements the control ([THREATMODEL.md](THREATMODEL.md)).
-- [▶️] **NFR8 - Tests.** Offline tests for all policy logic (allow-list, approval gate, token claim checks). One live test per auth flow.
-- [✂️] **NFR9 - Durable proof.** A walkthrough of every control with screenshots from the live tenant.
+- [✅] **NFR6 - Threat model.** Every OWASP Agentic Top 10 risk is marked mitigated, accepted or out of scope, with a reason, mapped to a MAESTRO layer, and pointing at the code or config that implements the control ([THREATMODEL.md](THREATMODEL.md)).
+- [▶️] **NFR7 - Tests.** Offline tests for all policy logic (allow-list, approval gate, token claim checks). One live test per auth flow.
+- [✂️] **NFR8 - Durable proof.** A walkthrough of every control with screenshots from the live tenant.
   - Cut: the project keeps no demo page and no screenshots. The code, the tests and the docs are the record.
 
 Note:
