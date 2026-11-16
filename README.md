@@ -82,7 +82,7 @@ flowchart LR
     Propose -. "traces, audit lines" .-> Tel["Telemetry<br/>Jaeger, Loki, Grafana"]
     Approve -.-> Tel
     API -.-> Tel
-```ƒ
+```
 
 ### The Agents
 
