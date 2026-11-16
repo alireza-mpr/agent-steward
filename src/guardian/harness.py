@@ -360,11 +360,15 @@ async def agent_loop(claude: Any, mcp_client: Any, settings: HarnessSettings, tr
 
     for round_number in range(1, settings.max_rounds + 1):
         result.rounds = round_number
+        
         if trace:
             trace.request(round_number, tools, messages)
+        
         response = await ask_model(claude, settings, tools, messages, show_thinking=show_thinking)
+        
         if trace:
             trace.response(round_number, response)
+        
         if usage := getattr(response, "usage", None):
             result.input_tokens += usage.input_tokens
             result.output_tokens += usage.output_tokens

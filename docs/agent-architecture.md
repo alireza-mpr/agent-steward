@@ -22,6 +22,7 @@ The details of each part are in their own documents:
   * [Zero Trust: Who Checks Whom?](#zero-trust-who-checks-whom)
   * [Error Handling: When a Call Fails](#error-handling-when-a-call-fails)
   * [Human Approval: Who Approves, and How](#human-approval-who-approves-and-how)
+  * [Context, Sessions and Memory](#context-sessions-and-memory)
 * [3. How the Guardian Differs](#3-how-the-guardian-differs)
 
 ---
@@ -387,8 +388,71 @@ A **domain service** owns the rules, the approval workflow and the write, with i
 
 **Deviation:** a tool can either **wait** inside one call, which is simple but ties the call to the caller's connection, or **return "pending" at once**, which needs a later step to report the outcome.
 
+### Context, Sessions and Memory
+
+An agent keeps three kinds of state. Each one lasts longer than the one before, lives in a different place, and carries a bigger poisoning risk.
+
+1. **Context (one model call):** everything the model sees in one call.
+   - **In general:** context = the fixed parts (the system prompt and the tool definitions) + the session. The model keeps nothing between calls, so the harness sends the whole context every time ([The Messages API](messages-api.md#1-the-big-picture-a-stateless-conversation-loop)). Because the harness builds the context, the harness decides what the model sees.
+   - **Exception, less than the session:** on a long task, the conversation can outgrow the model's context window, or cost too many tokens. So the harness may drop old tool results, or replace older turns with a summary. Then the context holds only part of the session.
+   - **Exception, more than the session:** the harness may add something to one call only, such as the current time or a reminder, without saving it in the session. Then the next call does not see it.
+2. **Session (one conversation or task):** what the harness keeps so a task can continue where it stopped.
+   - **In general:** the conversation, kept across many model calls and user turns. It lives with the harness, never with the model.
+   - **Exception:** a task that pauses, for example to wait for a human approval, needs more than the conversation. The harness also saves where the task is, such as the current step and the pending tool calls, and it saves all of it durably ([Long Runs: Checkpoints](#long-runs-checkpoints)).
+3. **Memory (across sessions):** what the agent saves in a store and reads back in later sessions.
+   - **In general:** facts, such as a user's preferences.
+   - **Exception:** some agents also save lessons from past tasks, such as a rule that worked or a summary of an earlier run, and use them to change how they act next time.
+
+**In code: one variable or two.** What the harness keeps across the loop is the session. What it sends in one call is the context. The two examples below are simplified pseudo-code: no stop check, and no error handling.
+
+- **In general, one variable:** in a short run, the harness trims nothing, so it passes the session straight into the model call. The guardian works this way ([Context, Session and Memory](harness.md#context-session-and-memory)).
+
+  ```python
+  session = []  # lives across all 10 rounds: the session
+
+  for step in range(10):
+      # the whole session is the context for this one call
+      response = call_model(system=SYS_PROMPT, tools=TOOLS, messages=session)
+
+      # update the session for the next round
+      session.append(response)
+      session.append(run_tool(response.tool_call))
+  ```
+
+- **Exception, two variables:** the harness decides not to show the model everything, for example when the history gets too long, or to strip heavy tool outputs from earlier rounds.
+
+  ```python
+  session = []  # the full record of all 10 rounds: the session
+
+  for step in range(10):
+      # a smaller context, built for this one call
+      context = trim_old_tool_outputs(session)
+
+      response = call_model(system=SYS_PROMPT, tools=TOOLS, messages=context)
+
+      # the full, untrimmed results still go into the session
+      session.append(response)
+      session.append(run_tool(response.tool_call))
+  ```
+
+So even when one variable holds both, what the harness keeps across the loop is the session, and what it sends in round N is the context.
+
+The three kinds side by side:
+
+| State | Lasts for | Where it lives | If it is poisoned |
+|---|---|---|---|
+| Context | One model call | The API request | It affects one answer. It lasts longer only if the harness keeps it in the session |
+| Session | One conversation or task | The harness, in memory or in a checkpoint store | It reaches every later model call until the conversation or task ends |
+| Memory | Across sessions | An external store, such as a database or files | It survives the task, and reaches later, unrelated sessions |
+
+**The risk grows with each kind.** Poisoned text in the context affects one answer, and the session carries it to the end of the task. A saved session or memory can bring a planted instruction back in every later run. OWASP calls this Memory and Context Poisoning ([ASI06](https://genai.owasp.org/2025/12/09/owasp-top-10-for-agentic-applications-the-benchmark-for-agentic-security-in-the-age-of-autonomous-ai/)). So anything written to a session or a memory store is untrusted content, and each write needs its own checks, like any tool result.
+
+**A session is not an identity.** Many sessions share one agent identity. In delegated mode, the user of each session comes from that session's OBO token, not from a new agent identity ([Logical agents vs. instances and sessions](agent-id.md#4-scaling-logical-agents-vs-instances-and-sessions)).
+
 ---
 
 ## 3. How the Guardian Differs
 
 This project's **Guardian** agent has the same four parts, but it runs locally on one machine with Docker Compose. To fit the project's timebox, it takes six shortcuts from the design above (D1 to D6), each with its accepted risk. Its design, its main flows and its shortcuts are in [Agent Steward Architecture](agent-steward-architecture.md).
+
+**Context, session and memory:** the guardian has context and a session, but no memory. Its session is held in memory and ends with the run ([Context, Session and Memory](harness.md#context-session-and-memory)).

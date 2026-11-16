@@ -9,6 +9,7 @@ For where the harness sits in the agent's design, see [Agent architecture](agent
 - [1. The Agent Loop in Action](#1-the-agent-loop-in-action)
   - [Step-by-Step: How One Run Works](#step-by-step-how-one-run-works)
   - [The Run's Task](#the-runs-task)
+  - [Context, Session and Memory](#context-session-and-memory)
 - [2. Why the Model Stopped: stop_reason](#2-why-the-model-stopped-stop_reason)
 - [3. The Model Settings](#3-the-model-settings)
 - [4. Seeing a Run: Tags and Traces](#4-seeing-a-run-tags-and-traces)
@@ -78,6 +79,44 @@ docker compose run --rm harness
 ```
 
 The rule to ask only for dormant agents is a prompt rule, so it is not a control. The controls are in code: the MCP server refuses a request for an agent that is not dormant or that belongs to the guardian, the executor checks again before the write, and a person must approve ([the flow](agent-steward-architecture.md#the-two-phases-propose-then-approve)).
+
+### Context, Session and Memory
+
+The guardian has context and a session, but no memory. Its session is the run's conversation, held in memory: it is never saved, so it ends with the run, and nothing carries over to the next run. The general design is in [Context, Sessions and Memory](agent-architecture.md#context-sessions-and-memory).
+
+**The guardian's three kinds of state:**
+
+- ✅ **Context:** what Claude sees in one call: the system prompt, the tool definitions and the whole conversation so far. The harness never trims it, so every round sends everything ([The Messages API](messages-api.md#1-the-big-picture-a-stateless-conversation-loop)).
+- ✅ **Session, in memory, for one run:** the conversation is the `messages` list in `agent_loop` ([harness.py](../src/guardian/harness.py)). It starts with the task. Each round adds Claude's answer, thinking blocks included, and the tool results. When the run ends or crashes, the list is gone.
+- ❌ **Memory:** none. The harness has no store, file or memory tool.
+
+**How the session reaches the model.** In general, context = the fixed parts (the system prompt and the tool definitions) + the session. For the guardian, that is the whole session, because the harness never trims anything. So each call's context is built from the session, and the session reaches the model inside the context. The model only ever sees context. The difference between the two is ownership and lifetime, not content:
+
+- **Session:** what the harness keeps between calls. It stays in the harness, and is never sent as a whole object.
+- **Context:** what the harness builds and sends for one call. The model reads it, answers, and forgets it.
+
+Each round goes the same way:
+
+1. **Keep:** the harness holds the session, the `messages` list.
+2. **Build:** it builds the context: the system prompt, the tool definitions and the whole `messages` list.
+3. **Send:** it sends the context in one `POST /v1/messages`.
+4. **Update:** it adds Claude's answer and the tool results to `messages`, and goes back to step 2.
+
+In code, this is the one-variable case: `messages` is both the session and, in each call, the context ([one variable or two](agent-architecture.md#context-sessions-and-memory)).
+
+**Nothing saved between runs:**
+
+- **The harness:** it saves no conversation. So the next run starts again from the system prompt and the task, and reads the registry again.
+- **The MCP server:** the harness uses the modern protocol, where every request stands alone, with no handshake and no MCP session ([MCP](mcp.md)).
+- **The approve CLI:** it holds the approver's sign-in in MSAL's in-memory token cache, so it can get more tokens without a second sign-in. The cache is gone when the CLI exits, and nothing is saved to disk.
+
+**Where state lives instead:**
+
+- **Pending disable requests:** in the Identity API's memory. A restart loses them, and nothing is disabled (accepted risk A6 in [the threat model](../THREATMODEL.md#accepted-risks)).
+- **Audit lines:** in Loki, on a Docker volume ([Audit logs](infra.md#audit-logs-loki-and-grafana)). They are the only record that survives a restart.
+- **Traces:** the model calls' spans hold the messages ([Tracing notes](tracing.md#notes)), but Jaeger keeps them in memory, and the harness never reads them back.
+
+**What a planted instruction can do:** a prompt injection in an agent description enters the session in a tool result, and stays in the context of every later round of that run. It cannot reach the next run, because nothing the model read is saved. This is control C29 ([The harness controls](security-controls.md#the-harness)), against Memory and Context Poisoning (OWASP ASI06). If a later version adds memory, every memory write needs its own checks.
 
 ## 2. Why the Model Stopped: stop_reason
 
