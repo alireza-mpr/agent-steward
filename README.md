@@ -154,12 +154,83 @@ Every control in place, with the threat it stops and its evidence, is in the [co
 
 ## Tech Stack
 
-- **Identity:** Microsoft Entra Agent ID (blueprints, agent identities, OBO), with Microsoft's Entra ID Auth SDK sidecar as the token source.
-- **Services:** Python 3.13. FastAPI for the Identity API and the executor, and the official MCP Python SDK for the MCP server.
-- **Model:** Claude, through the Anthropic API, in a harness that runs the agent loop.
-- **Observability:** OpenTelemetry in every service, with Jaeger for traces, Loki for audit lines, and Grafana for both, in one telemetry container.
-- **Tenant setup:** Bicep with the Microsoft Graph Bicep extension, and Microsoft Graph PowerShell for the object types Bicep does not support.
-- **Local run:** Docker Compose ([how](docs/infra.md#run-it)).
+Every technology and tool the project uses, by category. Versions are the pinned ones in the repo.
+
+**Identity and access (Microsoft Entra)**
+
+- **Microsoft Entra Agent ID:** an agent identity blueprint, with the guardian's agent identity created from it, and the fixture agents the guardian scans.
+- **Blueprint certificate:** the blueprint's only credential. It is mounted into the token sidecars as a Docker secret, and no other container can read it.
+- **On-Behalf-Of flow for agents (OBO):** the executor exchanges the approver's token for one that runs the disable with the approver's rights.
+- **App roles:** three roles on the Identity API's application: submit findings, request a disable, and approve a disable.
+- **Approver group:** a security group whose direct members get the approve role.
+- **Entra logs:** the sign-in log shows when each agent last signed in. The audit log and the sign-in log together show who disabled an agent.
+
+**Microsoft Graph**
+
+- **Graph v1.0:** reads agent identities, blueprints, sponsors and app role assignments.
+- **Graph beta:** the sign-in logs for the dormant check, agent details that v1.0 does not return, and the disable (a PATCH on the agent identity).
+
+**Token source**
+
+- **Microsoft Entra SDK auth sidecar (1.1.2):** Microsoft's container that holds the certificate and gets each token. There are two: one for the guardian's services, and one for the executor.
+- **MSAL Python (1.39.0):** the approve CLI signs the approver in with the authorization code flow and PKCE, and catches the redirect on a one-shot localhost listener.
+- **PyJWT (2.15.1) and cryptography (50.0.2):** the Identity API checks each token's RS256 signature against Entra's keys, then checks its claims.
+
+**AI model and agent**
+
+- **Claude (Opus 5.5):** the guardian's model, through the Anthropic API.
+- **Anthropic Python SDK (2.3.0):** native tool use, adaptive thinking and the effort setting.
+- **Harness:** our own agent loop in Python, with a hard limit on rounds and a token count per run.
+- **Rich (15.0.0):** prints the run's rounds and its report in the terminal.
+
+**Model Context Protocol (MCP)**
+
+- **Official MCP Python SDK (2.3.0):** the MCP server and the harness's MCP client.
+- **Streamable HTTP transport:** the server accepts only allow-listed host names.
+- **MCP Inspector (2.12.0):** used during development to call the tools by hand ([docker-compose.inspect.yml](docker-compose.inspect.yml)).
+
+**Services**
+
+- **Python 3.13:** every service, the approve CLI and the tests.
+- **FastAPI (0.143.0) and Uvicorn (0.54.0):** the Identity API and the executor.
+- **Policy as JSON:** the tool allow-list, each tool's permissions, what each agent may hold, and the harness's settings ([config/](config/)).
+
+**Observability**
+
+- **OpenTelemetry SDK (1.45.2):** traces in every service, sent over OTLP/HTTP.
+- **OpenTelemetry instrumentation (0.66b2):** automatic spans for FastAPI requests and for outgoing HTTP calls (urllib).
+- **Jaeger (2.23.0):** stores and shows the traces.
+- **Loki (3.7.9):** stores the audit lines, received over OTLP.
+- **Grafana (13.3.0):** shows the traces and the audit lines, with a provisioned dashboard of agent disables.
+- **One telemetry container:** Jaeger, Loki and Grafana are copied from their official images into one container ([observability/](observability/)).
+
+**Tenant setup as code**
+
+- **Bicep with the Microsoft Graph Bicep extension (v1.0, 1.0.0):** the applications, app roles, permission grants and the approver group.
+- **PowerShell 7 with Microsoft Graph PowerShell:** the Agent ID objects that Bicep does not support yet: the blueprint, its certificate, the agent identities and the fixtures ([setup/](setup/)).
+
+**Containers and local run**
+
+- **Docker Compose:** the whole stack starts with one command ([how](docs/infra.md#run-it)). Tests and dev tools run under the `tools` profile, so they never start by default.
+- **Base images:** `python:3.13-slim` for our services, and a distroless Azure Linux image for the sidecar.
+- **Docker secrets:** the certificate reaches the sidecars as a file under `/run/secrets`, never as an environment variable.
+
+**Testing**
+
+- **pytest (9.1.1):** offline unit tests for the policy logic: the allow-list, the approval gate and the token checks.
+- **httpx (0.28.1):** drives the FastAPI services in tests.
+- **Integration tests:** against the running stack, with real Entra tokens.
+- **Agent eval:** runs the guardian against planted prompt injections, and checks that it does not follow them.
+
+**Security frameworks**
+
+- **OWASP Top 10 for Agentic Applications (2026):** the threat model's list of risks ([THREATMODEL.md](THREATMODEL.md)).
+- **MAESTRO:** the layers each risk is mapped to.
+
+**Development tools**
+
+- **Token claim tools:** small scripts that print a token's claims, never the token itself ([tools/](tools/)).
+- **Claude Code:** an AI pair programmer for the code and the docs.
 
 ## Read More
 
