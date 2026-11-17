@@ -34,11 +34,11 @@ flowchart LR
     APPROVER(["<b>Approver</b><br/>approve CLI"])
     subgraph COMPOSE["Docker Compose, one machine"]
         HARNESS["<b>Harness</b><br/>agent loop · D4"]
-        subgraph NS["sidecar's network namespace"]
+        subgraph NS["mcp's network namespace"]
             MCP["<b>MCP server</b><br/>allow-list, asks for a disable · D2"]
             SIDECAR["<b>Sidecar</b><br/>certificate, app-only · D3"]
         end
-        subgraph NSX["executor sidecar's network namespace"]
+        subgraph NSX["executor's network namespace"]
             EXEC["<b>Executor</b><br/>the only write"]
             XSIDECAR["<b>Executor sidecar</b><br/>certificate, OBO · D3"]
         end
