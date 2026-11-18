@@ -66,7 +66,7 @@ The guardian works in two phases. In the **propose phase** it scans on its own, 
 ```mermaid
 flowchart LR
     subgraph Propose["Propose phase: autonomous, as the guardian"]
-        Harness["Harness + Claude<br/>(holds no token)"] -- "tool calls (MCP)" --> MCP["MCP server<br/>allow-list, checks, requests"]
+        Harness["Harness + Claude<br/>(holds no token)"] -- "tool calls (MCP)" --> MCP["MCP server<br/>tools: scan_registry, submit_disable_agent_request<br/><br/> allow-list, checks, requests"]
         MCP -- "loopback" --> Sidecar["Token sidecar<br/>holds the certificate"]
     end
     subgraph Approve["Approve phase: a person, then OBO"]
