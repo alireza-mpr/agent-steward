@@ -1,4 +1,5 @@
-"""The guardian's five governance rules (FR3).
+"""The guardian's registry checks (FR3): four rule-based checks on facts, and one heuristic check
+on free text (poisoned descriptions).
 
 Each rule takes plain data that the guardian read from Microsoft Graph, and returns findings in
 the shape the Identity API accepts. There is no network access here, so the rules can be tested
