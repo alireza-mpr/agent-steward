@@ -354,7 +354,7 @@ Jaeger (traces), Loki (logs) and Grafana (the UI and dashboards) run together in
 - **We update the versions ourselves:** the three image tags are in the Dockerfile.
 - **Grafana shares the container's networks:** any container on the two networks can reach its UI, which has no sign-in. They could already reach Loki's API ([A9](../THREATMODEL.md#accepted-risks)).
 
-**The ports:** 4318 takes the spans (OTLP/HTTP) and 3100 takes the log records (OTLP, path `/otlp`). Jaeger's UI (16686) and Grafana (3000) are published on the host's `127.0.0.1` only. Loki's port is not published. Inside the container, Grafana reaches the other two on `localhost`.
+**The ports:** 4318 takes the spans (OTLP/HTTP) and 3100 takes the log records (OTLP, path `/otlp`). Jaeger's UI and Grafana (3000) are published on the host's `127.0.0.1` only. Jaeger's UI listens on 16686 in the container but is published on host port 16687, so it does not clash with another local Jaeger, which uses 16686 by default. Loki's port is not published. Inside the container, Grafana reaches the other two on `localhost`.
 
 ## Tracing: OpenTelemetry and Jaeger
 
@@ -362,7 +362,7 @@ Every service sends its spans to Jaeger, which runs in [the telemetry container]
 
 1. **Start the stack:** `docker compose up -d --build`.
 2. **Run the guardian:** `docker compose run --rm harness`. Its last line gives the run's trace ID and a Jaeger link.
-3. **Open the trace:** http://localhost:16686, service `harness`, "Find Traces", or the link from step 2.
+3. **Open the trace:** http://localhost:16687, service `harness`, "Find Traces", or the link from step 2.
 4. **Approve or deny:** `docker compose run --rm --service-ports approve`. Each run of the CLI is one trace, `approve-cli: review disable_requests`. Each decision's span in it links to the span that created the request, in the harness's trace.
 
 **Service names in Jaeger:** `harness` (the guardian's harness only, not the whole guardian), `mcp-server`, `identity-api`, `executor`, `approve-cli` and `agent-eval`. The run's root span is still `invoke_agent guardian`: there, `guardian` is the agent's name (`gen_ai.agent.name`), the whole agent, not one container.

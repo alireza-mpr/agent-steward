@@ -84,7 +84,7 @@
               {
                 "id": "links",
                 "value": [
-                  { "title": "Open the approval's trace in Jaeger", "url": "http://localhost:16686/trace/${__value.raw}", "targetBlank": true }
+                  { "title": "Open the approval's trace in Jaeger", "url": "http://localhost:16687/trace/${__value.raw}", "targetBlank": true }
                 ]
               }
             ]

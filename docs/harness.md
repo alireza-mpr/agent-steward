@@ -196,7 +196,7 @@ Errors go to stderr. A run without a trace prints lines like these (the IDs are 
 
 ...the model's report...
 
-[harness] trace ID: <trace ID> (Jaeger: http://localhost:16686/trace/<trace ID>)
+[harness] trace ID: <trace ID> (Jaeger: http://localhost:16687/trace/<trace ID>)
 ```
 
 To see every message between the harness and its two peers, set `GUARDIAN_TRACE`. Each trace keeps the conversation with the model apart from the conversation with the MCP server. A trace already shows every model and MCP step, so in a trace mode only the `[harness]` lines are printed.

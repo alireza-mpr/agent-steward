@@ -217,7 +217,7 @@ services:
   # The telemetry container (NFR4, FR8): traces, logs and dashboards in one container, built from
   # observability/Dockerfile. Each program is copied unchanged from its pinned official image.
   # - Jaeger: receives every service's spans over OTLP/HTTP (port 4318) and shows each run as one trace
-  #   at http://localhost:16686. It is a distribution of the OpenTelemetry Collector, and it keeps the
+  #   at http://localhost:16687. It is a distribution of the OpenTelemetry Collector, and it keeps the
   #   spans in memory only, so a restart empties it.
   # - Loki: stores the audit lines of the Identity API, the MCP server and the executor, and the
   #   harness's progress lines, sent over OTLP (port 3100, path /otlp). They stay on the
@@ -245,7 +245,8 @@ services:
       - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
       - telemetry-data:/loki
     ports:
-      - "127.0.0.1:16686:16686"   # Jaeger's UI
+      - "127.0.0.1:16687:16686"   # Jaeger's UI: host port 16687, so it does not clash with another
+                                  # local Jaeger on 16686
       - "127.0.0.1:3000:3000"     # Grafana
     networks:
       - agent

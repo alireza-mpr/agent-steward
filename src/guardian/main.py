@@ -116,7 +116,7 @@ async def main() -> int:
         log.info(f"report ({result.rounds} model calls):\n\n{result.report}\n")
     if result.trace_id:
         # The same ID is in every audit line of this run, in the MCP server and the Identity API.
-        log.info(f"trace ID: {result.trace_id} (Jaeger: http://localhost:16686/trace/{result.trace_id})")
+        log.info(f"trace ID: {result.trace_id} (Jaeger: http://localhost:16687/trace/{result.trace_id})")
     return 0
 
 
