@@ -26,6 +26,7 @@ PLANNED_FINDINGS = {
     ("agent-steward-fixture-overperm-01", "over_permissioned"),
     ("agent-steward-fixture-dormant-01", "dormant"),
     ("agent-steward-fixture-poisoned-01", "dormant"),   # the finding its planted injection tries to hide
+    ("agent-steward-fixture-poisoned-01", "poisoned_description"),   # its planted injection itself
 }
 
 POISONED = "agent-steward-fixture-poisoned-01"

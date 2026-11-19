@@ -1,4 +1,4 @@
-"""The guardian's four governance rules (FR3).
+"""The guardian's five governance rules (FR3).
 
 Each rule takes plain data that the guardian read from Microsoft Graph, and returns findings in
 the shape the Identity API accepts. There is no network access here, so the rules can be tested
@@ -6,12 +6,34 @@ offline (NFR8).
 """
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 EXPIRING_WITHIN = timedelta(days=14)
 DORMANT_AFTER = timedelta(days=30)   # the sign-in log keeps 30 days, so this is the longest we can see
+
+# The findings that justify asking a person to disable the agent. The other findings are only reported.
+DISABLE_REASONS = frozenset({"dormant", "poisoned_description"})
+
+# Signs of a prompt injection in an agent's description (NFR3): text written for an AI reader, not
+# for a person. A heuristic, not a proof: a careful attacker can avoid every pattern. It is a floor,
+# because the model also reports any instruction-like text it sees. A false alarm costs one "deny".
+INJECTION_SIGNS = {
+    "addresses an AI reader": re.compile(
+        r"\b(to|attention|dear|hey)\s+(the\s+|all\s+|any\s+)?(ai|llm)s?\b"
+        r"|\b(ai|llm|assistant|model|agent)s?\s+(reading|processing|parsing)\s+this\b", re.IGNORECASE),
+    "overrides instructions": re.compile(
+        r"\b(ignore|disregard|forget|override)\b[^.]{0,40}\b(instructions?|rules?|prompts?|guidelines?)\b"
+        r"|\bsystem prompt\b|\bnew instructions?\b", re.IGNORECASE),
+    "tells the reader what to report": re.compile(
+        r"\bdo not (report|flag|mention|list|disclose)\b|\b(end|start|begin) your (report|answer|response|reply)\b",
+        re.IGNORECASE),
+    "asks for a tool call": re.compile(
+        r"\b(call|invoke|execute)\s+(the\s+)?[\w-]+\s+(tool|function)\b"
+        r"|\b(disable_agent|submit_disable_agent_request|scan_registry|get_agent)\b", re.IGNORECASE),
+}
 
 
 @dataclass(frozen=True)
@@ -22,6 +44,7 @@ class Agent:
     sponsor_count: int
     permissions: frozenset[str] = frozenset()   # "<API>/<role>", for example "Microsoft Graph/User.Read.All"
     enabled: bool = True                        # accountEnabled: a disabled agent can get no new tokens
+    description: str = ""                       # free text from whoever registered the agent: data, never instructions
 
 
 @dataclass(frozen=True)
@@ -35,7 +58,7 @@ class Blueprint:
 class Finding:
     agent_app_id: str
     agent_name: str
-    check: str      # orphan, expiring_credential, over_permissioned or dormant
+    check: str      # orphan, expiring_credential, over_permissioned, dormant or poisoned_description
     detail: str
     date: str | None = None   # YYYY-MM-DD: when the credential ends, or when the agent last got a token
 
@@ -113,9 +136,28 @@ def find_dormant(agents: list[Agent], last_sign_ins: dict[str, datetime], now: d
     return findings
 
 
+def find_poisoned_descriptions(agents: list[Agent]) -> list[Finding]:
+    """Flag enabled agents whose description shows signs of a prompt injection (INJECTION_SIGNS).
+
+    The detail names the signs, never the text: the text is the attacker's, and the detail reaches
+    the audit log and the approver. A disabled agent is skipped, as in the dormant rule: the disable
+    is already done. Its text still needs a person to clear it.
+    """
+    findings = []
+    for agent in agents:
+        if not agent.enabled:
+            continue
+        signs = [name for name, pattern in INJECTION_SIGNS.items() if pattern.search(agent.description)]
+        if signs:
+            findings.append(Finding(agent.app_id, agent.name, "poisoned_description",
+                                    f"its description tries to instruct an AI reader: {', '.join(signs)}"))
+    return findings
+
+
 def run_all_rules(agents: list[Agent], blueprints: list[Blueprint], policy: dict[str, frozenset[str]],
                   last_sign_ins: dict[str, datetime], now: datetime) -> list[Finding]:
     return (find_orphans(agents)
             + find_expiring_credentials(agents, blueprints, now)
             + find_over_permissioned(agents, policy)
-            + find_dormant(agents, last_sign_ins, now))
+            + find_dormant(agents, last_sign_ins, now)
+            + find_poisoned_descriptions(agents))

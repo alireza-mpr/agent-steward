@@ -91,7 +91,7 @@ def approver(request: Request) -> Approver:
 class Finding(BaseModel):
     agent_app_id: str
     agent_name: str
-    check: Literal["orphan", "expiring_credential", "over_permissioned", "dormant"]
+    check: Literal["orphan", "expiring_credential", "over_permissioned", "dormant", "poisoned_description"]
     detail: str
     date: str | None = None   # YYYY-MM-DD: when a credential ends, or when the agent last got a token
 

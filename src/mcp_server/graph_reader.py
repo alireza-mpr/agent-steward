@@ -67,7 +67,7 @@ def parse_agents(items: list[dict], permissions: dict[str, frozenset[str]]) -> l
     enabled unless Graph says false, so a missing value never hides a finding."""
     return [Agent(item["appId"], item["displayName"], item["agentIdentityBlueprintId"],
                   len(item.get("sponsors", [])), permissions.get(item["id"], frozenset()),
-                  item.get("accountEnabled") is not False)
+                  item.get("accountEnabled") is not False, item.get("description") or "")
             for item in items]
 
 
@@ -132,7 +132,7 @@ def fetch_blueprints(client: GraphClient) -> list[Blueprint]:
 
 def fetch_agents(client: GraphClient) -> list[Agent]:
     items = client.get_all("/v1.0/servicePrincipals/microsoft.graph.agentIdentity",
-                           {"$select": "id,appId,displayName,agentIdentityBlueprintId,accountEnabled",
+                           {"$select": "id,appId,displayName,description,agentIdentityBlueprintId,accountEnabled",
                             "$expand": "sponsors($select=id)"})
     role_values: dict[str, dict[str, str]] = {}
     permissions = {}

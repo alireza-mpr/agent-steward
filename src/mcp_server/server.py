@@ -31,7 +31,7 @@ from allow_list import AllowListError, load_allow_list
 from approval import SERVICE_ERRORS, ApprovalError, DisableRequest, IdentityApiApprovals
 from disable_checks import GUID, check_can_be_disabled
 from graph_reader import AgentDetails, GraphClient, fetch_agent_details, fetch_agents, fetch_blueprints, fetch_last_sign_ins
-from rules import Finding, load_permission_policy, run_all_rules
+from rules import DISABLE_REASONS, Finding, load_permission_policy, run_all_rules
 from telemetry import audit, setup_tracing
 
 SIDECAR_URL = os.environ.get("SIDECAR_URL", "http://127.0.0.1:5000")
@@ -68,7 +68,7 @@ def submit(findings: list[Finding]) -> dict:
 
 @dataclass(frozen=True)
 class RequestStatus:
-    """The latest disable request for a dormant agent, so the model can see what is already asked."""
+    """The latest disable request for an agent, so the model can see what is already asked."""
     agent_app_id: str
     request_id: str
     status: str                 # pending, approved, denied, expired, running, succeeded or failed (approval.Status)
@@ -81,14 +81,15 @@ class RequestStatus:
 class ScanResult:
     findings: list[Finding]
     accepted: int          # how many findings the Identity API accepted
-    disable_requests: list[RequestStatus]   # the latest request for each dormant agent that has one
+    disable_requests: list[RequestStatus]   # the latest request for each agent with a reason to disable it
 
 
 def latest_requests(findings: list[Finding]) -> list[RequestStatus]:
-    """The latest disable request this server made for each dormant agent, from the Identity API."""
+    """The latest disable request this server made for each agent with a reason to disable it
+    (dormant or poisoned description), from the Identity API."""
     service = approval_service()
     latest = []
-    for agent_app_id in sorted({finding.agent_app_id for finding in findings if finding.check == "dormant"}):
+    for agent_app_id in sorted({finding.agent_app_id for finding in findings if finding.check in DISABLE_REASONS}):
         requests = service.of_agent(agent_app_id)
         if requests:
             newest = requests[0]
@@ -99,7 +100,7 @@ def latest_requests(findings: list[Finding]) -> list[RequestStatus]:
 
 def scan() -> ScanResult:
     """Read the tenant, apply the rules, report the findings to the Identity API, and add the
-    status of the latest disable request for each dormant agent."""
+    status of the latest disable request for each agent with a reason to disable it."""
     now = datetime.now(timezone.utc)
     graph = GraphClient(token_for("graph"))
     findings = run_all_rules(fetch_agents(graph), fetch_blueprints(graph),
@@ -151,9 +152,10 @@ mcp = AllowListedServer(SERVER_NAME, version=SERVER_VERSION)
 # pass through the model on their way there (docs/decisions.md, ADR-001).
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
 def scan_registry() -> ScanResult:
-    """Check every agent identity in the tenant for four flaws: no sponsor (orphan), a blueprint
-    credential that expires soon, more permissions than its policy allows, and no sign-in for 30
-    days (dormant). Reports the findings to the Identity API's audit log, then returns them."""
+    """Check every agent identity in the tenant for five flaws: no sponsor (orphan), a blueprint
+    credential that expires soon, more permissions than its policy allows, no sign-in for 30 days
+    (dormant), and a description that tries to instruct an AI reader (poisoned_description).
+    Reports the findings to the Identity API's audit log, then returns them."""
     return scan()
 
 
@@ -195,12 +197,14 @@ def audit_request(event: str, request: DisableRequest, **fields) -> None:
     audit(event=event, agent=request.agent_id, request_id=request.request_id, **fields)
 
 
-async def request_approval(service: IdentityApiApprovals, agent: AgentDetails, dormant: Finding,
+async def request_approval(service: IdentityApiApprovals, agent: AgentDetails, reasons: list[Finding],
                            reason: str) -> tuple[DisableRequest | None, str | None]:
     """Create the disable request. Returns the request and None, or None and why there is none. The
-    facts come from Graph, so the approver can trust them. The reason comes from the model."""
-    facts = {"name": agent.name, "blueprintAppId": agent.blueprint_app_id, "flaw": dormant.detail,
-             "lastSignIn": dormant.date}
+    facts come from Graph and the rules, so the approver can trust them. The reason comes from the model."""
+    dormant = next((finding for finding in reasons if finding.check == "dormant"), None)
+    facts = {"name": agent.name, "blueprintAppId": agent.blueprint_app_id,
+             "flaw": "; ".join(finding.detail for finding in reasons),
+             "lastSignIn": dormant.date if dormant else None}
     try:
         request = await asyncio.to_thread(service.create, agent.app_id, reason[:MAX_REASON], facts)
     except ApprovalError as error:
@@ -217,18 +221,19 @@ async def request_approval(service: IdentityApiApprovals, agent: AgentDetails, d
 # it happens in the executor, with the approver's rights (decision 7: no shortcut around OBO).
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
 async def submit_disable_agent_request(app_id: str, reason: str) -> SubmittedRequest:
-    """Ask a human to approve disabling one dormant agent identity. Returns at once with the request,
-    which is pending: nothing is disabled now. If the approver approves, the agent is disabled with
-    the approver's own rights. A later scan_registry shows the request's status. Refused for an
-    agent that is not dormant, for the guardian's own agents, and while a request for the agent is
-    already pending. reason: one short sentence for the approver."""
+    """Ask a human to approve disabling one agent identity that is dormant or has a poisoned
+    description. Returns at once with the request, which is pending: nothing is disabled now. If the
+    approver approves, the agent is disabled with the approver's own rights. A later scan_registry
+    shows the request's status. Refused for an agent with neither flaw, for the guardian's own
+    agents, and while a request for the agent is already pending. reason: one short sentence for
+    the approver."""
     graph = GraphClient(token_for("graph"))   # app-only, read-only: the checks before anyone is asked
 
-    agent, dormant, refusal = await check_can_be_disabled(graph, app_id, os.environ["GUARDIAN_AGENT_APP_ID"], audit)
+    agent, reasons, refusal = await check_can_be_disabled(graph, app_id, os.environ["GUARDIAN_AGENT_APP_ID"], audit)
     if refusal:
         raise ToolError(refusal)
 
-    request, not_created = await request_approval(approval_service(), agent, dormant, reason)
+    request, not_created = await request_approval(approval_service(), agent, reasons, reason)
     if not_created:
         raise ToolError(NOT_REQUESTED[not_created])
     return SubmittedRequest(app_id, agent.name, request.request_id, request.status, request.expires_at)

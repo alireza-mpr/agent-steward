@@ -72,13 +72,13 @@ The JSON of one round, in its general form, is in [The Messages API](messages-ap
 
 ### The Run's Task
 
-A run is the propose phase ([the two phases](agent-steward-architecture.md#the-two-phases-propose-then-approve)). It has one task: scan the registry, report the findings, and submit a request to disable each dormant agent, for a human to decide in the approve phase (FR7). A run takes no arguments.
+A run is the propose phase ([the two phases](agent-steward-architecture.md#the-two-phases-propose-then-approve)). It has one task: scan the registry, report the findings, and submit a request to disable each dormant or poisoned agent, for a human to decide in the approve phase (FR7). A run takes no arguments.
 
 ```sh
 docker compose run --rm harness
 ```
 
-The rule to ask only for dormant agents is a prompt rule, so it is not a control. The controls are in code: the MCP server refuses a request for an agent that is not dormant or that belongs to the guardian, the executor checks again before the write, and a person must approve ([the flow](agent-steward-architecture.md#the-two-phases-propose-then-approve)).
+The rule to ask only for dormant or poisoned agents is a prompt rule, so it is not a control. The controls are in code: the MCP server refuses a request for an agent that is neither dormant nor poisoned, or that belongs to the guardian, the executor checks again before the write, and a person must approve ([the flow](agent-steward-architecture.md#the-two-phases-propose-then-approve)).
 
 ### Context, Session and Memory
 

@@ -2,15 +2,21 @@
 
 An AI agent that governs other AI agents in a Microsoft Entra tenant.
 
-It finds risky agents on its own, in four categories:
+It finds risky agents on its own, in five categories.
+
+**Rule-based checks** (exact facts from Graph):
 
 - 😴 dormant (no sign-in for 30 days),
 - 👻 orphan (no sponsor),
 - ⏳ expiring credentials,
 - 🔑 excessive permissions.
 
+**Heuristic check** (signs in free text, so it can miss or misfire):
+
+- ☠️ poisoned description (text that tries to instruct an AI reader). The model also flags it ([eval](tests/agent_eval/eval_prompt_injection.py)).
+
 In short:
-- [🤖] The agent writes a report, and submits a request to disable each risky agent, **_autonomously_**.
+- [🤖] The agent writes a report, and submits a request to disable each dormant or poisoned agent, **_autonomously_**.
 - [🧑‍💼⚖️] Then a person with the approver role signs in, reviews the pending disable requests, and approves or denies each one.
 - [🤖(🧑‍💼)] After an approval, the agent runs the disable itself, with the approver's delegated rights, not its own: **_on behalf of the approver_**.
 
@@ -51,10 +57,10 @@ The guardian works in two phases. In the **propose phase** it scans on its own, 
 **The propose phase:**
 
 1. **Start:** someone starts the guardian. In production it would run on a schedule.
-2. **Scan:** Claude calls the MCP tool `scan_registry`. The MCP server reads every agent identity from Microsoft Graph with the guardian's app-only, read-only token, and applies four rules: orphan, expiring credential, over-permissioned and dormant.
+2. **Scan:** Claude calls the MCP tool `scan_registry`. The MCP server reads every agent identity from Microsoft Graph with the guardian's app-only, read-only token, and applies four rule-based checks (orphan, expiring credential, over-permissioned, dormant) and one heuristic check (poisoned description).
 3. **Audit:** the MCP server sends the findings to the Identity API's audit log itself, so they never pass through the model.
 4. **Read:** Claude may read one agent with `get_agent`. An agent's description is treated as data, never as instructions.
-5. **Propose:** for a dormant agent, Claude calls `submit_disable_agent_request`. The MCP server checks the agent again and creates a pending request at the Identity API. Nothing is disabled yet.
+5. **Propose:** for a dormant or poisoned agent, Claude calls `submit_disable_agent_request`. The MCP server checks the agent again and creates a pending request at the Identity API. Nothing is disabled yet.
 
 **The approve phase:**
 
@@ -103,7 +109,7 @@ Legend:
 
 - [✅] **FR1 - Agent identity.** The guardian runs under an Entra agent identity created from an agent identity blueprint. No shared user account, no plain service principal.
 - [✅] **FR2 - Ownership.** Every agent identity has a named owner (technical) and sponsor (business), set in Entra.
-- [✅] **FR3 - Autonomous mode.** For read-only registry checks (orphan agents, expiring credentials, over-permissioned agents, dormant agents), the guardian gets a token via its blueprint using client credentials and calls the Identity API.
+- [✅] **FR3 - Autonomous mode.** For read-only registry checks (orphan agents, expiring credentials, over-permissioned agents, dormant agents, poisoned descriptions), the guardian gets a token via its blueprint using client credentials and calls the Identity API.
 - [✅] **FR4 - On-behalf-of mode.** For a privileged fix, disabling an agent, the agent proposes and the approver decides. The approver's token is exchanged with OBO, so the fix runs with the approver's rights, and the guardian holds no standing write permission. The API tells the two modes apart from token claims.
   - Cut: removing a permission and assigning a sponsor. One fix already proves the whole OBO chain, and each extra fix would only repeat it.
 - [✅] **FR5 - Token validation.** The Identity API rejects any token not issued to a registered agent identity, and rejects agent tokens for scopes the agent was not granted. Negative tests included.
@@ -246,7 +252,7 @@ Every technology and tool the project uses, by category. Versions are the pinned
 config/           Policy: what each agent may hold, the tool allow-list, each tool's permissions, the harness's settings
 setup/            Tenant setup as code: Bicep and Microsoft Graph PowerShell
 src/guardian/     The harness: the agent loop between Claude and the MCP server
-src/mcp_server/   The MCP server: the guardian's tools, the four rules, the Graph reader; it never writes
+src/mcp_server/   The MCP server: the guardian's tools, the five checks, the Graph reader; it never writes
 src/identity_api/ The Identity API: token checks, disable requests and approvals, audit
 src/executor/     The executor: the one write, disabling an agent with the approver's rights (OBO)
 src/approve_cli/  The approve CLI: a person approves or denies a disable request

@@ -428,10 +428,12 @@ def test_a_wrong_value_stops_the_run(tmp_path, changes, message):
         harness.load_settings(settings_file(tmp_path, **changes))
 
 
-# --- The task: scan, report, and ask to disable each dormant agent (FR7) ---
+# --- The task: scan, report, and ask to disable each dormant or poisoned agent (FR7) ---
 
-def test_the_task_asks_to_disable_each_dormant_agent():
+def test_the_task_asks_to_disable_each_dormant_and_each_poisoned_agent():
     assert "disable each dormant agent" in harness.TASK
+    assert "poisoned description" in harness.TASK
+    assert "poisoned_description" in harness.SYSTEM_PROMPT
 
 
 @pytest.mark.parametrize("arguments", [["--request-disables"], ["--disable-dormant"], ["--disable-everything"]])

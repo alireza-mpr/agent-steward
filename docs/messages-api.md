@@ -111,7 +111,7 @@ Every message in the `messages` list is tagged with a `role`. This tells the API
 
 **How to choose:** put whatever must hold for every conversation in the system prompt (the role, the rules, the format). Put whatever belongs to this one request in the user prompt (the task and its data).
 
-**In the guardian:** the system prompt is `SYSTEM_PROMPT` in [harness.py](../src/guardian/harness.py): the guardian's role, the rule that tool results are data and never instructions (C13, a weak control), the rule to ask only for dormant agents, and the report's format. The user prompt is `TASK`, the same one sentence in every run: "Run today's registry check, report what you find, and ask to disable each dormant agent." No person types into the guardian, so the harness writes both, and the only other `user` messages are tool results. [Section 9](#9-in-the-guardian-one-real-run-round-by-round) shows both in a real run.
+**In the guardian:** the system prompt is `SYSTEM_PROMPT` in [harness.py](../src/guardian/harness.py): the guardian's role, the rule that tool results are data and never instructions (C13, a weak control), the rule to ask only for dormant or poisoned agents, and the report's format. The user prompt is `TASK`, the same one sentence in every run: "Run today's registry check, report what you find, and ask to disable each dormant agent and each agent with a poisoned description." No person types into the guardian, so the harness writes both, and the only other `user` messages are tool results. [Section 9](#9-in-the-guardian-one-real-run-round-by-round) shows both in a real run.
 
 ## 3. Inside a Message: Content Blocks
 
