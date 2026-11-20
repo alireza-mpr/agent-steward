@@ -4,6 +4,7 @@
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; dominant-baseline: central; text-anchor: middle; }
     .ink { fill: #334155; }
+    .on-box { fill: #334155; }   /* text on a light box: stays dark in dark mode */
     .line { stroke: #64748b; stroke-width: 1.5; fill: none; }
     .head { fill: #64748b; }
     .box-text { fill: #0f172a; font-size: 16px; }
@@ -60,7 +61,7 @@
   <line class="divider" x1="46" y1="180" x2="364" y2="180"/>
 
   <rect class="frame-group" x="46" y="190" width="318" height="134" rx="6"/>
-  <text class="ink caption start" x="60" y="206">Rule-based checks</text>
+  <text class="on-box caption start" x="60" y="206">Rule-based checks</text>
   <text class="item start" x="60" y="232">😴 Dormant</text>
   <rect class="tag" x="272" y="222" width="80" height="20" rx="10"/>
   <text class="tag-text" x="312" y="232">📨 request</text>
@@ -69,7 +70,7 @@
   <text class="item start" x="60" y="310">🔑 Excessive permissions</text>
 
   <rect class="frame-group" x="46" y="332" width="318" height="52" rx="6"/>
-  <text class="ink caption start" x="60" y="346">Heuristic check</text>
+  <text class="on-box caption start" x="60" y="346">Heuristic check</text>
   <text class="item start" x="60" y="368">☠️ Poisoned description</text>
   <rect class="tag" x="272" y="358" width="80" height="20" rx="10"/>
   <text class="tag-text" x="312" y="368">📨 request</text>
@@ -80,8 +81,8 @@
 
   <rect class="calm" x="475" y="112" width="130" height="76" rx="8"/>
   <text x="540" y="132" font-size="22">📨...📨</text>
-  <text class="ink label" x="540" y="155">Disable requests</text>
-  <text class="ink label" x="540" y="173">(pending)</text>
+  <text class="on-box label" x="540" y="155">Disable requests</text>
+  <text class="on-box label" x="540" y="173">(pending)</text>
 
   <!-- The approver lists the pending requests -->
   <path class="line" d="M700,150 H609" marker-end="url(#arrow)"/>
