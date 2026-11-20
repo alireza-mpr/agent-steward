@@ -4,9 +4,9 @@
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; dominant-baseline: central; text-anchor: middle; }
     .ink { fill: #334155; }
-    .on-box { fill: #334155; }   /* text on a light box: stays dark in dark mode */
-    .line { stroke: #64748b; stroke-width: 1.5; fill: none; }
-    .head { fill: #64748b; }
+    .on-box { fill: #334155; }
+    .line { stroke: #475569; stroke-width: 1.5; fill: none; }
+    .head { fill: #475569; }
     .box-text { fill: #0f172a; font-size: 16px; }
     .item { fill: #0f172a; font-size: 15px; }
     .title { font-size: 15px; font-weight: 600; }
@@ -18,30 +18,24 @@
     .end { text-anchor: end; }
     .agent { fill: #dbeafe; stroke: #2563eb; stroke-width: 2; }
     .human { fill: #fef3c7; stroke: #d97706; stroke-width: 2; }
-    .calm { fill: #f1f5f9; stroke: #64748b; stroke-width: 1; }
+    .calm { fill: #f1f5f9; stroke: #475569; stroke-width: 1; }
     .entra { fill: #f1f5f9; stroke: #64748b; stroke-width: 2; }
     .tag { fill: #fef3c7; stroke: #d97706; stroke-width: 1; }
     .tag-text { fill: #92400e; font-size: 12px; }
-    .divider { stroke: #93c5fd; stroke-width: 1; }
-    .frame-group { fill: none; stroke: #64748b; stroke-width: 1.5; stroke-dasharray: 5 3; }
+    .divider { stroke: #60a5fa; stroke-width: 1; }
+    .frame-group { fill: none; stroke: #475569; stroke-width: 1.5; stroke-dasharray: 5 3; }
     .phase-propose { fill: #2563eb; }
     .phase-decide { fill: #d97706; }
     .phase-execute { fill: #16a34a; }
-    @media (prefers-color-scheme: dark) {
-      .ink { fill: #cbd5e1; }
-      .line { stroke: #94a3b8; }
-      .head { fill: #94a3b8; }
-      .frame-group, .calm, .entra { stroke: #94a3b8; }
-      .phase-propose { fill: #60a5fa; }
-      .phase-decide { fill: #fbbf24; }
-      .phase-execute { fill: #4ade80; }
-    }
   </style>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path class="head" d="M0,0 L10,5 L0,10 z"/>
     </marker>
   </defs>
+
+  <!-- A white background, so the picture looks the same in light and dark mode -->
+  <rect width="100%" height="100%" fill="#ffffff"/>
 
   <!-- Phase headings -->
   <text class="phase phase-propose" x="205" y="28">1. PROPOSE</text>
