@@ -130,10 +130,14 @@ def fetch_blueprints(client: GraphClient) -> list[Blueprint]:
                                            {"$select": "appId,displayName,passwordCredentials,keyCredentials"}))
 
 
-def fetch_agents(client: GraphClient) -> list[Agent]:
-    items = client.get_all("/v1.0/servicePrincipals/microsoft.graph.agentIdentity",
-                           {"$select": "id,appId,displayName,description,agentIdentityBlueprintId,accountEnabled",
-                            "$expand": "sponsors($select=id)"})
+def fetch_agents(client: GraphClient, app_id: str | None = None) -> list[Agent]:
+    """Every agent identity, or only the one with app_id. The caller must check that app_id is a
+    GUID first, because it goes into the Graph filter."""
+    query = {"$select": "id,appId,displayName,description,agentIdentityBlueprintId,accountEnabled",
+             "$expand": "sponsors($select=id)"}
+    if app_id:
+        query["$filter"] = f"appId eq '{app_id}'"
+    items = client.get_all("/v1.0/servicePrincipals/microsoft.graph.agentIdentity", query)
     role_values: dict[str, dict[str, str]] = {}
     permissions = {}
     for item in items:

@@ -15,8 +15,7 @@ each conversation in its own sections:
 The trace holds real tenant data (agent names, IDs), so keep it out of git (run*.txt is ignored)
 and redact it before you share it.
 
-A run scans, reports, and asks a human to approve disabling each dormant agent and each agent with a
-poisoned description (FR7). Each request
+A run scans, reports, and asks a human to approve disabling each flagged agent (FR7). Each request
 returns at once as pending: the approver's decision and the disable come later, in the approve CLI.
 """
 

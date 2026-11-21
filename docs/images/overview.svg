@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1310" height="520" viewBox="0 0 1310 520" role="img" aria-labelledby="title desc">
   <title id="title">How Agent Steward works</title>
-  <desc id="desc">Three phases in a row, above Microsoft Entra. 1. Propose, autonomous: Agent Steward reads the agent details in Entra and checks every agent for five risks and reports them. Four are rule-based checks: dormant, no sponsor, expiring credential and excessive permissions. One is a heuristic check: a poisoned description. A dormant or poisoned agent gets a disable request, which waits as a pending disable request. 2. Decide: the approver lists the pending requests, reviews each pending request, and approves or denies it. On deny, nothing changes. 3. Execute, on behalf of the approver: after an approval, the approver lends their rights with OBO, and Agent Steward disables the agent in Entra under its own identity, with the approver's rights.</desc>
+  <desc id="desc">Three phases in a row, above Microsoft Entra. 1. Propose, autonomous: Agent Steward reads the agent details in Entra and checks every agent for five risks and reports them. Four are rule-based checks: dormant, orphan, expiring credential and excessive permissions. One is a heuristic check: a poisoned description. Each flagged agent gets a disable request, which waits as a pending disable request. 2. Decide: the approver lists the pending requests, reviews each pending request, and approves or denies it. On deny, nothing changes. 3. Execute, on behalf of the approver: after an approval, the approver lends their rights with OBO, and Agent Steward disables the agent in Entra under its own identity, with the approver's rights.</desc>
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; dominant-baseline: central; text-anchor: middle; }
     .ink { fill: #334155; }
@@ -20,8 +20,6 @@
     .human { fill: #fef3c7; stroke: #d97706; stroke-width: 2; }
     .calm { fill: #f1f5f9; stroke: #475569; stroke-width: 1; }
     .entra { fill: #f1f5f9; stroke: #64748b; stroke-width: 2; }
-    .tag { fill: #fef3c7; stroke: #d97706; stroke-width: 1; }
-    .tag-text { fill: #92400e; font-size: 12px; }
     .divider { stroke: #60a5fa; stroke-width: 1; }
     .frame-group { fill: none; stroke: #475569; stroke-width: 1.5; stroke-dasharray: 5 3; }
     .phase-propose { fill: #2563eb; }
@@ -57,17 +55,13 @@
   <rect class="frame-group" x="46" y="190" width="318" height="134" rx="6"/>
   <text class="on-box caption start" x="60" y="206">Rule-based checks</text>
   <text class="item start" x="60" y="232">😴 Dormant</text>
-  <rect class="tag" x="272" y="222" width="80" height="20" rx="10"/>
-  <text class="tag-text" x="312" y="232">📨 request</text>
-  <text class="item start" x="60" y="258">👻 No sponsor</text>
+  <text class="item start" x="60" y="258">👻 Orphan</text>
   <text class="item start" x="60" y="284">⏳ Expiring credential</text>
   <text class="item start" x="60" y="310">🔑 Excessive permissions</text>
 
   <rect class="frame-group" x="46" y="332" width="318" height="52" rx="6"/>
   <text class="on-box caption start" x="60" y="346">Heuristic check</text>
   <text class="item start" x="60" y="368">☠️ Poisoned description</text>
-  <rect class="tag" x="272" y="358" width="80" height="20" rx="10"/>
-  <text class="tag-text" x="312" y="368">📨 request</text>
 
   <!-- 1 to the queue: the disable request waits -->
   <path class="line" d="M380,150 H471" marker-end="url(#arrow)"/>

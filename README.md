@@ -1,26 +1,19 @@
 # Agent Steward
 
-An AI agent that governs other AI agents in a Microsoft Entra tenant.
-
-It finds risky agents on its own, in five categories.
-
-**Rule-based checks** (exact facts from Graph):
-
+Agent Steward is an AI agent that governs other AI agents in a Microsoft Entra tenant. It finds risky agents on its own, in five categories:
 - 😴 dormant (no sign-in for 30 days),
 - 👻 orphan (no sponsor),
 - ⏳ expiring credentials,
-- 🔑 excessive permissions.
+- 🔑 excessive permissions,
+- ☠️ poisoned agent description (text that tries to instruct an AI reader).
 
-**Heuristic check** (signs in free text, so it can miss or misfire):
+**How it works, in short:**
 
-- ☠️ poisoned description (text that tries to instruct an AI reader). The model also flags it ([eval](tests/agent_eval/eval_prompt_injection.py)).
+1. The agent writes a report, and submits a request to disable each flagged agent, **_autonomously_**.
+2. Then a human with the approver role signs in, reviews the pending disable requests, and approves or denies each one: **_Human-in-the-loop (HITL)_**.
+3. After an approval, the agent runs the disable itself, with the approver's delegated rights, not its own: **_on behalf of the approver_**.
 
-In short:
-- [🤖] The agent writes a report, and submits a request to disable each dormant or poisoned agent, **_autonomously_**.
-- [🧑‍💼⚖️] Then a person with the approver role signs in, reviews the pending disable requests, and approves or denies each one.
-- [🤖(🧑‍💼)] After an approval, the agent runs the disable itself, with the approver's delegated rights, not its own: **_on behalf of the approver_**.
-
-In summary: **the agent proposes, the approver decides, and the agent executes on behalf of the approver**.
+In summary: **the agent proposes -> the approver decides -> the agent executes on behalf of the approver**.
 
 ![How Agent Steward works: the agent scans Entra and proposes, the approver decides, and the agent disables with the approver's rights](docs/images/overview.svg)
 
@@ -60,7 +53,7 @@ The guardian works in two phases. In the **propose phase** it scans on its own, 
 2. **Scan:** Claude calls the MCP tool `scan_registry`. The MCP server reads every agent identity from Microsoft Graph with the guardian's app-only, read-only token, and applies four rule-based checks (orphan, expiring credential, over-permissioned, dormant) and one heuristic check (poisoned description).
 3. **Audit:** the MCP server sends the findings to the Identity API's audit log itself, so they never pass through the model.
 4. **Read:** Claude may read one agent with `get_agent`. An agent's description is treated as data, never as instructions.
-5. **Propose:** for a dormant or poisoned agent, Claude calls `submit_disable_agent_request`. The MCP server checks the agent again and creates a pending request at the Identity API. Nothing is disabled yet.
+5. **Propose:** for each flagged agent, Claude calls `submit_disable_agent_request`. The MCP server checks the agent again and creates a pending request at the Identity API. Nothing is disabled yet.
 
 **The approve phase:**
 

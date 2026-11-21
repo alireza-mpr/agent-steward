@@ -15,9 +15,6 @@ from pathlib import Path
 EXPIRING_WITHIN = timedelta(days=14)
 DORMANT_AFTER = timedelta(days=30)   # the sign-in log keeps 30 days, so this is the longest we can see
 
-# The findings that justify asking a person to disable the agent. The other findings are only reported.
-DISABLE_REASONS = frozenset({"dormant", "poisoned_description"})
-
 # Signs of a prompt injection in an agent's description (NFR3): text written for an AI reader, not
 # for a person. A heuristic, not a proof: a careful attacker can avoid every pattern. It is a floor,
 # because the model also reports any instruction-like text it sees. A false alarm costs one "deny".
@@ -115,17 +112,13 @@ def find_over_permissioned(agents: list[Agent], policy: dict[str, frozenset[str]
 
 
 def find_dormant(agents: list[Agent], last_sign_ins: dict[str, datetime], now: datetime) -> list[Finding]:
-    """Flag enabled agents that got no token in the last 30 days.
+    """Flag agents that got no token in the last 30 days.
 
     last_sign_ins holds each agent identity's own last sign-in (its T2 requests), not its
-    blueprint's: one blueprint signs in for all its agents. A disabled agent is skipped: the only
-    fix for a dormant agent is to disable it, so it is already fixed. The other rules still apply
-    to it, because a disable removes no permission and adds no sponsor.
+    blueprint's: one blueprint signs in for all its agents.
     """
     findings = []
     for agent in agents:
-        if not agent.enabled:
-            continue
         last = last_sign_ins.get(agent.app_id)
         if last is None:
             detail = "no sign-in in the last 30 days"
@@ -138,16 +131,13 @@ def find_dormant(agents: list[Agent], last_sign_ins: dict[str, datetime], now: d
 
 
 def find_poisoned_descriptions(agents: list[Agent]) -> list[Finding]:
-    """Flag enabled agents whose description shows signs of a prompt injection (INJECTION_SIGNS).
+    """Flag agents whose description shows signs of a prompt injection (INJECTION_SIGNS).
 
     The detail names the signs, never the text: the text is the attacker's, and the detail reaches
-    the audit log and the approver. A disabled agent is skipped, as in the dormant rule: the disable
-    is already done. Its text still needs a person to clear it.
+    the audit log and the approver.
     """
     findings = []
     for agent in agents:
-        if not agent.enabled:
-            continue
         signs = [name for name, pattern in INJECTION_SIGNS.items() if pattern.search(agent.description)]
         if signs:
             findings.append(Finding(agent.app_id, agent.name, "poisoned_description",
@@ -157,6 +147,10 @@ def find_poisoned_descriptions(agents: list[Agent]) -> list[Finding]:
 
 def run_all_rules(agents: list[Agent], blueprints: list[Blueprint], policy: dict[str, frozenset[str]],
                   last_sign_ins: dict[str, datetime], now: datetime) -> list[Finding]:
+    """Every finding of every rule. Each finding is a reason to ask a person to disable the agent.
+    A disabled agent is skipped: the disable is the fix, so it is already done, and it can get no
+    new tokens."""
+    agents = [agent for agent in agents if agent.enabled]
     return (find_orphans(agents)
             + find_expiring_credentials(agents, blueprints, now)
             + find_over_permissioned(agents, policy)

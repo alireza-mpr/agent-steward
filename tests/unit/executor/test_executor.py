@@ -75,7 +75,7 @@ def setup(monkeypatch):
     monkeypatch.setenv("GUARDIAN_AGENT_APP_ID", GUARDIAN.app_id)
     monkeypatch.setattr(disable_checks, "fetch_agent_details",
                         lambda client, app_id: GUARDIAN if app_id == GUARDIAN.app_id else AGENT)
-    monkeypatch.setattr(disable_checks, "dormant_finding", lambda graph, agent, now: DORMANT)
+    monkeypatch.setattr(disable_checks, "findings_for", lambda graph, app_id, now: [DORMANT])
     claims = {"value": {"oid": APPROVER, "scp": "access_as_user"}}
     monkeypatch.setattr(executor, "validate_user_token", lambda tc: claims["value"])
     monkeypatch.setattr(executor, "obo_token", lambda tc: "obo-token")
@@ -176,10 +176,10 @@ def test_a_delegation_with_ids_that_are_not_guids_is_refused_before_any_call(age
     assert disabled == []
 
 
-def test_an_agent_that_is_no_longer_dormant_is_not_disabled_after_the_approval(setup, monkeypatch):
+def test_an_agent_that_no_rule_flags_any_more_is_not_disabled_after_the_approval(setup, monkeypatch):
     disabled, use, _ = setup
     approvals = use(FakeApprovals("approved"))
-    monkeypatch.setattr(disable_checks, "dormant_finding", lambda graph, agent, now: None)
+    monkeypatch.setattr(disable_checks, "findings_for", lambda graph, app_id, now: [])
 
     assert delegate() == (409, "no_longer_allowed")
     assert disabled == [] and approvals.executed == []

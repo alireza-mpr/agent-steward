@@ -39,7 +39,7 @@ The MCP server runs three tools ([server.py](../src/mcp_server/server.py)). For 
 
 ### scan_registry
 
-It reads every agent identity in the tenant, applies the five checks, sends the findings to the audit log, and adds the latest disable request of each dormant or poisoned agent.
+It reads every agent identity in the tenant, applies the five checks, sends the findings to the audit log, and adds the latest disable request of each flagged agent.
 
 | Call | API | Permission | Why | Source |
 |---|---|---|---|---|
@@ -50,7 +50,7 @@ It reads every agent identity in the tenant, applies the five checks, sends the 
 | `GET /v1.0/applications/microsoft.graph.agentIdentityBlueprint` | Graph | `AgentIdentityBlueprint.Read.All` | The blueprints and their credentials (the expiring check) | [List agentIdentityBlueprint objects](https://learn.microsoft.com/en-us/graph/api/agentidentityblueprint-list?view=graph-rest-1.0) |
 | `GET /beta/auditLogs/signIns` | Graph | `AuditLog.Read.All` | The sign-ins of the last 30 days (the dormant check) | [List signIns](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-beta) |
 | `POST /findings` | Identity API | `Findings.Submit` | The findings, into the audit log | [main.py](../src/identity_api/main.py) |
-| `GET /agents/{agent_id}/disableRequests` | Identity API | `AgentDisable.Request` | The latest disable request for each dormant or poisoned agent | [main.py](../src/identity_api/main.py) |
+| `GET /agents/{agent_id}/disableRequests` | Identity API | `AgentDisable.Request` | The latest disable request for each flagged agent | [main.py](../src/identity_api/main.py) |
 
 **So it needs:** all six of the guardian's application permissions. It is the tool that does most of the work.
 
@@ -66,15 +66,19 @@ It reads one agent identity by its app ID, with the free-text description that t
 
 ### submit_disable_agent_request
 
-It checks that the agent may be disabled, then asks an approver. It writes nothing in Graph.
+It runs every rule again for this one agent, checks that the agent may be disabled, then asks an approver. It writes nothing in Graph.
 
 | Call | API | Permission | Why | Source |
 |---|---|---|---|---|
-| `GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity` (filtered by `appId`) | Graph | `AgentIdentity.Read.All` | The agent and the guardian: the agent is not the guardian's own, and not disabled yet | [List agentIdentity objects](https://learn.microsoft.com/en-us/graph/api/agentidentity-list?view=graph-rest-1.0) |
-| `GET /beta/auditLogs/signIns` | Graph | `AuditLog.Read.All` | Is the agent dormant? | [List signIns](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-beta) |
+| `GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity` (filtered by `appId`) | Graph | `AgentIdentity.Read.All` | The agent and the guardian: the agent is not the guardian's own, not disabled yet, and its sponsors and description | [List agentIdentity objects](https://learn.microsoft.com/en-us/graph/api/agentidentity-list?view=graph-rest-1.0) |
+| `GET /v1.0/servicePrincipals/{id}/appRoleAssignments` | Graph | `Application.Read.All` | The agent's own app role assignments (the over-permissioned check) | [List appRoleAssignments granted to a service principal](https://learn.microsoft.com/en-us/graph/api/serviceprincipal-list-approleassignments?view=graph-rest-1.0) |
+| `GET /beta/servicePrincipals/{id}/microsoft.graph.agentIdentity/inheritedAppRoleAssignments` | Graph | `Application.Read.All` | The assignments the agent inherits from its blueprint | [List inherited app role assignments](https://learn.microsoft.com/en-us/graph/api/agentidentity-list-inheritedapproleassignments?view=graph-rest-beta) |
+| `GET /v1.0/servicePrincipals/{id}` | Graph | `Application.Read.All` | The role names of each API the agent holds roles on | [Get servicePrincipal](https://learn.microsoft.com/en-us/graph/api/serviceprincipal-get?view=graph-rest-1.0) |
+| `GET /v1.0/applications/microsoft.graph.agentIdentityBlueprint` | Graph | `AgentIdentityBlueprint.Read.All` | The blueprints and their credentials (the expiring check) | [List agentIdentityBlueprint objects](https://learn.microsoft.com/en-us/graph/api/agentidentityblueprint-list?view=graph-rest-1.0) |
+| `GET /beta/auditLogs/signIns` | Graph | `AuditLog.Read.All` | The sign-ins of the last 30 days (the dormant check) | [List signIns](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-beta) |
 | `POST /agents/{agent_id}/disableRequests` | Identity API | `AgentDisable.Request` | The disable request, for an approver | [main.py](../src/identity_api/main.py) |
 
-**So it needs:** three permissions.
+**So it needs:** five permissions: the four Graph read permissions of the scan, and one role at the Identity API.
 
 ## The Executor
 
@@ -84,7 +88,11 @@ The executor runs the approved disable ([executor.py](../src/executor/executor.p
 |---|---|---|---|---|---|
 | `GET /agents/{agent_id}/disableRequests/{request_id}` | Identity API | `AgentDisable.Request` | Application | The request: approved, and by this approver? | [main.py](../src/identity_api/main.py) |
 | `GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity` (filtered by `appId`) | Graph | `AgentIdentity.Read.All` | Application | The same checks as the request tool, and the agent's object ID for the write | [List agentIdentity objects](https://learn.microsoft.com/en-us/graph/api/agentidentity-list?view=graph-rest-1.0) |
-| `GET /beta/auditLogs/signIns` | Graph | `AuditLog.Read.All` | Application | Is the agent still dormant? | [List signIns](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-beta) |
+| `GET /v1.0/servicePrincipals/{id}/appRoleAssignments` | Graph | `Application.Read.All` | Application | The agent's own app role assignments (the over-permissioned check) | [List appRoleAssignments granted to a service principal](https://learn.microsoft.com/en-us/graph/api/serviceprincipal-list-approleassignments?view=graph-rest-1.0) |
+| `GET /beta/servicePrincipals/{id}/microsoft.graph.agentIdentity/inheritedAppRoleAssignments` | Graph | `Application.Read.All` | Application | The assignments the agent inherits from its blueprint | [List inherited app role assignments](https://learn.microsoft.com/en-us/graph/api/agentidentity-list-inheritedapproleassignments?view=graph-rest-beta) |
+| `GET /v1.0/servicePrincipals/{id}` | Graph | `Application.Read.All` | Application | The role names of each API the agent holds roles on | [Get servicePrincipal](https://learn.microsoft.com/en-us/graph/api/serviceprincipal-get?view=graph-rest-1.0) |
+| `GET /v1.0/applications/microsoft.graph.agentIdentityBlueprint` | Graph | `AgentIdentityBlueprint.Read.All` | Application | The blueprints and their credentials (the expiring check) | [List agentIdentityBlueprint objects](https://learn.microsoft.com/en-us/graph/api/agentidentityblueprint-list?view=graph-rest-1.0) |
+| `GET /beta/auditLogs/signIns` | Graph | `AuditLog.Read.All` | Application | The sign-ins of the last 30 days: is the agent still flagged? | [List signIns](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-beta) |
 | `POST /agents/{agent_id}/disableRequests/{request_id}/execution` | Identity API | `AgentDisable.Request` | Application | Claim the request, right before the write | [main.py](../src/identity_api/main.py) |
 | `PATCH /beta/servicePrincipals/{id}/microsoft.graph.agentIdentity` | Graph | `AgentIdentity.EnableDisable.All` | Delegated | The disable, with the approver's rights | [Update agentIdentity](https://learn.microsoft.com/en-us/graph/api/agentidentity-update?view=graph-rest-beta) |
 | `GET /beta/servicePrincipals/{id}/microsoft.graph.agentIdentity` | Graph | `AgentIdentity.Read.All` | Application | Read `accountEnabled` back, until Graph shows the change | [Get agentIdentity](https://learn.microsoft.com/en-us/graph/api/agentidentity-get?view=graph-rest-1.0) |

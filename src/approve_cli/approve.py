@@ -159,7 +159,7 @@ DELEGATION_RESULTS = {
     "not_the_approver": "Not disabled: the guardian refused, because you are not the person who approved.",
     "not_approved": "Not disabled: the request is not approved.",
     "already_executed": "Not disabled now: this request was already carried out.",
-    "no_longer_allowed": "Not disabled: the agent is already disabled, has no reason to be disabled any more, or belongs to the guardian.",
+    "no_longer_allowed": "Not disabled: the agent is already disabled, no rule flags it any more, or it belongs to the guardian.",
     "not_executable": "Not disabled: the approval can no longer be used.",
     "write_failed": "Not disabled: the write to Microsoft Graph failed. Check the executor's audit log.",
 }

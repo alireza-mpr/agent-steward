@@ -3,7 +3,7 @@
 This document shows how this project's **Guardian** agent is built today: its parts, its main flows, and every shortcut it takes from the enterprise design, with the risk each one accepts. For the general design that the Guardian is compared with, see [Agent Architecture: The Enterprise Reference Design](agent-architecture.md). The decisions behind this design, with their reasons, are in the [decision log](decisions.md).
 
 > **Current Implementation Status: Partly Built**
-> * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with three tools (`scan_registry` runs the Guardian's four rule-based checks and one heuristic check, `get_agent` reads one agent, `submit_disable_agent_request` asks a human to approve disabling a dormant or poisoned agent) and its tool allow-list, the executor, which does an approved disable with the approver's own rights (OBO), and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an MCP integration test proves it.
+> * **Built:** The Entra identity, the sidecar (Microsoft Entra ID Auth SDK), the Identity API, the MCP server with three tools (`scan_registry` runs the Guardian's four rule-based checks and one heuristic check, `get_agent` reads one agent, `submit_disable_agent_request` asks a human to approve disabling a flagged agent) and its tool allow-list, the executor, which does an approved disable with the approver's own rights (OBO), and the harness's agent loop with Claude. The Guardian's container cannot reach the sidecar, and an MCP integration test proves it.
 > * **Run live:** both phases end to end, with the OBO disable, on 10 November 2026 ([the approve phase](#the-approve-phase)).
 > * **Not built yet:** The link from a trace to the Entra sign-in log (the token's `uti` in each audit line).
 > 
@@ -63,7 +63,7 @@ flowchart LR
 
 ### Why the Guardian Uses a Model
 
-Every safety decision is deterministic, on purpose. The MCP server's rules decide which agents are flagged, the allow-list decides which tools exist, the MCP server checks each request, and the executor checks again before the write (the agent must be dormant or poisoned, and not the guardian's own), and a human approves each disable and lends their rights for it.
+Every safety decision is deterministic, on purpose. The MCP server's rules decide which agents are flagged, the allow-list decides which tools exist, the MCP server checks each request, and the executor checks again before the write (a rule must still flag the agent, and it must not be the guardian's own), and a human approves each disable and lends their rights for it.
 
 The model is used where rules fail: scanning unstructured data, such as an agent's description, for malicious text. A rule could search for known words, but an attacker can reword the text easily. In the NFR3 agent eval, it flagged the planted prompt injection in a description on its own ([eval_prompt_injection.py](../tests/agent_eval/eval_prompt_injection.py)).
 
@@ -92,7 +92,7 @@ So the guardian holds no standing write permission: its app-only write role was 
 - **Its own process and sidecar:** the executor runs as the same guardian agent identity, through a second sidecar. Only that sidecar has the OBO settings, and only the executor holds the write code.
 - **Its own network:** the executor's sidecar is on the approval network, with the approve CLI and the Identity API. The harness is not on it, so the harness cannot reach the executor.
 - **The write needs a person:** without an approver's Tc, nothing can write, and Tc goes only to the executor. So a compromised MCP server can still ask for a disable, but it cannot carry one out.
-- **The same checks twice:** the executor runs the MCP server's checks again before the write (not the guardian's own, still dormant or poisoned), from one shared module ([disable_checks.py](../src/mcp_server/disable_checks.py)).
+- **The same checks twice:** the executor runs the MCP server's checks again before the write (not the guardian's own, still flagged), from one shared module ([disable_checks.py](../src/mcp_server/disable_checks.py)).
 - **The cost:** the blueprint's certificate is now in two sidecars, so a person on the host has two places to take it from ([D3](#architectural-shortcuts-where-the-guardian-differs)).
 
 ### Component Inventory: Who Holds What?
@@ -169,7 +169,7 @@ To verify our security posture, here is exactly what each container holds and wh
 
 The guardian's work has two phases, and each runs with different rights:
 
-1. **The propose phase:** the autonomous part. The guardian scans the registry as itself, sends the findings to the audit log, and submits a disable request for each dormant or poisoned agent. Nobody is signed in, and nothing in the tenant changes: the strongest thing this phase can do is ask.
+1. **The propose phase:** the autonomous part. The guardian scans the registry as itself, sends the findings to the audit log, and submits a disable request for each flagged agent. Nobody is signed in, and nothing in the tenant changes: the strongest thing this phase can do is ask.
 2. **The approve phase:** the human part. Later, within 24 hours, an approver reviews each pending request in the CLI and approves, denies or skips it. Only an approval leads to a write: the executor disables the agent with the approver's own rights (OBO).
 
 The two phases meet only at the Identity API, which stores the findings, the requests and the decisions. The propose phase does not wait for the approver: a later scan shows each request's status.
@@ -181,7 +181,7 @@ The two phases meet only at the Identity API, which stores the findings, the req
 3. **running:** The executor claimed the approved request, right before its write. A claim happens once, so an approval cannot be used twice.
 4. **succeeded or failed:** The executor recorded what the write did. A failed request is final too: the guardian may ask again with a new request, which needs a new approval.
 
-The guardian asks again only after denied, expired or failed. The last three names are Microsoft Graph's [longRunningOperationStatus](https://learn.microsoft.com/en-us/graph/api/resources/longrunningoperation) values. The dormant and poisoned checks skip agents that are already disabled, so a disabled agent is never asked for again ([how](#a-disabled-agent-code-decides-not-the-model)).
+The guardian asks again only after denied, expired or failed. The last three names are Microsoft Graph's [longRunningOperationStatus](https://learn.microsoft.com/en-us/graph/api/resources/longrunningoperation) values. The checks skip agents that are already disabled, so a disabled agent is never asked for again ([how](#a-disabled-agent-code-decides-not-the-model)).
 
 ### The Propose Phase
 
@@ -216,17 +216,17 @@ sequenceDiagram
     G-->>M: the data
     M->>M: run the five checks
     M->>A: POST /findings<br/>Bearer: the guardian's app-only token (Findings.Submit)
-    M->>A: GET /agents/{agentId}/disableRequests, for each dormant or poisoned agent<br/>Bearer: the guardian's app-only token for the Identity API,<br/>role AgentDisable.Request
-    M-->>H: the findings, and each dormant or<br/>poisoned agent's latest request
+    M->>A: GET /agents/{agentId}/disableRequests, for each flagged agent<br/>Bearer: the guardian's app-only token for the Identity API,<br/>role AgentDisable.Request
+    M-->>H: the findings, and each flagged<br/>agent's latest request
     H->>L: the findings
 
-    L-->>H: submit_disable_agent_request for each dormant or poisoned agent
+    L-->>H: submit_disable_agent_request for each flagged agent
     loop Harness runs the calls one at a time
         H->>M: tools/call submit_disable_agent_request(app_id, reason)
         M->>M: check the allow-list and that app_id is a GUID
-        M->>G: read the agent, its description and its sign-ins<br/>Bearer: the guardian's app-only token
+        M->>G: read the agent again, and run every rule for it<br/>Bearer: the guardian's app-only token
         G-->>M: the facts
-        alt The agent is unknown, is the guardian's own, or is neither dormant nor poisoned
+        alt The agent is unknown, is the guardian's own, or no rule flags it
             M-->>H: tool error: refused, and nobody is asked
         else The agent can be disabled
             M->>A: POST /agents/{agentId}/disableRequests<br/>Bearer: the guardian's app-only token for the Identity API,<br/>role AgentDisable.Request<br/>body: facts from Graph, the model's reason
@@ -316,8 +316,8 @@ sequenceDiagram
         X->>A: GET the request<br/>Bearer: the guardian's app-only token for the Identity API,<br/>role AgentDisable.Request
         A-->>X: the request: its status and decidedBy
         X->>X: approved, and decidedBy = the approver's oid from Tc's claims?<br/>(the person who lends their rights must be the person who approved)
-        X->>G: read the agent again, and the sign-in log<br/>Bearer: the guardian's app-only token for Graph,<br/>roles AgentIdentity.Read.All and AuditLog.Read.All
-        G-->>X: the facts: dormant or poisoned, not the guardian's own?
+        X->>G: read the agent again, and run every rule for it<br/>Bearer: the guardian's app-only token for Graph,<br/>the four read roles of the scan
+        G-->>X: the facts: still flagged, not the guardian's own?
         X->>A: Claiming the request<br/>POST .../{requestId}/execution<br/>Bearer: the guardian's app-only token for the Identity API,<br/>role AgentDisable.Request<br/>body: delegatingUser = the approver's oid<br/>(only the ID: Tc itself never leaves the executor and its sidecar)
         A-->>X: running (409 unless approved, within 10 minutes, by this person)
         rect rgba(127, 127, 127, 0.12)
@@ -350,7 +350,7 @@ sequenceDiagram
 
 **The scope at sign-in:** the CLI asks only for `<Identity API app ID>/.default`. MSAL adds `openid profile offline_access` itself, and `offline_access` is what returns the refresh token.
 
-Every refusal on the executor's path leaves the agent enabled: no token, a token that is not the approver's, a request that is not approved or already executed, an agent that is already disabled or no longer dormant or poisoned, a failed exchange or a failed write. After the claim, a failed exchange or a failed write ends the request as `failed`, so the scan does not take it for a disable.
+Every refusal on the executor's path leaves the agent enabled: no token, a token that is not the approver's, a request that is not approved or already executed, an agent that is already disabled or that no rule flags any more, a failed exchange or a failed write. After the claim, a failed exchange or a failed write ends the request as `failed`, so the scan does not take it for a disable.
 
 **Where the guardian differs from [the enterprise practice](agent-architecture.md#human-approval-who-approves-and-how):**
 
@@ -409,18 +409,15 @@ The scan flags risky agents again on every run, but it never leads to a second d
 ```mermaid
 flowchart TD
     subgraph SCAN["MCP server: scan_registry (code, no model)"]
-        A[Run the five checks] --> B{Agent disabled?}
-        B -- yes --> C[The dormant and poisoned checks skip it]
-        B -- no --> D[The dormant and poisoned checks run]
-        C --> E[Orphan, expiring credential and<br/>over-permissioned still run]
-        D --> E
+        A[Read every agent] --> B{Agent disabled?}
+        B -- yes --> C[Skipped: no finding]
+        B -- no --> D[The five checks run]
     end
-    E --> F
+    D --> F
     subgraph MODEL["Model"]
-        F[Reads the findings, writes the report] --> G{Asks for a disable?}
+        F[Reads the findings, writes the report] --> G[Asks to disable each flagged agent]
     end
-    G -- no --> R[Report only]
-    G -- yes --> H
+    G --> H
     subgraph TOOL["MCP server: submit_disable_agent_request (code)"]
         H{Already disabled?} -- yes --> X1[Refused, and nobody is asked]
     end
@@ -433,16 +430,14 @@ flowchart TD
 ```
 
 1. **The scan runs the checks:** `scan_registry` runs four rule-based checks and one heuristic check in the MCP server ([rules.py](../src/mcp_server/rules.py)). It is plain code, with no model.
-2. **The dormant and poisoned checks skip disabled agents:** the disable is the fix for both, so a disabled agent is already fixed and gets neither finding.
-3. **The other rules still flag it:** a disabled agent that is over-permissioned, orphaned or has an expiring credential is still reported on every run, until someone fixes it. That is on purpose, because the risk is still there.
-4. **The model asks only for dormant or poisoned agents:** the system prompt says so ([harness.py](../src/guardian/harness.py)). A disabled agent has neither finding, so the model has no reason to ask.
-5. **The request tool refuses anyway:** if the model still asks, for example because injected text fooled it, the tool refuses and writes a `disable_refused` line with the reason `already disabled`.
-6. **The executor refuses before the write:** if the agent was disabled after the request was created, the executor's check refuses it. The tool and the executor share one check ([disable_checks.py](../src/mcp_server/disable_checks.py)), so the two cannot drift apart. That check also refuses the guardian's own agents and agents that are neither dormant nor poisoned any more.
+2. **Every check skips disabled agents:** the disable is the fix for every risk, so a disabled agent is already fixed. It can get no new tokens, so it gets no finding.
+3. **The model asks for every flagged agent:** the system prompt says so ([harness.py](../src/guardian/harness.py)). A disabled agent has no finding, so the model has no reason to ask.
+4. **The request tool refuses anyway:** if the model still asks, for example because injected text fooled it, the tool refuses and writes a `disable_refused` line with the reason `already disabled`.
+5. **The executor refuses before the write:** if the agent was disabled after the request was created, the executor's check refuses it. The tool and the executor share one check ([disable_checks.py](../src/mcp_server/disable_checks.py)), so the two cannot drift apart. That check also refuses the guardian's own agents and agents that no rule flags any more.
 
 The cases:
 
-* ✅ **Disabled and over-permissioned:** it is reported on every run, and no disable is requested.
-* ✅ **Disabled and dormant:** no dormant finding, and no request. Any other flaw it has is still reported.
+* ✅ **Disabled, with any flaw:** no finding, no report line and no request. A person who enables it again also brings back its findings on the next scan.
 * ✅ **The model is fooled and asks to disable a disabled agent:** the request tool refuses, and nobody is asked.
 * ✅ **The agent is disabled after the request was created:** the approver may still approve, but the executor refuses before the write, and the agent stays as it is.
 

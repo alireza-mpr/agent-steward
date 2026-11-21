@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from mcp import Client
 
+import disable_checks
 import executor
 import server
 from allow_list import load_allow_list
@@ -30,7 +31,7 @@ GUARDIAN_NAME = "agent-steward-guardian-01"
 GRAPH, IDENTITY_API = "Microsoft Graph", "agent-steward-identity-api"
 
 GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-AGENT = "11111111-2222-3333-4444-555555555555"      # dormant, and not one of the guardian's agents
+AGENT = "11111111-2222-3333-4444-555555555555"      # flagged (dormant, no sponsor), and not one of the guardian's agents
 GUARDIAN = "99999999-2222-3333-4444-555555555555"
 BLUEPRINT_OF = {AGENT: "66666666-7777-8888-9999-000000000000", GUARDIAN: "aaaaaaaa-7777-8888-9999-000000000000"}
 GRAPH_PRINCIPAL = "33333333-4444-5555-6666-777777777777"   # Graph's service principal in the fake tenant
@@ -45,7 +46,7 @@ TOKEN_FOR = {(GRAPH, "application"): "app-only:graph",
 
 ARGUMENTS = {"scan_registry": {},
              "get_agent": {"app_id": AGENT},
-             "submit_disable_agent_request": {"app_id": AGENT, "reason": "No sign-in for 30 days."}}
+             "submit_disable_agent_request": {"app_id": AGENT, "reason": "No sponsor, and no sign-in for 30 days."}}
 
 
 # The fake tenant
@@ -134,7 +135,7 @@ def tenant(monkeypatch):
     fake = FakeTenant()
     monkeypatch.setattr(urllib.request, "urlopen", fake.urlopen)
     monkeypatch.setenv("GUARDIAN_AGENT_APP_ID", GUARDIAN)
-    monkeypatch.setattr(server, "POLICY_PATH", ROOT / "config" / "agent-permissions.json")
+    monkeypatch.setattr(disable_checks, "POLICY_PATH", ROOT / "config" / "agent-permissions.json")
     registered = asyncio.run(server.mcp.registered_tool_names())
     monkeypatch.setattr(server.mcp, "allowed_tools",
                         load_allow_list(ROOT / "config" / "tool-allow-list.json", registered))

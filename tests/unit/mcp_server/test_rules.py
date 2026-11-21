@@ -108,14 +108,13 @@ def test_dormant_rule_flags_every_agent_without_a_recent_sign_in():
     assert {finding.date for finding in find_dormant(AGENTS, LAST_SIGN_INS, NOW)} == {None}
 
 
-def test_a_disabled_agent_is_not_dormant_but_the_other_rules_still_see_it():
+def test_a_disabled_agent_gets_no_finding_from_any_rule():
     # Live case, 10 November 2026: overperm-01 was disabled with OBO, and the next scan flagged it
-    # as dormant again, so the guardian would have asked to disable it twice.
-    disabled = replace(OVERPERM, sponsor_count=0, enabled=False)
+    # again, so the guardian would have asked to disable it twice. The disable is the fix for
+    # every rule, so a disabled agent is already fixed.
+    disabled = replace(POISONED, sponsor_count=0, permissions=OVERPERM.permissions, enabled=False)
 
-    assert find_dormant([disabled], {}, NOW) == []
-    assert names(find_orphans([disabled])) == ["agent-steward-fixture-overperm-01"]
-    assert names(find_over_permissioned([disabled], POLICY)) == ["agent-steward-fixture-overperm-01"]
+    assert run_all_rules([disabled], BLUEPRINTS, POLICY, {}, NOW) == []
 
 
 def test_a_sign_in_older_than_30_days_is_dormant():
@@ -153,8 +152,12 @@ def test_ordinary_descriptions_are_not_flagged(text):
     assert find_poisoned_descriptions([replace(DORMANT, description=text)]) == []
 
 
-def test_a_disabled_agent_is_not_flagged_for_its_description():
-    assert find_poisoned_descriptions([replace(POISONED, enabled=False)]) == []
+def test_the_same_agent_enabled_is_flagged_by_every_rule_that_applies():
+    flagged = replace(POISONED, sponsor_count=0, permissions=OVERPERM.permissions)
+
+    checks = {finding.check for finding in run_all_rules([flagged], BLUEPRINTS, POLICY, {}, NOW)}
+
+    assert checks == {"orphan", "over_permissioned", "dormant", "poisoned_description"}
 
 
 # All rules

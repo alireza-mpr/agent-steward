@@ -1,6 +1,6 @@
-# Built from src/ (docker-compose.yml), because the executor reuses three of the MCP server's
-# modules: the Graph client and the checks (the same rule in both places), and the approval
-# service client. It does not get server.py, the MCP SDK or the tools.
+# Built from src/ (docker-compose.yml), because the executor reuses four of the MCP server's
+# modules: the Graph client, the rules and the checks (the same rules in both places), and the
+# approval service client. It does not get server.py, the MCP SDK or the tools.
 FROM python:3.13-slim
 
 WORKDIR /app

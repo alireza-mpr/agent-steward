@@ -29,14 +29,13 @@ from mcp.types import INVALID_PARAMS, ToolAnnotations
 
 from allow_list import AllowListError, load_allow_list
 from approval import SERVICE_ERRORS, ApprovalError, DisableRequest, IdentityApiApprovals
-from disable_checks import GUID, check_can_be_disabled
-from graph_reader import AgentDetails, GraphClient, fetch_agent_details, fetch_agents, fetch_blueprints, fetch_last_sign_ins
-from rules import DISABLE_REASONS, Finding, load_permission_policy, run_all_rules
+from disable_checks import GUID, check_can_be_disabled, find_all
+from graph_reader import AgentDetails, GraphClient, fetch_agent_details
+from rules import Finding
 from telemetry import audit, setup_tracing
 
 SIDECAR_URL = os.environ.get("SIDECAR_URL", "http://127.0.0.1:5000")
 API_URL = os.environ.get("API_URL", "http://identity-api:8000")
-POLICY_PATH = Path(os.environ.get("POLICY_PATH", "/config/agent-permissions.json"))
 ALLOW_LIST_PATH = Path(os.environ.get("ALLOW_LIST_PATH", "/config/tool-allow-list.json"))
 MCP_PORT = int(os.environ.get("MCP_PORT", "8100"))
 # The Host headers the server accepts (DNS rebinding protection): the name the harness uses.
@@ -81,15 +80,14 @@ class RequestStatus:
 class ScanResult:
     findings: list[Finding]
     accepted: int          # how many findings the Identity API accepted
-    disable_requests: list[RequestStatus]   # the latest request for each agent with a reason to disable it
+    disable_requests: list[RequestStatus]   # the latest request for each flagged agent that has one
 
 
 def latest_requests(findings: list[Finding]) -> list[RequestStatus]:
-    """The latest disable request this server made for each agent with a reason to disable it
-    (dormant or poisoned description), from the Identity API."""
+    """The latest disable request this server made for each flagged agent, from the Identity API."""
     service = approval_service()
     latest = []
-    for agent_app_id in sorted({finding.agent_app_id for finding in findings if finding.check in DISABLE_REASONS}):
+    for agent_app_id in sorted({finding.agent_app_id for finding in findings}):
         requests = service.of_agent(agent_app_id)
         if requests:
             newest = requests[0]
@@ -100,11 +98,8 @@ def latest_requests(findings: list[Finding]) -> list[RequestStatus]:
 
 def scan() -> ScanResult:
     """Read the tenant, apply the rules, report the findings to the Identity API, and add the
-    status of the latest disable request for each agent with a reason to disable it."""
-    now = datetime.now(timezone.utc)
-    graph = GraphClient(token_for("graph"))
-    findings = run_all_rules(fetch_agents(graph), fetch_blueprints(graph),
-                             load_permission_policy(POLICY_PATH), fetch_last_sign_ins(graph, now), now)
+    status of the latest disable request for each flagged agent."""
+    _, findings = find_all(GraphClient(token_for("graph")), datetime.now(timezone.utc))
     answer = submit(findings)
     return ScanResult(findings, answer["accepted"], latest_requests(findings))
 
@@ -155,7 +150,8 @@ def scan_registry() -> ScanResult:
     """Check every agent identity in the tenant for five flaws: no sponsor (orphan), a blueprint
     credential that expires soon, more permissions than its policy allows, no sign-in for 30 days
     (dormant), and a description that tries to instruct an AI reader (poisoned_description).
-    Reports the findings to the Identity API's audit log, then returns them."""
+    Reports the findings to the Identity API's audit log, then returns them. Each flagged agent
+    can be asked for with submit_disable_agent_request."""
     return scan()
 
 
@@ -221,12 +217,11 @@ async def request_approval(service: IdentityApiApprovals, agent: AgentDetails, r
 # it happens in the executor, with the approver's rights (decision 7: no shortcut around OBO).
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
 async def submit_disable_agent_request(app_id: str, reason: str) -> SubmittedRequest:
-    """Ask a human to approve disabling one agent identity that is dormant or has a poisoned
-    description. Returns at once with the request, which is pending: nothing is disabled now. If the
-    approver approves, the agent is disabled with the approver's own rights. A later scan_registry
-    shows the request's status. Refused for an agent with neither flaw, for the guardian's own
-    agents, and while a request for the agent is already pending. reason: one short sentence for
-    the approver."""
+    """Ask a human to approve disabling one agent identity that scan_registry flagged. Returns at
+    once with the request, which is pending: nothing is disabled now. If the approver approves, the
+    agent is disabled with the approver's own rights. A later scan_registry shows the request's
+    status. Refused for an agent that no rule flags, for the guardian's own agents, and while a
+    request for the agent is already pending. reason: one short sentence for the approver."""
     graph = GraphClient(token_for("graph"))   # app-only, read-only: the checks before anyone is asked
 
     agent, reasons, refusal = await check_can_be_disabled(graph, app_id, os.environ["GUARDIAN_AGENT_APP_ID"], audit)

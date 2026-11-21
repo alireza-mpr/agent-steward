@@ -165,16 +165,20 @@ services:
   # from that sidecar's loopback. The CLI reaches it as http://executor-sidecar:8200.
   executor:
     build:
-      context: src                       # it reuses three of the MCP server's modules (its Dockerfile says which)
+      context: src                       # it reuses four of the MCP server's modules (its Dockerfile says which)
       dockerfile: executor/Dockerfile
     network_mode: "service:executor-sidecar"
     environment:
       SIDECAR_URL: http://127.0.0.1:5000
       API_URL: http://identity-api:8000
       GUARDIAN_AGENT_APP_ID: ${GUARDIAN_AGENT_APP_ID:?set GUARDIAN_AGENT_APP_ID in .env}
+      # The permission policy: the over-permissioned rule runs again before the write.
+      POLICY_PATH: /config/agent-permissions.json
       # OpenTelemetry (NFR4): it reaches Jaeger and Loki through the executor sidecar's approval network.
       <<: *otel-logs
       OTEL_SERVICE_NAME: executor
+    volumes:
+      - ./config/agent-permissions.json:/config/agent-permissions.json:ro
     depends_on:
       - executor-sidecar
       - identity-api
